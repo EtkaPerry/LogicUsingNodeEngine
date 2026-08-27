@@ -1,0 +1,84 @@
+plugins {
+    id 'multiloader-loader'
+    id 'net.minecraftforge.gradle'
+}
+
+repositories {
+    // ForgeGradle 7 serves patched Minecraft out of a synthetic repository rather than a real one,
+    // so the mavenizer has to be registered before the Forge artifact will resolve. `it` is the
+    // RepositoryHandler - Gradle passes it to the closure as well as setting it as the delegate.
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
+}
+
+dependencies {
+    // 26.x ships de-obfuscated, so there is no mappings step here - same reason the Fabric module
+    // has no mappings() line. minecraft.dependency() is what applies Forge's patches.
+    implementation minecraft.dependency("net.minecraftforge:forge:${minecraft_version}-${forge_version}")
+}
+
+minecraft {
+    runs {
+        register('client') {
+            // Without this, ForgeGradle groups the run's source roots under an empty mod id and the
+            // output lands on the module path twice - once named for the classes directory, once
+            // named from mods.toml - which fails resolution with "Modules main and lune export
+            // package com.etka.lune.platform". Naming the mod puts both outputs in one module.
+            mods {
+                "${mod_id}" {
+                    sources sourceSets.main
+                }
+            }
+
+            // Mirrors the NeoForge module: everything identifying a run - the routine it reads, the
+            // saves it writes, the journal it leaves behind - hangs off this one path, so a lane
+            // that shares it overwrites another's evidence.
+            workingDir = file(project.findProperty('luneGameDir') ?: 'runs/client')
+
+            // Unattended test runs. Without any of these properties this is an ordinary dev client.
+            //   ./gradlew :forge:runClient -PluneWorld="Lune Test" \
+            //       -PluneRoutine="Speedrun" -PluneBudget=12000 -PluneQuit=true
+            if (project.hasProperty('luneWorld')) {
+                args '--quickPlaySingleplayer', project.property('luneWorld').toString()
+            }
+            if (project.hasProperty('luneCreateWorld')) {
+                systemProperty 'lune.autorun.createWorld', project.property('luneCreateWorld').toString()
+            }
+            if (project.hasProperty('luneSeed')) {
+                systemProperty 'lune.autorun.seed', project.property('luneSeed').toString()
+            }
+            if (project.hasProperty('luneRoutine')) {
+                systemProperty 'lune.autorun.routine', project.property('luneRoutine').toString()
+            }
+            if (project.hasProperty('luneDelay')) {
+                systemProperty 'lune.autorun.delayTicks', project.property('luneDelay').toString()
+            }
+            if (project.hasProperty('luneBudget')) {
+                systemProperty 'lune.autorun.stopAfterTicks', project.property('luneBudget').toString()
+            }
+            if (project.hasProperty('luneQuit')) {
+                systemProperty 'lune.autorun.quit', project.property('luneQuit').toString()
+            }
+        }
+    }
+}
+
+// mcgradleconventions loader attribute
+def loaderAttribute = Attribute.of('io.github.mcgradleconventions.loader', String)
+['apiElements', 'runtimeElements', 'sourcesElements', 'javadocElements'].each { variant ->
+    configurations.named(variant) {
+        attributes {
+            attribute(loaderAttribute, 'forge')
+        }
+    }
+}
+sourceSets.configureEach {
+    [it.compileClasspathConfigurationName, it.runtimeClasspathConfigurationName].each { variant ->
+        configurations.named(variant) {
+            attributes {
+                attribute(loaderAttribute, 'forge')
+            }
+        }
+    }
+}

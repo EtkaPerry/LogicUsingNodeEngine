@@ -1,0 +1,80 @@
+plugins {
+    id 'multiloader-common'
+    id 'net.neoforged.moddev'
+}
+
+// Release jars are the only artifacts that may use the bundled learned profile without allowing
+// new teaching. The publish script opts in explicitly; ordinary source/GitHub builds stay in the
+// developer path so their local lune-learning.json can continue to improve.
+def luneRelease = providers.gradleProperty('luneRelease')
+        .map { it.toBoolean() }
+        .orElse(false)
+
+tasks.named('processResources') {
+    doFirst {
+        if (luneRelease.get() && !file('src/main/resources/lune-learning.json').exists()) {
+            throw new GradleException('Release builds require the bundled lune-learning.json profile')
+        }
+    }
+}
+
+neoForge {
+    neoFormVersion = neo_form_version
+    // Auto-enable AccessTransformers if present.
+    def at = file('src/main/resources/META-INF/accesstransformer.cfg')
+    if (at.exists()) {
+        accessTransformers.from(at.absolutePath)
+    }
+}
+
+dependencies {
+    // Fabric and NeoForge both bundle Fabric Mixin + MixinExtras, so they are safe to use in common.
+    compileOnly('net.fabricmc:sponge-mixin:0.17.3+mixin.0.8.7')
+    compileOnly(annotationProcessor('io.github.llamalad7:mixinextras-common:0.5.3'))
+
+    // The pathfinder and task-queue cores are plain data structures over BlockPos-like ints, so the
+    // interesting algorithms are unit-testable without a Minecraft runtime.
+    testImplementation platform("org.junit:junit-bom:${junit_version}")
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'com.google.code.gson:gson:2.11.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+configurations {
+    commonJava {
+        canBeResolved = false
+        canBeConsumed = true
+    }
+    commonResources {
+        canBeResolved = false
+        canBeConsumed = true
+    }
+}
+
+artifacts {
+    commonJava sourceSets.main.java.sourceDirectories.singleFile
+    commonResources sourceSets.main.resources.sourceDirectories.singleFile
+}
+
+// mcgradleconventions loader attribute
+def loaderAttribute = Attribute.of('io.github.mcgradleconventions.loader', String)
+['apiElements', 'runtimeElements', 'sourcesElements', 'javadocElements'].each { variant ->
+    configurations.named(variant) {
+        attributes {
+            attribute(loaderAttribute, 'common')
+        }
+    }
+}
+sourceSets.configureEach {
+    [it.compileClasspathConfigurationName, it.runtimeClasspathConfigurationName].each { variant ->
+        configurations.named(variant) {
+            attributes {
+                attribute(loaderAttribute, 'common')
+            }
+        }
+    }
+}

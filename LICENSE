@@ -1,0 +1,136 @@
+Lune (Logic Using Node Engine) — Personal Use License
+Version 1.1
+
+Copyright (c) 2026 Etka. All rights reserved.
+
+"The Software" means Lune, including its source code, compiled builds, assets,
+routines and documentation. "The Author" means the copyright holder named above.
+
+
+1. WHAT YOU MAY DO
+
+   a. Use the Software for your own gameplay, on machines you own or control.
+
+   b. Read and study the source code.
+
+   c. Modify the source code for your own use, and play with your modified copy.
+
+   d. Keep a copy of the Software, including a modified copy, in a private
+      repository or private backup of your own.
+
+   e. Fork the official repository using the hosting platform's own fork
+      feature, and keep that fork for as long as the platform allows. Forking is
+      how anyone reads, tries and contributes to a public project, and this
+      license does not try to take it away. What a fork may not become is a
+      separate or alternative distribution of the Software: presented as its own
+      project, renamed, advertised as a place to get Lune, or used as a route
+      around section 2.
+
+   f. Quote short excerpts of the source code — enough to make a point, not
+      enough to rebuild the Software — when discussing it, reviewing it,
+      reporting a bug, or asking for or giving help.
+
+
+2. WHAT YOU MAY NOT DO
+
+   a. Publish, redistribute, mirror, re-upload or otherwise make the Software
+      available to anyone else, in source or compiled form, whole or in part,
+      modified or unmodified. This includes mod portals, launchers, modpacks,
+      file hosts, archives, and any repository other than a platform fork
+      permitted by section 1(e).
+
+   b. Sell, license, rent or otherwise commercially exploit the Software, or
+      include a copy of it in anything offered for payment, donation or other
+      benefit.
+
+   c. Publish a derivative work, port, rewrite or reimplementation that is based
+      on the Software or its source code.
+
+   d. Remove, obscure or alter this license, the copyright notice, or the
+      attribution shown by the Software.
+
+   Playing with the Software is not redistribution, and neither is publishing
+   video or streams of your own gameplay. Gameplay content stays permitted when
+   it earns you money — advertising, subscriptions, donations, sponsorship.
+   Section 2(b) is about copies of the Software, not about what you record while
+   playing with it.
+
+
+3. NO WARRANTY, NO LIABILITY
+
+   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED
+   "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+   LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+   PURPOSE AND NONINFRINGEMENT.
+
+   The Software automates a game character. It digs, places blocks, fights,
+   travels and can leave the player in danger. TO THE MAXIMUM EXTENT PERMITTED
+   BY APPLICABLE LAW, IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM,
+   DAMAGES OR OTHER LIABILITY, INCLUDING BUT NOT LIMITED TO LOST, CORRUPTED OR
+   DAMAGED WORLDS AND SAVE FILES, LOST ITEMS OR PROGRESS, CHARACTER DEATH, LOST
+   TIME, HARDWARE WEAR, OR ANY ACTION TAKEN AGAINST YOUR ACCOUNT BY A SERVER,
+   ITS STAFF, OR ANY THIRD PARTY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+   OTHERWISE, ARISING FROM OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+   You are responsible for backing up your worlds and for knowing whether
+   automation is permitted wherever you play. Many multiplayer servers forbid
+   it. Using the Software is entirely at your own risk.
+
+
+4. CONTRIBUTIONS
+
+   Contributions are welcome as pull requests and issues on the official
+   repository (section 6).
+
+   By submitting a contribution — code, assets, documentation or a routine — you
+   grant the Author a perpetual, worldwide, irrevocable, royalty-free, exclusive
+   and sublicensable license to use, modify, relicense and distribute it for any
+   purpose. You also agree to assign the copyright in it to the Author on
+   request, and to sign whatever your country's law requires for that assignment
+   to take effect.
+
+   You confirm that the contribution is your own work and that you are free to
+   grant this. You waive any moral rights in it as far as the law where you live
+   allows, and you are owed no payment, credit or other consideration for it,
+   although the Author may choose to credit you.
+
+   This section covers material you submit. It does not reach a bug report, a
+   feature request or a suggestion — send those freely. The Author may act on
+   them without owing you anything, and nothing about the idea itself changes
+   hands.
+
+   Contributions become part of the Software and are covered by this license.
+   Opening a pull request is how you accept this section; the pull request
+   template asks you to confirm it.
+
+
+5. TERMINATION
+
+   If you breach section 2, or use the Software outside the permissions in
+   section 1, your rights under this license suspend automatically. They return
+   as soon as you stop, provided you stop within 30 days of learning of the
+   breach — whether you hear it from the Author or work it out yourself. If you
+   do not stop within those 30 days, the rights end permanently, and you must
+   then stop using the Software and delete all copies you hold.
+
+
+6. GENERAL
+
+   The official repository is
+   <https://github.com/EtkaPerry/LogicUsingNodeEngine>. Wherever this license
+   says "the official repository", that is the one it means.
+
+   "Lune", the Lune mascot and the Lune logo are the Author's. Nothing here
+   gives you the right to use them as the name or the branding of your own
+   project, including anything built from a fork permitted by section 1(e).
+
+   Lune is an unofficial mod. It is not affiliated with, endorsed by or
+   associated with Mojang Studios or Microsoft. Minecraft is a trademark of
+   Mojang Synergies AB.
+
+   This license may be updated for future versions; the version you received
+   governs the copy you received. If any provision is held unenforceable, the
+   rest remains in force. Sections 3, 4 and 6 survive termination.
+
+   For any permission not granted above — including any form of redistribution —
+   ask first: 18562724+EtkaPerry@users.noreply.github.com. The answer may well be yes.

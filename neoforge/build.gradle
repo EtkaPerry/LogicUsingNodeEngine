@@ -1,0 +1,178 @@
+plugins {
+    id 'multiloader-loader'
+    id 'net.neoforged.moddev'
+}
+
+neoForge {
+    version = neoforge_version
+    def at = project(':common').file('src/main/resources/META-INF/accesstransformer.cfg')
+    if (at.exists()) {
+        accessTransformers.from(at.absolutePath)
+    }
+    runs {
+        configureEach {
+            ideName = "NeoForge ${it.name.capitalize()} (${project.path})"
+        }
+        client {
+            client()
+            // Normally runs/client. The run harness points each of its lanes at a directory
+            // of its own, because everything that identifies a run - the routine list it reads,
+            // the saves it generates, the journal it writes - hangs off this one path, so two
+            // clients sharing it overwrite each other's evidence.
+            gameDirectory = this.mkdir(this.file(
+                    project.findProperty('luneGameDir') ?: 'runs/client'))
+
+            // Unattended test runs. Without any of these properties this is an ordinary dev client.
+            //   ./gradlew :neoforge:runClient -PluneWorld="Lune Test" \
+            //       -PluneRoutine="Speedrun" -PluneBudget=12000 -PluneQuit=true
+            if (project.hasProperty('luneWorld')) {
+                programArguments.addAll('--quickPlaySingleplayer',
+                        project.property('luneWorld').toString())
+            }
+            if (project.hasProperty('luneCreateWorld')) {
+                jvmArguments.add("-Dlune.autorun.createWorld=${project.property('luneCreateWorld')}".toString())
+            }
+            if (project.hasProperty('luneSeed')) {
+                jvmArguments.add("-Dlune.autorun.seed=${project.property('luneSeed')}".toString())
+            }
+            if (project.hasProperty('luneRoutine')) {
+                jvmArguments.add("-Dlune.autorun.routine=${project.property('luneRoutine')}".toString())
+            }
+            if (project.hasProperty('luneDelay')) {
+                jvmArguments.add("-Dlune.autorun.delayTicks=${project.property('luneDelay')}".toString())
+            }
+            if (project.hasProperty('luneFixture')) {
+                jvmArguments.add("-Dlune.autorun.fixture=${project.property('luneFixture')}".toString())
+            }
+            if (project.hasProperty('luneBudget')) {
+                jvmArguments.add("-Dlune.autorun.stopAfterTicks=${project.property('luneBudget')}".toString())
+            }
+            if (project.hasProperty('luneQuit')) {
+                jvmArguments.add("-Dlune.autorun.quit=${project.property('luneQuit')}".toString())
+            }
+        }
+    }
+    mods {
+        "${mod_id}" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Launch spec for the parallel harness.
+//
+// The run harness starts several clients at once, and Gradle is the wrong tool to start them
+// with. org.gradle.daemon=false means every invocation forks a fresh 3G JVM and re-runs
+// configuration, so four concurrent lanes would spend twelve gigabytes and a minute per run on
+// Gradle alone - on a box whose whole budget is what limits how many clients fit. Worse, the
+// lune.autorun.* properties are baked in at configuration time, so a lane cannot vary them
+// without paying for another configuration.
+//
+// So Gradle runs once, to build and to write down what `runClient` would have executed. The
+// harness reads that and spawns the JVMs itself, varying only the working directory and the
+// -D properties. Nothing here duplicates the run definition; it reports it.
+// ---------------------------------------------------------------------------
+tasks.register('dumpClientRunSpec') {
+    group = 'lune'
+    description = 'Writes the runClient JVM invocation to build/moddev/lune-parallel, for the run harness.'
+
+    // prepareClientRun is what writes clientRunVmArgs.txt and clientRunProgramArgs.txt.
+    dependsOn('prepareClientRun')
+
+    def runClient = tasks.named('runClient')
+    // Depending on the classpath rather than on runClient itself: a FileCollection carries the
+    // tasks that build it, so this compiles the mod and assembles Minecraft without ever starting
+    // a client. Depending on runClient would launch one. It is classpathProvider rather than
+    // classpath because RunGameTask only copies one into the other as it execs.
+    dependsOn(provider { runClient.get().classpathProvider })
+
+    def outDir = layout.buildDirectory.dir('moddev/lune-parallel')
+    outputs.dir(outDir)
+    // The classpath and the generated argfiles change with any -P property the build was
+    // configured with, and none of that is visible to up-to-date checking. Cheap task; just run it.
+    outputs.upToDateWhen { false }
+
+    doLast {
+        def task = runClient.get()
+        def dir = outDir.get().asFile
+        dir.mkdirs()
+
+        // Java reads @argfiles with backslash as an escape character even outside quotes - moddev's
+        // own generated files double them for exactly this reason. Quoting everything and doubling
+        // every backslash is the one rule that survives Windows paths and world names with spaces.
+        def encode = { String arg -> '"' + arg.replace('\\', '\\\\').replace('"', '\\"') + '"' }
+
+        // getAllJvmArgs is the whole story: the plain jvmArgs, the system properties, and whatever
+        // the argument providers contribute - which is where -Dfml.modFolders comes from, without
+        // which the client launches vanilla and the routine does not exist.
+        def jvmArgs = task.getAllJvmArgs().collect { it.toString() }
+
+        // moddev passes its own arguments as an @argfile. Inlining its contents instead of
+        // referencing it keeps the lune.autorun.* properties out: those are baked in at
+        // configuration time, so the file still holds whichever world, routine and budget last
+        // configured this build, and a lane that inherited them would silently rerun that.
+        def expanded = []
+        jvmArgs.each { arg ->
+            def file = arg.startsWith('@') ? new File(arg.substring(1).replace('\\\\', '\\')) : null
+            if (file != null && file.isFile()) {
+                file.eachLine('UTF-8') { line ->
+                    def trimmed = line.trim()
+                    if (trimmed.isEmpty() || trimmed.startsWith('#')) return
+                    // Undo moddev's own argfile encoding before re-encoding it below.
+                    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+                        trimmed = trimmed.substring(1, trimmed.length() - 1)
+                    }
+                    trimmed = trimmed.replace('\\\\', '\\')
+                    if (!trimmed.startsWith('-Dlune.autorun.')) expanded << trimmed
+                }
+            } else {
+                expanded << arg
+            }
+        }
+
+        // -cp goes in the argfile rather than on the command line: 109 entries of absolute Windows
+        // path is comfortably past what a command line holds.
+        expanded << '-cp'
+        expanded << task.classpathProvider.files.collect { it.absolutePath }.join(File.pathSeparator)
+
+        new File(dir, 'base-vmargs.txt').withWriter('UTF-8') { w ->
+            expanded.each { w.writeLine(encode(it)) }
+        }
+
+        // Program arguments stay as moddev wrote them - they carry the real main class, the asset
+        // index and the assets directory, and nothing in them varies per lane.
+        def programArgs = task.args.collect { it.toString() }
+        def spec = [
+                java           : task.javaLauncher.get().executablePath.asFile.absolutePath,
+                mainClass      : task.mainClass.get(),
+                programArgs    : programArgs,
+                defaultGameDir : task.gameDirectory.get().asFile.absolutePath,
+                classpathSize  : task.classpathProvider.files.size()
+        ]
+        new File(dir, 'run-spec.json').text =
+                groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(spec))
+
+        logger.lifecycle("Wrote ${dir} (${spec.classpathSize} classpath entries, " +
+                "${expanded.size()} jvm args)")
+    }
+}
+
+// mcgradleconventions loader attribute
+def loaderAttribute = Attribute.of('io.github.mcgradleconventions.loader', String)
+['apiElements', 'runtimeElements', 'sourcesElements', 'javadocElements'].each { variant ->
+    configurations.named(variant) {
+        attributes {
+            attribute(loaderAttribute, 'neoforge')
+        }
+    }
+}
+sourceSets.configureEach {
+    [it.compileClasspathConfigurationName, it.runtimeClasspathConfigurationName, it.getTaskName(null, 'jarJar')].each { variant ->
+        configurations.named(variant) {
+            attributes {
+                attribute(loaderAttribute, 'neoforge')
+            }
+        }
+    }
+}

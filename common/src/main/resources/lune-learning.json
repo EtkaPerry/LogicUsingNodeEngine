@@ -1,0 +1,3085 @@
+{
+  "schemaVersion": 2,
+  "qValues": {
+    "skill|movement|minecraft:overworld|goal=Any;distance=far;break=false;swim=false;recovery=false": {
+      "thorough-search": {
+        "value": -8.6882,
+        "visits": 105
+      },
+      "quick-search": {
+        "value": -7.463,
+        "visits": 105
+      },
+      "balanced-search": {
+        "value": -6.7474,
+        "visits": 117
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=small;tool=hand;approach=far": {
+      "nearest-cut": {
+        "value": -3.3451,
+        "visits": 94
+      },
+      "trunk-first": {
+        "value": -1.069,
+        "visits": 144
+      },
+      "outer-first": {
+        "value": -3.1524,
+        "visits": 95
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Any;distance=medium;break=false;swim=false;recovery=false": {
+      "balanced-search": {
+        "value": 1.3709,
+        "visits": 75
+      },
+      "quick-search": {
+        "value": -1.6796,
+        "visits": 33
+      },
+      "thorough-search": {
+        "value": -0.8278,
+        "visits": 52
+      }
+    },
+    "skill|item-collection|minecraft:overworld|radius=small;patience=normal": {
+      "local-then-worksite": {
+        "value": 8.9203,
+        "visits": 243
+      },
+      "worksite-cluster-first": {
+        "value": 9.0339,
+        "visits": 210
+      },
+      "nearest-next-target": {
+        "value": 8.4292,
+        "visits": 220
+      }
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:acacia_log,minecraft:acacia_planks,minecraft:acacia_wood,minecraft:bamboo_planks;amount=few;radius=wide;prospect=false": {
+      "level-first": {
+        "value": 2.6029,
+        "visits": 20
+      },
+      "worksite-first": {
+        "value": 2.2502,
+        "visits": 16
+      },
+      "nearest-visible": {
+        "value": 2.8047,
+        "visits": 15
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Any;distance=near;break=true;swim=false;recovery=true": {
+      "balanced-search": {
+        "value": 0.175,
+        "visits": 8
+      },
+      "thorough-search": {
+        "value": 1.1667,
+        "visits": 6
+      },
+      "quick-search": {
+        "value": 0.7,
+        "visits": 5
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=near;break=true;swim=false;recovery=true": {
+      "quick-search": {
+        "value": -6.1114,
+        "visits": 227
+      },
+      "balanced-search": {
+        "value": -6.2462,
+        "visits": 227
+      },
+      "thorough-search": {
+        "value": -6.1655,
+        "visits": 229
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Near;distance=near;break=false;swim=false;recovery=true": {
+      "quick-search": {
+        "value": -6.4787,
+        "visits": 1433
+      },
+      "balanced-search": {
+        "value": -6.6881,
+        "visits": 1445
+      },
+      "thorough-search": {
+        "value": -7.0999,
+        "visits": 1440
+      }
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:stone;amount=few;radius=local;prospect=true": {
+      "worksite-first": {
+        "value": 0.3033,
+        "visits": 15
+      },
+      "level-first": {
+        "value": 0.8077,
+        "visits": 13
+      },
+      "nearest-visible": {
+        "value": 1.905,
+        "visits": 14
+      }
+    },
+    "skill|item-collection|minecraft:overworld|radius=small;patience=short": {
+      "worksite-cluster-first": {
+        "value": 7.3321,
+        "visits": 315
+      },
+      "nearest-next-target": {
+        "value": 7.4462,
+        "visits": 314
+      },
+      "local-then-worksite": {
+        "value": 7.3338,
+        "visits": 633
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Near;distance=medium;break=false;swim=false;recovery=true": {
+      "balanced-search": {
+        "value": -4.1513,
+        "visits": 550
+      },
+      "thorough-search": {
+        "value": -5.8857,
+        "visits": 512
+      },
+      "quick-search": {
+        "value": -4.9453,
+        "visits": 507
+      }
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:deepslate_iron_ore,minecraft:iron_ore;amount=batch;radius=wide;prospect=true": {
+      "nearest-visible": {
+        "value": -3.9954,
+        "visits": 49
+      },
+      "level-first": {
+        "value": -3.901,
+        "visits": 52
+      },
+      "worksite-first": {
+        "value": -5.9869,
+        "visits": 50
+      }
+    },
+    "skill|item-collection|minecraft:overworld|radius=medium;patience=normal": {
+      "nearest-next-target": {
+        "value": 3.356,
+        "visits": 330
+      },
+      "local-then-worksite": {
+        "value": 6.7771,
+        "visits": 418
+      },
+      "worksite-cluster-first": {
+        "value": 4.6442,
+        "visits": 305
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=small;tool=hand;approach=walk": {
+      "trunk-first": {
+        "value": -0.1689,
+        "visits": 450
+      },
+      "nearest-cut": {
+        "value": -2.4556,
+        "visits": 426
+      },
+      "outer-first": {
+        "value": -2.4635,
+        "visits": 414
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=small;tool=hand;approach=near": {
+      "trunk-first": {
+        "value": -1.7031,
+        "visits": 357
+      },
+      "outer-first": {
+        "value": -4.5775,
+        "visits": 335
+      },
+      "nearest-cut": {
+        "value": -5.1632,
+        "visits": 334
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Any;distance=near;break=false;swim=false;recovery=false": {
+      "thorough-search": {
+        "value": -4.5537,
+        "visits": 128
+      },
+      "quick-search": {
+        "value": -3.7441,
+        "visits": 126
+      },
+      "balanced-search": {
+        "value": -2.0451,
+        "visits": 149
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=medium;break=true;swim=false;recovery=true": {
+      "quick-search": {
+        "value": 3.5818,
+        "visits": 22
+      },
+      "thorough-search": {
+        "value": 3.0387,
+        "visits": 25
+      },
+      "balanced-search": {
+        "value": 3.1521,
+        "visits": 26
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=near;break=false;swim=false;recovery=true": {
+      "thorough-search": {
+        "value": -1.1667,
+        "visits": 9
+      },
+      "quick-search": {
+        "value": -0.063,
+        "visits": 10
+      },
+      "balanced-search": {
+        "value": -0.15,
+        "visits": 7
+      }
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:deepslate_iron_ore,minecraft:iron_ore;amount=few;radius=wide;prospect=true": {
+      "worksite-first": {
+        "value": -0.0604,
+        "visits": 58
+      },
+      "level-first": {
+        "value": 0.9219,
+        "visits": 61
+      },
+      "nearest-visible": {
+        "value": -0.3615,
+        "visits": 61
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=NearXZ;distance=far;break=false;swim=false;recovery=true": {
+      "balanced-search": {
+        "value": 2.1545,
+        "visits": 295
+      },
+      "thorough-search": {
+        "value": 0.7966,
+        "visits": 291
+      },
+      "quick-search": {
+        "value": 1.8279,
+        "visits": 290
+      }
+    },
+    "skill|combat|minecraft:overworld|targets=minecraft:chicken,minecraft:cow,minecraft:pig,minecraft:sheep;radius=medium;weapon=sword;shield=false;enderman=auto": {
+      "critical-opening-hit": {
+        "value": 2.6037,
+        "visits": 4
+      },
+      "grounded-opening-hit": {
+        "value": 4.045,
+        "visits": 4
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Any;distance=medium;break=true;swim=false;recovery=true": {
+      "balanced-search": {
+        "value": -4.3153,
+        "visits": 13
+      },
+      "quick-search": {
+        "value": -3.4028,
+        "visits": 17
+      },
+      "thorough-search": {
+        "value": -3.3212,
+        "visits": 12
+      }
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:andesite,minecraft:cobblestone,minecraft:diorite,minecraft:granite;amount=large;radius=area;prospect=false": {
+      "worksite-first": {
+        "value": 0.5207,
+        "visits": 58
+      },
+      "nearest-visible": {
+        "value": 0.5373,
+        "visits": 48
+      },
+      "level-first": {
+        "value": 1.3017,
+        "visits": 48
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=NearXZ;distance=medium;break=false;swim=false;recovery=true": {
+      "quick-search": {
+        "value": -1.1688,
+        "visits": 315
+      },
+      "thorough-search": {
+        "value": -1.5594,
+        "visits": 285
+      },
+      "balanced-search": {
+        "value": -2.072,
+        "visits": 305
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=small;tool=fast-tool;approach=far": {
+      "nearest-cut": {
+        "value": 2.1772,
+        "visits": 18
+      },
+      "trunk-first": {
+        "value": -1.5499,
+        "visits": 17
+      },
+      "outer-first": {
+        "value": 0.3972,
+        "visits": 21
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Any;distance=near;break=false;swim=false;recovery=true": {
+      "thorough-search": {
+        "value": 0.875,
+        "visits": 8
+      },
+      "balanced-search": {
+        "value": -0.85,
+        "visits": 14
+      },
+      "quick-search": {
+        "value": 3.087,
+        "visits": 13
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=small;tool=fast-tool;approach=walk": {
+      "trunk-first": {
+        "value": 1.5157,
+        "visits": 11
+      },
+      "outer-first": {
+        "value": -0.0413,
+        "visits": 13
+      },
+      "nearest-cut": {
+        "value": 2.3543,
+        "visits": 9
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=far;health=healthy;build=true;weapon=true": {
+      "retreat-first": {
+        "value": 10.348,
+        "visits": 77
+      },
+      "cover-first": {
+        "value": 9.5098,
+        "visits": 81
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=contact;health=healthy;build=true;weapon=true": {
+      "retreat-first": {
+        "value": 9.75,
+        "visits": 26
+      },
+      "cover-first": {
+        "value": 10,
+        "visits": 25
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=near;health=healthy;build=true;weapon=true": {
+      "pillar-first": {
+        "value": 9.9125,
+        "visits": 11
+      },
+      "counterattack-first": {
+        "value": 9.9844,
+        "visits": 15
+      },
+      "cover-first": {
+        "value": 11.3844,
+        "visits": 15
+      },
+      "retreat-first": {
+        "value": 9.9982,
+        "visits": 20
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=critical;build=true;weapon=true": {
+      "pillar-first": {
+        "value": 2.1,
+        "visits": 5
+      },
+      "cover-first": {
+        "value": -3.5,
+        "visits": 1
+      },
+      "retreat-first": {
+        "value": -3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=hurt;build=true;weapon=true": {
+      "counterattack-first": {
+        "value": 10.0753,
+        "visits": 366
+      },
+      "pillar-first": {
+        "value": 2.3018,
+        "visits": 364
+      },
+      "retreat-first": {
+        "value": -4.108,
+        "visits": 369
+      },
+      "cover-first": {
+        "value": 2.9678,
+        "visits": 369
+      }
+    },
+    "skill|visible-search|minecraft:overworld|targets=minecraft:acacia_log,minecraft:acacia_planks,minecraft:acacia_wood,minecraft:bamboo_planks;radius=local;smart=true;look=true": {
+      "long-heading-commit": {
+        "value": -0.1087,
+        "visits": 7
+      },
+      "short-heading-commit": {
+        "value": -3.6811,
+        "visits": 10
+      },
+      "balanced-heading-commit": {
+        "value": -6.3153,
+        "visits": 4
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Near;distance=far;break=false;swim=false;recovery=true": {
+      "quick-search": {
+        "value": -3.3998,
+        "visits": 386
+      },
+      "thorough-search": {
+        "value": -3.1267,
+        "visits": 385
+      },
+      "balanced-search": {
+        "value": -3.4072,
+        "visits": 394
+      }
+    },
+    "skill|visible-search|minecraft:overworld|targets=minecraft:deepslate_iron_ore,minecraft:iron_ore;radius=regional;smart=true;look=true": {
+      "long-heading-commit": {
+        "value": 7.7157,
+        "visits": 338
+      },
+      "balanced-heading-commit": {
+        "value": -1.8402,
+        "visits": 336
+      },
+      "short-heading-commit": {
+        "value": 6.2742,
+        "visits": 336
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=healthy;build=true;weapon=false": {
+      "cover-first": {
+        "value": 6.1738,
+        "visits": 241
+      },
+      "pillar-first": {
+        "value": 6.9588,
+        "visits": 250
+      },
+      "retreat-first": {
+        "value": 5.3077,
+        "visits": 281
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=healthy;build=true;weapon=false": {
+      "cover-first": {
+        "value": 5.2574,
+        "visits": 12
+      },
+      "retreat-first": {
+        "value": 8.1685,
+        "visits": 29
+      },
+      "pillar-first": {
+        "value": 7.2209,
+        "visits": 5
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=giant;tool=fast-tool;approach=far": {
+      "trunk-first": {
+        "value": -2.7045,
+        "visits": 2
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=far;health=critical;build=true;weapon=false": {
+      "pillar-first": {
+        "value": 0,
+        "visits": 2
+      },
+      "retreat-first": {
+        "value": 5.46,
+        "visits": 2
+      },
+      "cover-first": {
+        "value": 2.7125,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=contact;health=healthy;build=true;weapon=false": {
+      "retreat-first": {
+        "value": 10.6451,
+        "visits": 21
+      },
+      "cover-first": {
+        "value": 9.9992,
+        "visits": 22
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=near;health=healthy;build=true;weapon=false": {
+      "retreat-first": {
+        "value": 9.6856,
+        "visits": 80
+      },
+      "cover-first": {
+        "value": 10.4066,
+        "visits": 76
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Any;distance=far;break=true;swim=false;recovery=true": {
+      "balanced-search": {
+        "value": -2.555,
+        "visits": 10
+      },
+      "thorough-search": {
+        "value": -1.4,
+        "visits": 9
+      },
+      "quick-search": {
+        "value": -3.7333,
+        "visits": 9
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=near;health=hurt;build=true;weapon=false": {
+      "retreat-first": {
+        "value": 1.5681,
+        "visits": 350
+      },
+      "cover-first": {
+        "value": -2.1991,
+        "visits": 341
+      },
+      "pillar-first": {
+        "value": -0.8374,
+        "visits": 343
+      }
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:coal_ore,minecraft:deepslate_coal_ore;amount=batch;radius=wide;prospect=true": {
+      "nearest-visible": {
+        "value": 0.1794,
+        "visits": 14
+      },
+      "worksite-first": {
+        "value": 0.7981,
+        "visits": 19
+      },
+      "level-first": {
+        "value": 0.7175,
+        "visits": 17
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=YLevel;distance=far;break=true;swim=false;recovery=true": {
+      "thorough-search": {
+        "value": -3.5,
+        "visits": 1
+      },
+      "quick-search": {
+        "value": 3.5,
+        "visits": 3
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=YLevel;distance=medium;break=true;swim=false;recovery=true": {
+      "balanced-search": {
+        "value": -3.5,
+        "visits": 1
+      },
+      "quick-search": {
+        "value": -3.5,
+        "visits": 1
+      },
+      "thorough-search": {
+        "value": -5.0167,
+        "visits": 3
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=YLevel;distance=near;break=true;swim=false;recovery=true": {
+      "thorough-search": {
+        "value": -0.2538,
+        "visits": 3
+      },
+      "quick-search": {
+        "value": 1.5929,
+        "visits": 5
+      },
+      "balanced-search": {
+        "value": -6.3153,
+        "visits": 4
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=near;health=healthy;build=true;weapon=true": {
+      "retreat-first": {
+        "value": 13.765,
+        "visits": 50
+      },
+      "cover-first": {
+        "value": 13.0975,
+        "visits": 50
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=far;health=hurt;build=true;weapon=true": {
+      "retreat-first": {
+        "value": 11.6284,
+        "visits": 75
+      },
+      "cover-first": {
+        "value": 12.1374,
+        "visits": 76
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=large;tool=hand;approach=near": {
+      "nearest-cut": {
+        "value": 1.4,
+        "visits": 2
+      },
+      "outer-first": {
+        "value": 0.9364,
+        "visits": 4
+      },
+      "trunk-first": {
+        "value": -0.7,
+        "visits": 1
+      }
+    },
+    "skill|crop-harvesting|minecraft:overworld|crops=minecraft:beetroots,minecraft:carrots,minecraft:potatoes,minecraft:wheat;radius=wide;limit=48;drops=true;replant=true": {
+      "worksite-cluster-first": {
+        "value": 1.5459,
+        "visits": 2
+      },
+      "local-then-worksite": {
+        "value": 1.75,
+        "visits": 2
+      },
+      "nearest-next-target": {
+        "value": 0,
+        "visits": 2
+      }
+    },
+    "skill|item-collection|minecraft:overworld|radius=wide;patience=normal": {
+      "worksite-cluster-first": {
+        "value": 1.7036,
+        "visits": 363
+      },
+      "local-then-worksite": {
+        "value": 0.4993,
+        "visits": 364
+      },
+      "nearest-next-target": {
+        "value": 0.4775,
+        "visits": 362
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=near;break=false;swim=false;recovery=false": {
+      "thorough-search": {
+        "value": 8.7534,
+        "visits": 106
+      },
+      "balanced-search": {
+        "value": 9.1236,
+        "visits": 114
+      },
+      "quick-search": {
+        "value": 9.0175,
+        "visits": 101
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=giant;tool=fast-tool;approach=walk": {
+      "nearest-cut": {
+        "value": -2.5789,
+        "visits": 2
+      },
+      "trunk-first": {
+        "value": -0.3259,
+        "visits": 2
+      },
+      "outer-first": {
+        "value": -1.9667,
+        "visits": 1
+      }
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:andesite,minecraft:cobblestone,minecraft:diorite,minecraft:granite;amount=large;radius=area;prospect=true": {
+      "worksite-first": {
+        "value": -2.804,
+        "visits": 10
+      },
+      "nearest-visible": {
+        "value": -1.8634,
+        "visits": 9
+      },
+      "level-first": {
+        "value": -3.2064,
+        "visits": 11
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=healthy;build=true;weapon=true": {
+      "retreat-first": {
+        "value": 8.9204,
+        "visits": 171
+      },
+      "counterattack-first": {
+        "value": 7.5628,
+        "visits": 146
+      },
+      "cover-first": {
+        "value": 8.3475,
+        "visits": 144
+      },
+      "pillar-first": {
+        "value": 4.2323,
+        "visits": 162
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=near;health=healthy;build=true;weapon=true": {
+      "retreat-first": {
+        "value": 9.9285,
+        "visits": 23
+      },
+      "cover-first": {
+        "value": 9.7836,
+        "visits": 18
+      },
+      "pillar-first": {
+        "value": 10.5132,
+        "visits": 24
+      },
+      "counterattack-first": {
+        "value": 9.9126,
+        "visits": 24
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=large;tool=hand;approach=walk": {
+      "trunk-first": {
+        "value": 0.1012,
+        "visits": 29
+      },
+      "outer-first": {
+        "value": -0.6499,
+        "visits": 12
+      },
+      "nearest-cut": {
+        "value": -0.692,
+        "visits": 14
+      }
+    },
+    "skill|visible-search|minecraft:overworld|targets=minecraft:acacia_log,minecraft:birch_log,minecraft:cherry_log,minecraft:dark_oak_log;radius=regional;smart=true;look=true": {
+      "long-heading-commit": {
+        "value": 4.6658,
+        "visits": 248
+      },
+      "short-heading-commit": {
+        "value": 7.4205,
+        "visits": 380
+      },
+      "balanced-heading-commit": {
+        "value": 4.7667,
+        "visits": 301
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=giant;tool=hand;approach=walk": {
+      "trunk-first": {
+        "value": -1.1806,
+        "visits": 21
+      },
+      "outer-first": {
+        "value": -1.7947,
+        "visits": 9
+      },
+      "nearest-cut": {
+        "value": -1.5608,
+        "visits": 9
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=far;health=healthy;build=true;weapon=false": {
+      "cover-first": {
+        "value": 10.356,
+        "visits": 131
+      },
+      "retreat-first": {
+        "value": 10.4249,
+        "visits": 107
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=critical;build=true;weapon=false": {
+      "cover-first": {
+        "value": -3.5,
+        "visits": 5
+      },
+      "retreat-first": {
+        "value": 2.8,
+        "visits": 2
+      },
+      "pillar-first": {
+        "value": 3.5,
+        "visits": 1
+      }
+    },
+    "skill|portal-building|minecraft:overworld|frame=complete-ten;enter=false": {
+      "alternating-sides": {
+        "value": -2.0445,
+        "visits": 35
+      },
+      "farthest-column-first": {
+        "value": -2.2533,
+        "visits": 34
+      },
+      "nearest-column-first": {
+        "value": -2.0385,
+        "visits": 36
+      }
+    },
+    "skill|portal-building|minecraft:overworld|frame=complete-fourteen;enter=false": {
+      "alternating-sides": {
+        "value": -9.0855,
+        "visits": 35
+      },
+      "farthest-column-first": {
+        "value": -9.292,
+        "visits": 34
+      },
+      "nearest-column-first": {
+        "value": -8.8833,
+        "visits": 33
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=giant;tool=hand;approach=far": {
+      "outer-first": {
+        "value": -8.0113,
+        "visits": 43
+      },
+      "nearest-cut": {
+        "value": -7.9808,
+        "visits": 42
+      },
+      "trunk-first": {
+        "value": -7.2506,
+        "visits": 48
+      }
+    },
+    "skill|visible-search|minecraft:overworld|targets=minecraft:activator_rail,minecraft:barrel,minecraft:blast_furnace,minecraft:chest;radius=long-range;smart=true;look=true": {
+      "short-heading-commit": {
+        "value": -5.2063,
+        "visits": 8
+      },
+      "balanced-heading-commit": {
+        "value": -4.8,
+        "visits": 7
+      },
+      "long-heading-commit": {
+        "value": -3.4562,
+        "visits": 8
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=NearXZ;distance=far;break=true;swim=false;recovery=true": {
+      "quick-search": {
+        "value": 3.9742,
+        "visits": 9
+      },
+      "balanced-search": {
+        "value": 3.5395,
+        "visits": 9
+      },
+      "thorough-search": {
+        "value": 1.9989,
+        "visits": 9
+      }
+    },
+    "skill|combat|minecraft:overworld|targets=minecraft:chicken,minecraft:cow,minecraft:pig,minecraft:rabbit;radius=medium;weapon=sword;shield=true;enderman=dırect": {
+      "grounded-opening-hit": {
+        "value": 3.5,
+        "visits": 2
+      },
+      "critical-opening-hit": {
+        "value": 7.8462,
+        "visits": 2
+      }
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:gravel;amount=few;radius=area;prospect=false": {
+      "level-first": {
+        "value": 0,
+        "visits": 1
+      },
+      "nearest-visible": {
+        "value": 3.5,
+        "visits": 1
+      }
+    },
+    "skill|combat|minecraft:overworld|targets=minecraft:sheep;radius=medium;weapon=auto;shield=false;enderman=dırect": {
+      "critical-opening-hit": {
+        "value": 3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=contact;health=critical;build=true;weapon=true": {
+      "retreat-first": {
+        "value": -3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=healthy;build=true;weapon=false": {
+      "retreat-first": {
+        "value": 8.744,
+        "visits": 425
+      },
+      "cover-first": {
+        "value": 9.9683,
+        "visits": 400
+      }
+    },
+    "skill|combat|minecraft:overworld|targets=minecraft:sheep;radius=wide;weapon=sword;shield=false;enderman=dırect": {
+      "grounded-opening-hit": {
+        "value": 0.5833,
+        "visits": 12
+      },
+      "critical-opening-hit": {
+        "value": 0.3182,
+        "visits": 11
+      }
+    },
+    "skill|pillar-building|minecraft:overworld|height=short;ceiling=false": {
+      "balanced-placement-window": {
+        "value": -6.0767,
+        "visits": 28
+      },
+      "apex-placement-window": {
+        "value": -7.1147,
+        "visits": 27
+      },
+      "early-placement-window": {
+        "value": -7.1519,
+        "visits": 28
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.husk;distance=near;health=hurt;build=true;weapon=true": {
+      "pillar-first": {
+        "value": -10,
+        "visits": 25
+      },
+      "counterattack-first": {
+        "value": 11.3977,
+        "visits": 18
+      },
+      "retreat-first": {
+        "value": 10.0008,
+        "visits": 21
+      },
+      "cover-first": {
+        "value": 9.9955,
+        "visits": 17
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.husk;distance=contact;health=hurt;build=true;weapon=true": {
+      "pillar-first": {
+        "value": -3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.husk;distance=contact;health=critical;build=true;weapon=true": {
+      "retreat-first": {
+        "value": -3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=contact;health=hurt;build=true;weapon=false": {
+      "cover-first": {
+        "value": -3.5,
+        "visits": 1
+      },
+      "retreat-first": {
+        "value": -3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=contact;health=critical;build=true;weapon=false": {
+      "cover-first": {
+        "value": -3.5,
+        "visits": 1
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=large;tool=hand;approach=far": {
+      "trunk-first": {
+        "value": -2.6837,
+        "visits": 35
+      },
+      "outer-first": {
+        "value": -1.9767,
+        "visits": 28
+      },
+      "nearest-cut": {
+        "value": -2.0153,
+        "visits": 31
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=far;break=true;swim=false;recovery=true": {
+      "balanced-search": {
+        "value": -8.6833,
+        "visits": 30
+      },
+      "quick-search": {
+        "value": -9.0536,
+        "visits": 28
+      },
+      "thorough-search": {
+        "value": -9.75,
+        "visits": 26
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=large;tool=fast-tool;approach=walk": {
+      "nearest-cut": {
+        "value": -1.3825,
+        "visits": 2
+      },
+      "trunk-first": {
+        "value": -0.6533,
+        "visits": 5
+      },
+      "outer-first": {
+        "value": -0.8556,
+        "visits": 1
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=giant;tool=fast-tool;approach=near": {
+      "trunk-first": {
+        "value": -1.9,
+        "visits": 1
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=small;tool=fast-tool;approach=near": {
+      "outer-first": {
+        "value": 3.0333,
+        "visits": 1
+      },
+      "nearest-cut": {
+        "value": 1.3667,
+        "visits": 2
+      },
+      "trunk-first": {
+        "value": 3.0333,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=far;health=critical;build=true;weapon=true": {
+      "pillar-first": {
+        "value": 3.5,
+        "visits": 1
+      },
+      "cover-first": {
+        "value": 0.7,
+        "visits": 2
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=far;health=hurt;build=true;weapon=true": {
+      "retreat-first": {
+        "value": -9.9957,
+        "visits": 18
+      },
+      "counterattack-first": {
+        "value": -9.8654,
+        "visits": 10
+      },
+      "cover-first": {
+        "value": -9.8654,
+        "visits": 10
+      },
+      "pillar-first": {
+        "value": -9.6814,
+        "visits": 8
+      }
+    },
+    "skill|visible-search|minecraft:overworld|targets=minecraft:beetroots,minecraft:carrots,minecraft:potatoes,minecraft:wheat;radius=regional;smart=false;look=true": {
+      "balanced-heading-commit": {
+        "value": 0.7,
+        "visits": 4
+      },
+      "long-heading-commit": {
+        "value": 1.025,
+        "visits": 4
+      },
+      "short-heading-commit": {
+        "value": -3.15,
+        "visits": 3
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=healthy;build=true;weapon=true": {
+      "counterattack-first": {
+        "value": 9.3784,
+        "visits": 21
+      },
+      "retreat-first": {
+        "value": 9.9999,
+        "visits": 25
+      },
+      "pillar-first": {
+        "value": 9.3554,
+        "visits": 21
+      },
+      "cover-first": {
+        "value": 9.963,
+        "visits": 13
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=near;health=healthy;build=true;weapon=false": {
+      "retreat-first": {
+        "value": 3.7161,
+        "visits": 374
+      },
+      "pillar-first": {
+        "value": 9.4794,
+        "visits": 350
+      },
+      "cover-first": {
+        "value": 0,
+        "visits": 350
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=hurt;build=true;weapon=false": {
+      "retreat-first": {
+        "value": -7.9955,
+        "visits": 11
+      },
+      "cover-first": {
+        "value": -5.0873,
+        "visits": 8
+      },
+      "pillar-first": {
+        "value": -6.3376,
+        "visits": 12
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=large;tool=fast-tool;approach=far": {
+      "outer-first": {
+        "value": -3.9588,
+        "visits": 18
+      },
+      "trunk-first": {
+        "value": -7.1697,
+        "visits": 12
+      },
+      "nearest-cut": {
+        "value": -2.7937,
+        "visits": 15
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=near;health=healthy;build=true;weapon=false": {
+      "retreat-first": {
+        "value": 9.5098,
+        "visits": 7
+      },
+      "pillar-first": {
+        "value": 9.7929,
+        "visits": 9
+      },
+      "cover-first": {
+        "value": 11.0065,
+        "visits": 13
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=contact;health=healthy;build=true;weapon=false": {
+      "cover-first": {
+        "value": 3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=hurt;build=true;weapon=false": {
+      "cover-first": {
+        "value": -2.9372,
+        "visits": 387
+      },
+      "retreat-first": {
+        "value": 0.6475,
+        "visits": 396
+      },
+      "pillar-first": {
+        "value": 3.8971,
+        "visits": 372
+      }
+    },
+    "skill|visible-search|minecraft:overworld|targets=minecraft:acacia_log,minecraft:bamboo_block,minecraft:birch_log,minecraft:cherry_log;radius=long-range;smart=true;look=true": {
+      "long-heading-commit": {
+        "value": 3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=contact;health=critical;build=true;weapon=true": {
+      "counterattack-first": {
+        "value": 3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=hurt;build=true;weapon=false": {
+      "cover-first": {
+        "value": 8.9856,
+        "visits": 350
+      },
+      "retreat-first": {
+        "value": 10.001,
+        "visits": 352
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=near;health=hurt;build=true;weapon=false": {
+      "retreat-first": {
+        "value": 9.5098,
+        "visits": 7
+      },
+      "cover-first": {
+        "value": 9.2458,
+        "visits": 6
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=far;health=hurt;build=true;weapon=false": {
+      "retreat-first": {
+        "value": 9.4913,
+        "visits": 91
+      },
+      "cover-first": {
+        "value": 10.2523,
+        "visits": 94
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=far;health=hurt;build=true;weapon=false": {
+      "retreat-first": {
+        "value": 11.4991,
+        "visits": 28
+      },
+      "pillar-first": {
+        "value": 11.143,
+        "visits": 27
+      },
+      "cover-first": {
+        "value": 13.1038,
+        "visits": 26
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=far;health=hurt;build=true;weapon=false": {
+      "cover-first": {
+        "value": 9.75,
+        "visits": 26
+      },
+      "retreat-first": {
+        "value": 10,
+        "visits": 25
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=medium;break=false;swim=false;recovery=true": {
+      "balanced-search": {
+        "value": 3.5,
+        "visits": 1
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=medium;break=false;swim=false;recovery=false": {
+      "quick-search": {
+        "value": 3.5,
+        "visits": 1
+      },
+      "balanced-search": {
+        "value": 3.22,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=healthy;build=true;weapon=true": {
+      "cover-first": {
+        "value": 5.9837,
+        "visits": 419
+      },
+      "retreat-first": {
+        "value": 2.0047,
+        "visits": 425
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=hurt;build=true;weapon=true": {
+      "retreat-first": {
+        "value": -5.0167,
+        "visits": 3
+      },
+      "cover-first": {
+        "value": -7.9498,
+        "visits": 6
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=near;health=critical;build=true;weapon=true": {
+      "cover-first": {
+        "value": -3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=far;health=hurt;build=true;weapon=true": {
+      "retreat-first": {
+        "value": -9.4808,
+        "visits": 26
+      },
+      "cover-first": {
+        "value": -9.5346,
+        "visits": 26
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=critical;build=true;weapon=true": {
+      "retreat-first": {
+        "value": -3.5,
+        "visits": 2
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=contact;health=hurt;build=true;weapon=false": {
+      "pillar-first": {
+        "value": 3.5,
+        "visits": 1
+      },
+      "cover-first": {
+        "value": 3.5,
+        "visits": 1
+      }
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:stone;amount=batch;radius=local;prospect=true": {
+      "nearest-visible": {
+        "value": 3.5,
+        "visits": 1
+      },
+      "level-first": {
+        "value": 3.5,
+        "visits": 1
+      },
+      "worksite-first": {
+        "value": 0,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=near;health=hurt;build=true;weapon=false": {
+      "cover-first": {
+        "value": 10.0148,
+        "visits": 25
+      },
+      "pillar-first": {
+        "value": 10.0089,
+        "visits": 25
+      },
+      "retreat-first": {
+        "value": 10.7091,
+        "visits": 25
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=contact;health=critical;build=true;weapon=false": {
+      "cover-first": {
+        "value": -3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=hurt;build=true;weapon=true": {
+      "counterattack-first": {
+        "value": 3.5,
+        "visits": 1
+      },
+      "retreat-first": {
+        "value": 9.9522,
+        "visits": 25
+      },
+      "cover-first": {
+        "value": 9.9303,
+        "visits": 25
+      },
+      "pillar-first": {
+        "value": 9.9289,
+        "visits": 24
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=far;health=hurt;build=true;weapon=true": {
+      "pillar-first": {
+        "value": 3.5,
+        "visits": 1
+      },
+      "cover-first": {
+        "value": 4.9,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=near;health=hurt;build=true;weapon=true": {
+      "retreat-first": {
+        "value": 3.5,
+        "visits": 1
+      },
+      "cover-first": {
+        "value": 9.944,
+        "visits": 25
+      },
+      "pillar-first": {
+        "value": 9.9416,
+        "visits": 25
+      },
+      "counterattack-first": {
+        "value": 9.9408,
+        "visits": 25
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=far;health=hurt;build=true;weapon=true": {
+      "pillar-first": {
+        "value": 9.7292,
+        "visits": 26
+      },
+      "cover-first": {
+        "value": 9.9527,
+        "visits": 50
+      },
+      "retreat-first": {
+        "value": 10.6392,
+        "visits": 49
+      },
+      "counterattack-first": {
+        "value": 9.9501,
+        "visits": 50
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=near;health=hurt;build=true;weapon=true": {
+      "retreat-first": {
+        "value": 9.9997,
+        "visits": 25
+      },
+      "cover-first": {
+        "value": 9.9996,
+        "visits": 25
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=near;health=hurt;build=true;weapon=true": {
+      "cover-first": {
+        "value": 9.9999,
+        "visits": 25
+      },
+      "pillar-first": {
+        "value": 9.9992,
+        "visits": 22
+      },
+      "counterattack-first": {
+        "value": 9.9992,
+        "visits": 22
+      },
+      "retreat-first": {
+        "value": 9.9999,
+        "visits": 25
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=near;health=healthy;build=true;weapon=true": {
+      "cover-first": {
+        "value": 3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=contact;health=hurt;build=true;weapon=false": {
+      "retreat-first": {
+        "value": -10,
+        "visits": 25
+      },
+      "cover-first": {
+        "value": -9.4808,
+        "visits": 26
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=contact;health=critical;build=true;weapon=false": {
+      "cover-first": {
+        "value": 0,
+        "visits": 2
+      },
+      "retreat-first": {
+        "value": -0.3405,
+        "visits": 2
+      }
+    },
+    "skill|movement|minecraft:overworld|goal=Adjacent;distance=near;break=false;swim=false;recovery=true": {
+      "quick-search": {
+        "value": -4.0972,
+        "visits": 4
+      },
+      "balanced-search": {
+        "value": -4.3522,
+        "visits": 5
+      },
+      "thorough-search": {
+        "value": -7.2537,
+        "visits": 3
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=critical;build=true;weapon=true": {
+      "pillar-first": {
+        "value": 3.5,
+        "visits": 1
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=large;tool=fast-tool;approach=near": {
+      "trunk-first": {
+        "value": -0.7,
+        "visits": 1
+      },
+      "nearest-cut": {
+        "value": 2.5667,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=far;health=critical;build=true;weapon=true": {
+      "cover-first": {
+        "value": -3.5,
+        "visits": 1
+      },
+      "retreat-first": {
+        "value": 3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=near;health=healthy;build=true;weapon=false": {
+      "pillar-first": {
+        "value": 11.9781,
+        "visits": 72
+      },
+      "retreat-first": {
+        "value": 12.1782,
+        "visits": 75
+      },
+      "cover-first": {
+        "value": 12.3108,
+        "visits": 75
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=critical;build=true;weapon=false": {
+      "retreat-first": {
+        "value": 0,
+        "visits": 2
+      },
+      "cover-first": {
+        "value": -3.5,
+        "visits": 1
+      }
+    },
+    "skill|tree-chopping|minecraft:overworld|size=giant;tool=hand;approach=near": {
+      "nearest-cut": {
+        "value": -1.5808,
+        "visits": 2
+      },
+      "trunk-first": {
+        "value": -1.8727,
+        "visits": 2
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=far;health=critical;build=true;weapon=false": {
+      "retreat-first": {
+        "value": 3.5,
+        "visits": 1
+      }
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=far;health=critical;build=true;weapon=false": {
+      "retreat-first": {
+        "value": 3.5,
+        "visits": 1
+      }
+    }
+  },
+  "preferences": {},
+  "performance": {},
+  "skillPerformance": {
+    "skill|movement|minecraft:overworld|goal=Any;distance=far;break=false;swim=false;recovery=false": {
+      "runs": 3615,
+      "completedRuns": 335,
+      "totalUnits": 335,
+      "totalTicks": 106790,
+      "bestTicksPerUnit": 109
+    },
+    "skill|tree-chopping|minecraft:overworld|size=small;tool=hand;approach=far": {
+      "runs": 3009,
+      "completedRuns": 1349,
+      "totalUnits": 2727,
+      "totalTicks": 730769,
+      "bestTicksPerUnit": 118.8333
+    },
+    "skill|movement|minecraft:overworld|goal=Any;distance=medium;break=false;swim=false;recovery=false": {
+      "runs": 1744,
+      "completedRuns": 842,
+      "totalUnits": 842,
+      "totalTicks": 50990,
+      "bestTicksPerUnit": 22
+    },
+    "skill|item-collection|minecraft:overworld|radius=small;patience=normal": {
+      "runs": 10972,
+      "completedRuns": 10972,
+      "totalUnits": 18915,
+      "totalTicks": 539708,
+      "bestTicksPerUnit": 4
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:acacia_log,minecraft:acacia_planks,minecraft:acacia_wood,minecraft:bamboo_planks;amount=few;radius=wide;prospect=false": {
+      "runs": 663,
+      "completedRuns": 663,
+      "totalUnits": 1300,
+      "totalTicks": 520559,
+      "bestTicksPerUnit": 80
+    },
+    "skill|Craft planks|minecraft:overworld|job": {
+      "runs": 1196,
+      "completedRuns": 1196,
+      "totalUnits": 1196,
+      "totalTicks": 22776,
+      "bestTicksPerUnit": 2
+    },
+    "skill|Craft Crafting Table|minecraft:overworld|job": {
+      "runs": 1092,
+      "completedRuns": 1092,
+      "totalUnits": 1092,
+      "totalTicks": 2665,
+      "bestTicksPerUnit": 2
+    },
+    "skill|Craft Stick|minecraft:overworld|job": {
+      "runs": 1300,
+      "completedRuns": 1300,
+      "totalUnits": 1300,
+      "totalTicks": 3549,
+      "bestTicksPerUnit": 2
+    },
+    "skill|movement|minecraft:overworld|goal=Any;distance=near;break=true;swim=false;recovery=true": {
+      "runs": 247,
+      "completedRuns": 143,
+      "totalUnits": 143,
+      "totalTicks": 3536,
+      "bestTicksPerUnit": 10
+    },
+    "skill|Craft Wooden Pickaxe|minecraft:overworld|job": {
+      "runs": 832,
+      "completedRuns": 780,
+      "totalUnits": 780,
+      "totalTicks": 25311,
+      "bestTicksPerUnit": 20
+    },
+    "skill|Get a Stone Pickaxe|minecraft:overworld|job": {
+      "runs": 15431,
+      "completedRuns": 754,
+      "totalUnits": 754,
+      "totalTicks": 1008436,
+      "bestTicksPerUnit": 24
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=near;break=true;swim=false;recovery=true": {
+      "runs": 42848,
+      "completedRuns": 1508,
+      "totalUnits": 1508,
+      "totalTicks": 184769,
+      "bestTicksPerUnit": 2
+    },
+    "skill|Mine N stone|minecraft:overworld|size=few;unit=stone": {
+      "runs": 1144,
+      "completedRuns": 767,
+      "totalUnits": 2782,
+      "totalTicks": 659529,
+      "bestTicksPerUnit": 35
+    },
+    "skill|movement|minecraft:overworld|goal=Near;distance=near;break=false;swim=false;recovery=true": {
+      "runs": 187034,
+      "completedRuns": 9557,
+      "totalUnits": 9557,
+      "totalTicks": 101680,
+      "bestTicksPerUnit": 2
+    },
+    "skill|Tunnel|minecraft:overworld|size=few;unit=blocks": {
+      "runs": 33735,
+      "completedRuns": 7228,
+      "totalUnits": 41145,
+      "totalTicks": 917462,
+      "bestTicksPerUnit": 4.6667
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:stone;amount=few;radius=local;prospect=true": {
+      "runs": 546,
+      "completedRuns": 520,
+      "totalUnits": 377,
+      "totalTicks": 63713,
+      "bestTicksPerUnit": 43
+    },
+    "skill|item-collection|minecraft:overworld|radius=small;patience=short": {
+      "runs": 12820,
+      "completedRuns": 12820,
+      "totalUnits": 21825,
+      "totalTicks": 305194,
+      "bestTicksPerUnit": 3
+    },
+    "skill|movement|minecraft:overworld|goal=Near;distance=medium;break=false;swim=false;recovery=true": {
+      "runs": 65543,
+      "completedRuns": 5123,
+      "totalUnits": 5123,
+      "totalTicks": 503681,
+      "bestTicksPerUnit": 22
+    },
+    "skill|Dig prospecting stairs|minecraft:overworld|job": {
+      "runs": 8710,
+      "completedRuns": 5382,
+      "totalUnits": 5382,
+      "totalTicks": 2249650,
+      "bestTicksPerUnit": 4
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:deepslate_iron_ore,minecraft:iron_ore;amount=batch;radius=wide;prospect=true": {
+      "runs": 3770,
+      "completedRuns": 481,
+      "totalUnits": 273,
+      "totalTicks": 146705,
+      "bestTicksPerUnit": 193.25
+    },
+    "skill|item-collection|minecraft:overworld|radius=medium;patience=normal": {
+      "runs": 1464,
+      "completedRuns": 1464,
+      "totalUnits": 2838,
+      "totalTicks": 231873,
+      "bestTicksPerUnit": 2
+    },
+    "skill|tree-chopping|minecraft:overworld|size=small;tool=hand;approach=walk": {
+      "runs": 9964,
+      "completedRuns": 1871,
+      "totalUnits": 4207,
+      "totalTicks": 605914,
+      "bestTicksPerUnit": 98.6667
+    },
+    "skill|tree-chopping|minecraft:overworld|size=small;tool=hand;approach=near": {
+      "runs": 1372,
+      "completedRuns": 478,
+      "totalUnits": 1401,
+      "totalTicks": 184698,
+      "bestTicksPerUnit": 111.5
+    },
+    "skill|movement|minecraft:overworld|goal=Any;distance=near;break=false;swim=false;recovery=false": {
+      "runs": 10306,
+      "completedRuns": 1830,
+      "totalUnits": 1830,
+      "totalTicks": 13666,
+      "bestTicksPerUnit": 2
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=medium;break=true;swim=false;recovery=true": {
+      "runs": 949,
+      "completedRuns": 689,
+      "totalUnits": 689,
+      "totalTicks": 132873,
+      "bestTicksPerUnit": 33
+    },
+    "skill|Bridge|minecraft:overworld|size=single;unit=blocks": {
+      "runs": 52,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 130,
+      "bestTicksPerUnit": 10
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=near;break=false;swim=false;recovery=true": {
+      "runs": 338,
+      "completedRuns": 143,
+      "totalUnits": 143,
+      "totalTicks": 196885,
+      "bestTicksPerUnit": 2
+    },
+    "skill|Craft Furnace|minecraft:overworld|job": {
+      "runs": 143,
+      "completedRuns": 143,
+      "totalUnits": 143,
+      "totalTicks": 12350,
+      "bestTicksPerUnit": 19
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:deepslate_iron_ore,minecraft:iron_ore;amount=few;radius=wide;prospect=true": {
+      "runs": 2613,
+      "completedRuns": 2353,
+      "totalUnits": 195,
+      "totalTicks": 175513,
+      "bestTicksPerUnit": 387
+    },
+    "skill|Get a Iron Pickaxe|minecraft:overworld|job": {
+      "runs": 1313,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|Get a Iron Sword|minecraft:overworld|job": {
+      "runs": 1170,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 48373,
+      "bestTicksPerUnit": 3721
+    },
+    "skill|directional-travel|minecraft:overworld|distance=far;sprint=true": {
+      "runs": 3913,
+      "completedRuns": 2509,
+      "totalUnits": 2509,
+      "totalTicks": 1098370,
+      "bestTicksPerUnit": 171
+    },
+    "skill|movement|minecraft:overworld|goal=NearXZ;distance=far;break=false;swim=false;recovery=true": {
+      "runs": 29419,
+      "completedRuns": 8047,
+      "totalUnits": 8047,
+      "totalTicks": 3408990,
+      "bestTicksPerUnit": 152
+    },
+    "skill|Eat|minecraft:overworld|job": {
+      "runs": 38850,
+      "completedRuns": 38824,
+      "totalUnits": 38824,
+      "totalTicks": 1488117,
+      "bestTicksPerUnit": 2
+    },
+    "skill|directional-travel|minecraft:overworld|distance=far;sprint=false": {
+      "runs": 24726,
+      "completedRuns": 4797,
+      "totalUnits": 4797,
+      "totalTicks": 2066623,
+      "bestTicksPerUnit": 219
+    },
+    "skill|combat|minecraft:overworld|targets=minecraft:chicken,minecraft:cow,minecraft:pig,minecraft:sheep;radius=medium;weapon=sword;shield=false;enderman=auto": {
+      "runs": 104,
+      "completedRuns": 104,
+      "totalUnits": 91,
+      "totalTicks": 17823,
+      "bestTicksPerUnit": 115
+    },
+    "skill|movement|minecraft:overworld|goal=Any;distance=medium;break=true;swim=false;recovery=true": {
+      "runs": 546,
+      "completedRuns": 156,
+      "totalUnits": 156,
+      "totalTicks": 18707,
+      "bestTicksPerUnit": 18
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:andesite,minecraft:cobblestone,minecraft:diorite,minecraft:granite;amount=large;radius=area;prospect=false": {
+      "runs": 2002,
+      "completedRuns": 1989,
+      "totalUnits": 14352,
+      "totalTicks": 1309698,
+      "bestTicksPerUnit": 40.8125
+    },
+    "skill|directional-travel|minecraft:overworld|distance=medium;sprint=false": {
+      "runs": 37895,
+      "completedRuns": 6019,
+      "totalUnits": 6019,
+      "totalTicks": 1229748,
+      "bestTicksPerUnit": 79
+    },
+    "skill|movement|minecraft:overworld|goal=NearXZ;distance=medium;break=false;swim=false;recovery=true": {
+      "runs": 37115,
+      "completedRuns": 5278,
+      "totalUnits": 5278,
+      "totalTicks": 985751,
+      "bestTicksPerUnit": 79
+    },
+    "skill|Find|minecraft:overworld|job": {
+      "runs": 2301,
+      "completedRuns": 2301,
+      "totalUnits": 2301,
+      "totalTicks": 895089,
+      "bestTicksPerUnit": 7
+    },
+    "skill|self-preservation|minecraft:overworld|threat=aır;health=healthy": {
+      "runs": 26559,
+      "completedRuns": 25701,
+      "totalUnits": 25701,
+      "totalTicks": 1148004,
+      "bestTicksPerUnit": 20
+    },
+    "skill|Tunnel|minecraft:overworld|size=large;unit=blocks": {
+      "runs": 14729,
+      "completedRuns": 91,
+      "totalUnits": 6786,
+      "totalTicks": 318448,
+      "bestTicksPerUnit": 11.2
+    },
+    "skill|tree-chopping|minecraft:overworld|size=small;tool=fast-tool;approach=far": {
+      "runs": 728,
+      "completedRuns": 416,
+      "totalUnits": 1300,
+      "totalTicks": 181870,
+      "bestTicksPerUnit": 73.6
+    },
+    "skill|movement|minecraft:overworld|goal=Any;distance=near;break=false;swim=false;recovery=true": {
+      "runs": 275,
+      "completedRuns": 203,
+      "totalUnits": 203,
+      "totalTicks": 700,
+      "bestTicksPerUnit": 2
+    },
+    "skill|tree-chopping|minecraft:overworld|size=small;tool=fast-tool;approach=walk": {
+      "runs": 429,
+      "completedRuns": 260,
+      "totalUnits": 663,
+      "totalTicks": 69888,
+      "bestTicksPerUnit": 67.2
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=far;health=healthy;build=true;weapon=true": {
+      "runs": 2639,
+      "completedRuns": 2639,
+      "totalUnits": 2639,
+      "totalTicks": 632164,
+      "bestTicksPerUnit": 49
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=contact;health=healthy;build=true;weapon=true": {
+      "runs": 819,
+      "completedRuns": 819,
+      "totalUnits": 819,
+      "totalTicks": 30563,
+      "bestTicksPerUnit": 37
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=near;health=healthy;build=true;weapon=true": {
+      "runs": 793,
+      "completedRuns": 793,
+      "totalUnits": 793,
+      "totalTicks": 88439,
+      "bestTicksPerUnit": 83
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=critical;build=true;weapon=true": {
+      "runs": 91,
+      "completedRuns": 52,
+      "totalUnits": 52,
+      "totalTicks": 13299,
+      "bestTicksPerUnit": 48
+    },
+    "skill|self-preservation|minecraft:overworld|threat=health;health=critical": {
+      "runs": 507,
+      "completedRuns": 455,
+      "totalUnits": 455,
+      "totalTicks": 248794,
+      "bestTicksPerUnit": 5
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=hurt;build=true;weapon=true": {
+      "runs": 5733,
+      "completedRuns": 3237,
+      "totalUnits": 3237,
+      "totalTicks": 246259,
+      "bestTicksPerUnit": 19
+    },
+    "skill|self-preservation|minecraft:overworld|threat=health;health=hurt": {
+      "runs": 212282,
+      "completedRuns": 211346,
+      "totalUnits": 211346,
+      "totalTicks": 36020968,
+      "bestTicksPerUnit": 2
+    },
+    "skill|visible-search|minecraft:overworld|targets=minecraft:acacia_log,minecraft:acacia_planks,minecraft:acacia_wood,minecraft:bamboo_planks;radius=local;smart=true;look=true": {
+      "runs": 273,
+      "completedRuns": 65,
+      "totalUnits": 65,
+      "totalTicks": 13247,
+      "bestTicksPerUnit": 40
+    },
+    "skill|movement|minecraft:overworld|goal=Near;distance=far;break=false;swim=false;recovery=true": {
+      "runs": 164100,
+      "completedRuns": 5605,
+      "totalUnits": 5605,
+      "totalTicks": 2426101,
+      "bestTicksPerUnit": 117
+    },
+    "skill|visible-search|minecraft:overworld|targets=minecraft:deepslate_iron_ore,minecraft:iron_ore;radius=regional;smart=true;look=true": {
+      "runs": 3237,
+      "completedRuns": 2795,
+      "totalUnits": 2795,
+      "totalTicks": 47021,
+      "bestTicksPerUnit": 6
+    },
+    "skill|Return to Surface|minecraft:overworld|job": {
+      "runs": 15574,
+      "completedRuns": 650,
+      "totalUnits": 650,
+      "totalTicks": 117195,
+      "bestTicksPerUnit": 2
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=healthy;build=true;weapon=false": {
+      "runs": 27092,
+      "completedRuns": 21853,
+      "totalUnits": 21853,
+      "totalTicks": 5211791,
+      "bestTicksPerUnit": 72
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=healthy;build=true;weapon=false": {
+      "runs": 1482,
+      "completedRuns": 1430,
+      "totalUnits": 1430,
+      "totalTicks": 203801,
+      "bestTicksPerUnit": 114
+    },
+    "skill|tree-chopping|minecraft:overworld|size=giant;tool=fast-tool;approach=far": {
+      "runs": 26,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|Bridge|minecraft:overworld|size=large;unit=blocks": {
+      "runs": 182,
+      "completedRuns": 13,
+      "totalUnits": 624,
+      "totalTicks": 3185,
+      "bestTicksPerUnit": 5.1042
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=far;health=critical;build=true;weapon=false": {
+      "runs": 65,
+      "completedRuns": 52,
+      "totalUnits": 52,
+      "totalTicks": 1053,
+      "bestTicksPerUnit": 5
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=contact;health=healthy;build=true;weapon=false": {
+      "runs": 559,
+      "completedRuns": 559,
+      "totalUnits": 559,
+      "totalTicks": 100087,
+      "bestTicksPerUnit": 30
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=near;health=healthy;build=true;weapon=false": {
+      "runs": 4446,
+      "completedRuns": 4446,
+      "totalUnits": 4446,
+      "totalTicks": 2522039,
+      "bestTicksPerUnit": 73
+    },
+    "skill|movement|minecraft:overworld|goal=Any;distance=far;break=true;swim=false;recovery=true": {
+      "runs": 364,
+      "completedRuns": 91,
+      "totalUnits": 91,
+      "totalTicks": 47034,
+      "bestTicksPerUnit": 191
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=near;health=hurt;build=true;weapon=false": {
+      "runs": 3302,
+      "completedRuns": 1326,
+      "totalUnits": 1326,
+      "totalTicks": 812955,
+      "bestTicksPerUnit": 125
+    },
+    "skill|self-preservation|minecraft:overworld|threat=aır;health=hurt": {
+      "runs": 157651,
+      "completedRuns": 157274,
+      "totalUnits": 157274,
+      "totalTicks": 4667026,
+      "bestTicksPerUnit": 2
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:coal_ore,minecraft:deepslate_coal_ore;amount=batch;radius=wide;prospect=true": {
+      "runs": 650,
+      "completedRuns": 585,
+      "totalUnits": 1092,
+      "totalTicks": 171223,
+      "bestTicksPerUnit": 49.125
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=near;health=hurt;build=false;weapon=false": {
+      "runs": 3016,
+      "completedRuns": 1794,
+      "totalUnits": 1794,
+      "totalTicks": 3940183,
+      "bestTicksPerUnit": 112
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=contact;health=hurt;build=false;weapon=false": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 19656,
+      "bestTicksPerUnit": 1512
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=near;health=hurt;build=false;weapon=false": {
+      "runs": 3887,
+      "completedRuns": 1924,
+      "totalUnits": 1924,
+      "totalTicks": 581048,
+      "bestTicksPerUnit": 179
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=contact;health=hurt;build=false;weapon=false": {
+      "runs": 39,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 1027,
+      "bestTicksPerUnit": 79
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=contact;health=critical;build=false;weapon=false": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 1846,
+      "bestTicksPerUnit": 142
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=near;health=critical;build=false;weapon=false": {
+      "runs": 26,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 390,
+      "bestTicksPerUnit": 30
+    },
+    "skill|self-preservation|minecraft:overworld|threat=aır;health=critical": {
+      "runs": 91,
+      "completedRuns": 39,
+      "totalUnits": 39,
+      "totalTicks": 1534,
+      "bestTicksPerUnit": 31
+    },
+    "skill|movement|minecraft:overworld|goal=YLevel;distance=far;break=true;swim=false;recovery=true": {
+      "runs": 52,
+      "completedRuns": 39,
+      "totalUnits": 39,
+      "totalTicks": 33046,
+      "bestTicksPerUnit": 789
+    },
+    "skill|Stripmine|minecraft:overworld|job": {
+      "runs": 34385,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 57161,
+      "bestTicksPerUnit": 4397
+    },
+    "skill|movement|minecraft:overworld|goal=YLevel;distance=medium;break=true;swim=false;recovery=true": {
+      "runs": 65,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|movement|minecraft:overworld|goal=YLevel;distance=near;break=true;swim=false;recovery=true": {
+      "runs": 156,
+      "completedRuns": 52,
+      "totalUnits": 52,
+      "totalTicks": 728,
+      "bestTicksPerUnit": 4
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=near;health=healthy;build=true;weapon=true": {
+      "runs": 3484,
+      "completedRuns": 3484,
+      "totalUnits": 3484,
+      "totalTicks": 1582165,
+      "bestTicksPerUnit": 34
+    },
+    "skill|Clear obstruction|minecraft:overworld|job": {
+      "runs": 7440,
+      "completedRuns": 7440,
+      "totalUnits": 7440,
+      "totalTicks": 64613,
+      "bestTicksPerUnit": 2
+    },
+    "skill|Tunnel|minecraft:overworld|size=batch;unit=blocks": {
+      "runs": 286,
+      "completedRuns": 208,
+      "totalUnits": 4992,
+      "totalTicks": 185770,
+      "bestTicksPerUnit": 5.125
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=far;health=hurt;build=true;weapon=true": {
+      "runs": 5590,
+      "completedRuns": 5590,
+      "totalUnits": 5590,
+      "totalTicks": 2037828,
+      "bestTicksPerUnit": 50
+    },
+    "skill|tree-chopping|minecraft:overworld|size=large;tool=hand;approach=near": {
+      "runs": 91,
+      "completedRuns": 52,
+      "totalUnits": 260,
+      "totalTicks": 38948,
+      "bestTicksPerUnit": 117.2
+    },
+    "skill|crop-harvesting|minecraft:overworld|crops=minecraft:beetroots,minecraft:carrots,minecraft:potatoes,minecraft:wheat;radius=wide;limit=48;drops=true;replant=true": {
+      "runs": 78,
+      "completedRuns": 78,
+      "totalUnits": 858,
+      "totalTicks": 139282,
+      "bestTicksPerUnit": 43.9024
+    },
+    "skill|item-collection|minecraft:overworld|radius=wide;patience=normal": {
+      "runs": 9919,
+      "completedRuns": 9919,
+      "totalUnits": 494,
+      "totalTicks": 62101,
+      "bestTicksPerUnit": 4
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=far;health=critical;build=false;weapon=false": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 390,
+      "bestTicksPerUnit": 30
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=far;health=healthy;build=false;weapon=false": {
+      "runs": 3601,
+      "completedRuns": 3601,
+      "totalUnits": 3601,
+      "totalTicks": 616330,
+      "bestTicksPerUnit": 108
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=near;health=healthy;build=false;weapon=false": {
+      "runs": 624,
+      "completedRuns": 312,
+      "totalUnits": 312,
+      "totalTicks": 48477,
+      "bestTicksPerUnit": 54
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=near;break=false;swim=false;recovery=false": {
+      "runs": 4368,
+      "completedRuns": 4329,
+      "totalUnits": 4329,
+      "totalTicks": 18941,
+      "bestTicksPerUnit": 2
+    },
+    "skill|tree-chopping|minecraft:overworld|size=giant;tool=fast-tool;approach=walk": {
+      "runs": 65,
+      "completedRuns": 13,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|Deposit|minecraft:overworld|job": {
+      "runs": 260,
+      "completedRuns": 260,
+      "totalUnits": 260,
+      "totalTicks": 20488,
+      "bestTicksPerUnit": 21
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:andesite,minecraft:cobblestone,minecraft:diorite,minecraft:granite;amount=large;radius=area;prospect=true": {
+      "runs": 390,
+      "completedRuns": 247,
+      "totalUnits": 4901,
+      "totalTicks": 336635,
+      "bestTicksPerUnit": 44.8734
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=healthy;build=true;weapon=true": {
+      "runs": 12025,
+      "completedRuns": 10673,
+      "totalUnits": 10673,
+      "totalTicks": 1510990,
+      "bestTicksPerUnit": 42
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=near;health=healthy;build=true;weapon=true": {
+      "runs": 1157,
+      "completedRuns": 1157,
+      "totalUnits": 1157,
+      "totalTicks": 141960,
+      "bestTicksPerUnit": 92
+    },
+    "skill|tree-chopping|minecraft:overworld|size=large;tool=hand;approach=walk": {
+      "runs": 487,
+      "completedRuns": 200,
+      "totalUnits": 653,
+      "totalTicks": 232707,
+      "bestTicksPerUnit": 113.6
+    },
+    "skill|visible-search|minecraft:overworld|targets=minecraft:acacia_log,minecraft:birch_log,minecraft:cherry_log,minecraft:dark_oak_log;radius=regional;smart=true;look=true": {
+      "runs": 1399,
+      "completedRuns": 1257,
+      "totalUnits": 1257,
+      "totalTicks": 113535,
+      "bestTicksPerUnit": 2
+    },
+    "skill|tree-chopping|minecraft:overworld|size=giant;tool=hand;approach=walk": {
+      "runs": 375,
+      "completedRuns": 66,
+      "totalUnits": 113,
+      "totalTicks": 251839,
+      "bestTicksPerUnit": 150.5
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=far;health=healthy;build=true;weapon=false": {
+      "runs": 11661,
+      "completedRuns": 11661,
+      "totalUnits": 11661,
+      "totalTicks": 3490565,
+      "bestTicksPerUnit": 108
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=critical;build=true;weapon=false": {
+      "runs": 104,
+      "completedRuns": 39,
+      "totalUnits": 39,
+      "totalTicks": 2678,
+      "bestTicksPerUnit": 19
+    },
+    "skill|portal-building|minecraft:overworld|frame=complete-ten;enter=false": {
+      "runs": 6968,
+      "completedRuns": 39,
+      "totalUnits": 546,
+      "totalTicks": 3653,
+      "bestTicksPerUnit": 4.7857
+    },
+    "skill|portal-building|minecraft:overworld|frame=open-ten;enter=false": {
+      "runs": 6955,
+      "completedRuns": 13,
+      "totalUnits": 130,
+      "totalTicks": 1248,
+      "bestTicksPerUnit": 9.6
+    },
+    "skill|portal-building|minecraft:overworld|frame=complete-fourteen;enter=false": {
+      "runs": 6929,
+      "completedRuns": 39,
+      "totalUnits": 546,
+      "totalTicks": 4134,
+      "bestTicksPerUnit": 6.4286
+    },
+    "skill|Gather Food|minecraft:overworld|job": {
+      "runs": 572,
+      "completedRuns": 468,
+      "totalUnits": 468,
+      "totalTicks": 72514,
+      "bestTicksPerUnit": 4
+    },
+    "skill|tree-chopping|minecraft:overworld|size=giant;tool=hand;approach=far": {
+      "runs": 1585,
+      "completedRuns": 14,
+      "totalUnits": 26,
+      "totalTicks": 4482,
+      "bestTicksPerUnit": 172.3846
+    },
+    "skill|Mine N stone|minecraft:overworld|size=batch;unit=stone": {
+      "runs": 65,
+      "completedRuns": 65,
+      "totalUnits": 962,
+      "totalTicks": 80340,
+      "bestTicksPerUnit": 66.4375
+    },
+    "skill|Craft Stone Pickaxe|minecraft:overworld|job": {
+      "runs": 143,
+      "completedRuns": 104,
+      "totalUnits": 104,
+      "totalTicks": 2119,
+      "bestTicksPerUnit": 12
+    },
+    "skill|Craft Stone Sword|minecraft:overworld|job": {
+      "runs": 65,
+      "completedRuns": 65,
+      "totalUnits": 65,
+      "totalTicks": 741,
+      "bestTicksPerUnit": 11
+    },
+    "skill|Craft Stone Axe|minecraft:overworld|job": {
+      "runs": 65,
+      "completedRuns": 65,
+      "totalUnits": 65,
+      "totalTicks": 780,
+      "bestTicksPerUnit": 11
+    },
+    "skill|visible-search|minecraft:overworld|targets=minecraft:activator_rail,minecraft:barrel,minecraft:blast_furnace,minecraft:chest;radius=long-range;smart=true;look=true": {
+      "runs": 299,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 5148,
+      "bestTicksPerUnit": 396
+    },
+    "skill|movement|minecraft:overworld|goal=NearXZ;distance=far;break=true;swim=false;recovery=true": {
+      "runs": 351,
+      "completedRuns": 299,
+      "totalUnits": 299,
+      "totalTicks": 123006,
+      "bestTicksPerUnit": 147
+    },
+    "skill|combat|minecraft:overworld|targets=minecraft:chicken,minecraft:cow,minecraft:pig,minecraft:rabbit;radius=medium;weapon=sword;shield=true;enderman=dırect": {
+      "runs": 52,
+      "completedRuns": 52,
+      "totalUnits": 78,
+      "totalTicks": 7124,
+      "bestTicksPerUnit": 66
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:gravel;amount=few;radius=area;prospect=false": {
+      "runs": 26,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 1144,
+      "bestTicksPerUnit": 44
+    },
+    "skill|combat|minecraft:overworld|targets=minecraft:sheep;radius=medium;weapon=auto;shield=false;enderman=dırect": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 1651,
+      "bestTicksPerUnit": 127
+    },
+    "skill|Craft bed|minecraft:overworld|job": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 364,
+      "bestTicksPerUnit": 28
+    },
+    "skill|Sleep|minecraft:overworld|job": {
+      "runs": 26,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 3770,
+      "bestTicksPerUnit": 128
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=contact;health=critical;build=true;weapon=true": {
+      "runs": 13,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=healthy;build=true;weapon=false": {
+      "runs": 9672,
+      "completedRuns": 9659,
+      "totalUnits": 9659,
+      "totalTicks": 1686906,
+      "bestTicksPerUnit": 111
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=hurt;build=false;weapon=false": {
+      "runs": 1690,
+      "completedRuns": 39,
+      "totalUnits": 39,
+      "totalTicks": 3783,
+      "bestTicksPerUnit": 63
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=critical;build=false;weapon=false": {
+      "runs": 39,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 455,
+      "bestTicksPerUnit": 35
+    },
+    "skill|combat|minecraft:overworld|targets=minecraft:sheep;radius=wide;weapon=sword;shield=false;enderman=dırect": {
+      "runs": 299,
+      "completedRuns": 299,
+      "totalUnits": 39,
+      "totalTicks": 11986,
+      "bestTicksPerUnit": 149
+    },
+    "skill|pillar-building|minecraft:overworld|height=short;ceiling=false": {
+      "runs": 1079,
+      "completedRuns": 130,
+      "totalUnits": 221,
+      "totalTicks": 3809,
+      "bestTicksPerUnit": 7
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.husk;distance=near;health=hurt;build=true;weapon=true": {
+      "runs": 1482,
+      "completedRuns": 741,
+      "totalUnits": 741,
+      "totalTicks": 89973,
+      "bestTicksPerUnit": 31
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.husk;distance=contact;health=hurt;build=true;weapon=true": {
+      "runs": 13,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.husk;distance=contact;health=critical;build=true;weapon=true": {
+      "runs": 13,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=contact;health=critical;build=false;weapon=false": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 1521,
+      "bestTicksPerUnit": 117
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=near;health=healthy;build=false;weapon=false": {
+      "runs": 780,
+      "completedRuns": 780,
+      "totalUnits": 780,
+      "totalTicks": 257959,
+      "bestTicksPerUnit": 58
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=contact;health=healthy;build=false;weapon=false": {
+      "runs": 26,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 8346,
+      "bestTicksPerUnit": 158
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=contact;health=hurt;build=false;weapon=false": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 1092,
+      "bestTicksPerUnit": 84
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=contact;health=hurt;build=true;weapon=false": {
+      "runs": 26,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=contact;health=critical;build=true;weapon=false": {
+      "runs": 13,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=near;health=healthy;build=false;weapon=false": {
+      "runs": 22178,
+      "completedRuns": 22178,
+      "totalUnits": 22178,
+      "totalTicks": 26087815,
+      "bestTicksPerUnit": 62
+    },
+    "skill|tree-chopping|minecraft:overworld|size=large;tool=hand;approach=far": {
+      "runs": 1042,
+      "completedRuns": 264,
+      "totalUnits": 701,
+      "totalTicks": 126984,
+      "bestTicksPerUnit": 131.4286
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=far;health=hurt;build=false;weapon=false": {
+      "runs": 845,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=near;health=hurt;build=false;weapon=false": {
+      "runs": 13,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=far;break=true;swim=false;recovery=true": {
+      "runs": 14365,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 18811,
+      "bestTicksPerUnit": 574
+    },
+    "skill|tree-chopping|minecraft:overworld|size=large;tool=fast-tool;approach=walk": {
+      "runs": 104,
+      "completedRuns": 13,
+      "totalUnits": 26,
+      "totalTicks": 3666,
+      "bestTicksPerUnit": 141
+    },
+    "skill|tree-chopping|minecraft:overworld|size=giant;tool=fast-tool;approach=near": {
+      "runs": 13,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|tree-chopping|minecraft:overworld|size=small;tool=fast-tool;approach=near": {
+      "runs": 52,
+      "completedRuns": 52,
+      "totalUnits": 169,
+      "totalTicks": 12766,
+      "bestTicksPerUnit": 63.4
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=far;health=critical;build=true;weapon=true": {
+      "runs": 39,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 57265,
+      "bestTicksPerUnit": 580
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=far;health=hurt;build=true;weapon=true": {
+      "runs": 598,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=healthy;build=false;weapon=false": {
+      "runs": 8697,
+      "completedRuns": 8619,
+      "totalUnits": 8619,
+      "totalTicks": 1858194,
+      "bestTicksPerUnit": 13
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=healthy;build=false;weapon=false": {
+      "runs": 26,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 4589,
+      "bestTicksPerUnit": 90
+    },
+    "skill|visible-search|minecraft:overworld|targets=minecraft:beetroots,minecraft:carrots,minecraft:potatoes,minecraft:wheat;radius=regional;smart=false;look=true": {
+      "runs": 143,
+      "completedRuns": 65,
+      "totalUnits": 65,
+      "totalTicks": 5538,
+      "bestTicksPerUnit": 7
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=healthy;build=true;weapon=true": {
+      "runs": 1066,
+      "completedRuns": 1053,
+      "totalUnits": 1053,
+      "totalTicks": 88140,
+      "bestTicksPerUnit": 66
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=near;health=healthy;build=true;weapon=false": {
+      "runs": 6162,
+      "completedRuns": 4121,
+      "totalUnits": 4121,
+      "totalTicks": 747175,
+      "bestTicksPerUnit": 114
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=hurt;build=true;weapon=false": {
+      "runs": 403,
+      "completedRuns": 52,
+      "totalUnits": 52,
+      "totalTicks": 5174,
+      "bestTicksPerUnit": 31
+    },
+    "skill|tree-chopping|minecraft:overworld|size=large;tool=fast-tool;approach=far": {
+      "runs": 585,
+      "completedRuns": 104,
+      "totalUnits": 390,
+      "totalTicks": 49426,
+      "bestTicksPerUnit": 78.875
+    },
+    "skill|Smelt Iron Ingot|minecraft:overworld|size=few;unit=items": {
+      "runs": 39,
+      "completedRuns": 39,
+      "totalUnits": 130,
+      "totalTicks": 27300,
+      "bestTicksPerUnit": 206.2
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=near;health=healthy;build=true;weapon=false": {
+      "runs": 377,
+      "completedRuns": 377,
+      "totalUnits": 377,
+      "totalTicks": 162825,
+      "bestTicksPerUnit": 373
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=contact;health=healthy;build=true;weapon=false": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 3549,
+      "bestTicksPerUnit": 273
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=hurt;build=true;weapon=false": {
+      "runs": 13611,
+      "completedRuns": 8671,
+      "totalUnits": 8671,
+      "totalTicks": 807170,
+      "bestTicksPerUnit": 4
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=critical;build=false;weapon=false": {
+      "runs": 39,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|visible-search|minecraft:overworld|targets=minecraft:acacia_log,minecraft:bamboo_block,minecraft:birch_log,minecraft:cherry_log;radius=long-range;smart=true;look=true": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 390,
+      "bestTicksPerUnit": 30
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=contact;health=critical;build=true;weapon=true": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 4251,
+      "bestTicksPerUnit": 327
+    },
+    "skill|fishing|minecraft:overworld|mode=continuous": {
+      "runs": 845,
+      "completedRuns": 832,
+      "totalUnits": 832,
+      "totalTicks": 663013,
+      "bestTicksPerUnit": 164
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=hurt;build=true;weapon=false": {
+      "runs": 6123,
+      "completedRuns": 6097,
+      "totalUnits": 6097,
+      "totalTicks": 1337960,
+      "bestTicksPerUnit": 111
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=near;health=hurt;build=true;weapon=false": {
+      "runs": 169,
+      "completedRuns": 169,
+      "totalUnits": 169,
+      "totalTicks": 18759,
+      "bestTicksPerUnit": 111
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=far;health=hurt;build=true;weapon=false": {
+      "runs": 8073,
+      "completedRuns": 8073,
+      "totalUnits": 8073,
+      "totalTicks": 1002183,
+      "bestTicksPerUnit": 35
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=far;health=hurt;build=true;weapon=false": {
+      "runs": 1807,
+      "completedRuns": 1807,
+      "totalUnits": 1807,
+      "totalTicks": 1289340,
+      "bestTicksPerUnit": 15
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=far;health=hurt;build=true;weapon=false": {
+      "runs": 1989,
+      "completedRuns": 1989,
+      "totalUnits": 1989,
+      "totalTicks": 19955,
+      "bestTicksPerUnit": 10
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=medium;break=false;swim=false;recovery=true": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 819,
+      "bestTicksPerUnit": 63
+    },
+    "skill|movement|minecraft:overworld|goal=Block;distance=medium;break=false;swim=false;recovery=false": {
+      "runs": 26,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 728,
+      "bestTicksPerUnit": 26
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=healthy;build=true;weapon=true": {
+      "runs": 7137,
+      "completedRuns": 4758,
+      "totalUnits": 4758,
+      "totalTicks": 773032,
+      "bestTicksPerUnit": 116
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=hurt;build=true;weapon=true": {
+      "runs": 117,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=near;health=critical;build=true;weapon=true": {
+      "runs": 13,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.enderman;distance=near;health=healthy;build=true;weapon=true": {
+      "runs": 3003,
+      "completedRuns": 3003,
+      "totalUnits": 3003,
+      "totalTicks": 6361121,
+      "bestTicksPerUnit": 148
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.enderman;distance=contact;health=healthy;build=true;weapon=true": {
+      "runs": 1196,
+      "completedRuns": 1196,
+      "totalUnits": 1196,
+      "totalTicks": 920127,
+      "bestTicksPerUnit": 117
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.enderman;distance=near;health=hurt;build=true;weapon=true": {
+      "runs": 6825,
+      "completedRuns": 6825,
+      "totalUnits": 6825,
+      "totalTicks": 1588496,
+      "bestTicksPerUnit": 111
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.enderman;distance=contact;health=hurt;build=true;weapon=true": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 1846,
+      "bestTicksPerUnit": 142
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.enderman;distance=near;health=hurt;build=false;weapon=true": {
+      "runs": 1144,
+      "completedRuns": 1144,
+      "totalUnits": 1144,
+      "totalTicks": 149903,
+      "bestTicksPerUnit": 89
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.enderman;distance=contact;health=hurt;build=false;weapon=true": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 2327,
+      "bestTicksPerUnit": 179
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=far;health=hurt;build=true;weapon=true": {
+      "runs": 1053,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 2054,
+      "bestTicksPerUnit": 5
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=critical;build=true;weapon=true": {
+      "runs": 26,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=contact;health=hurt;build=true;weapon=false": {
+      "runs": 26,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 9503,
+      "bestTicksPerUnit": 77
+    },
+    "skill|block-mining|minecraft:overworld|targets=minecraft:stone;amount=batch;radius=local;prospect=true": {
+      "runs": 39,
+      "completedRuns": 39,
+      "totalUnits": 182,
+      "totalTicks": 9893,
+      "bestTicksPerUnit": 51.4286
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=near;health=hurt;build=true;weapon=false": {
+      "runs": 1820,
+      "completedRuns": 1820,
+      "totalUnits": 1820,
+      "totalTicks": 1268384,
+      "bestTicksPerUnit": 694
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=contact;health=critical;build=true;weapon=false": {
+      "runs": 13,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=hurt;build=false;weapon=false": {
+      "runs": 52,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 1456,
+      "bestTicksPerUnit": 112
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=hurt;build=false;weapon=false": {
+      "runs": 2691,
+      "completedRuns": 1573,
+      "totalUnits": 1573,
+      "totalTicks": 437411,
+      "bestTicksPerUnit": 63
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=contact;health=healthy;build=false;weapon=false": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 5239,
+      "bestTicksPerUnit": 403
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=contact;health=hurt;build=true;weapon=true": {
+      "runs": 1131,
+      "completedRuns": 1131,
+      "totalUnits": 1131,
+      "totalTicks": 298805,
+      "bestTicksPerUnit": 103
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=far;health=hurt;build=true;weapon=true": {
+      "runs": 26,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 4368,
+      "bestTicksPerUnit": 118
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=near;health=hurt;build=true;weapon=true": {
+      "runs": 1170,
+      "completedRuns": 1170,
+      "totalUnits": 1170,
+      "totalTicks": 95108,
+      "bestTicksPerUnit": 18
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=far;health=hurt;build=true;weapon=true": {
+      "runs": 2717,
+      "completedRuns": 2717,
+      "totalUnits": 2717,
+      "totalTicks": 539006,
+      "bestTicksPerUnit": 5
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=near;health=hurt;build=true;weapon=true": {
+      "runs": 1170,
+      "completedRuns": 1170,
+      "totalUnits": 1170,
+      "totalTicks": 232817,
+      "bestTicksPerUnit": 198
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=near;health=hurt;build=true;weapon=true": {
+      "runs": 1261,
+      "completedRuns": 1261,
+      "totalUnits": 1261,
+      "totalTicks": 201760,
+      "bestTicksPerUnit": 160
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie_villager;distance=near;health=healthy;build=true;weapon=true": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 1222,
+      "bestTicksPerUnit": 94
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.guardian;distance=near;health=healthy;build=false;weapon=false": {
+      "runs": 585,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.guardian;distance=near;health=critical;build=false;weapon=false": {
+      "runs": 13,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=contact;health=hurt;build=true;weapon=false": {
+      "runs": 2379,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 1222,
+      "bestTicksPerUnit": 94
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=contact;health=critical;build=true;weapon=false": {
+      "runs": 52,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 3224,
+      "bestTicksPerUnit": 100
+    },
+    "skill|movement|minecraft:overworld|goal=Adjacent;distance=near;break=false;swim=false;recovery=true": {
+      "runs": 156,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 663,
+      "bestTicksPerUnit": 11
+    },
+    "skill|Approach Visible Shipwreck|minecraft:overworld|job": {
+      "runs": 26,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=critical;build=true;weapon=true": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 78507,
+      "bestTicksPerUnit": 6039
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.creeper;distance=contact;health=healthy;build=false;weapon=false": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 715,
+      "bestTicksPerUnit": 55
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=near;health=critical;build=false;weapon=false": {
+      "runs": 13,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|tree-chopping|minecraft:overworld|size=large;tool=fast-tool;approach=near": {
+      "runs": 26,
+      "completedRuns": 13,
+      "totalUnits": 78,
+      "totalTicks": 9802,
+      "bestTicksPerUnit": 125.6667
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=far;health=critical;build=true;weapon=true": {
+      "runs": 26,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 2145,
+      "bestTicksPerUnit": 165
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.drowned;distance=near;health=healthy;build=true;weapon=false": {
+      "runs": 4901,
+      "completedRuns": 4901,
+      "totalUnits": 4901,
+      "totalTicks": 3614910,
+      "bestTicksPerUnit": 111
+    },
+    "skill|Craft boat|minecraft:overworld|job": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 325,
+      "bestTicksPerUnit": 25
+    },
+    "skill|Boat|minecraft:overworld|job": {
+      "runs": 13,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|Hunt Sheep|minecraft:overworld|size=batch;unit=wool": {
+      "runs": 26,
+      "completedRuns": 26,
+      "totalUnits": 52,
+      "totalTicks": 311051,
+      "bestTicksPerUnit": 3975.6667
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=healthy;build=false;weapon=false": {
+      "runs": 3653,
+      "completedRuns": 3653,
+      "totalUnits": 3653,
+      "totalTicks": 949260,
+      "bestTicksPerUnit": 53
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=contact;health=hurt;build=false;weapon=false": {
+      "runs": 26,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 611,
+      "bestTicksPerUnit": 47
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=contact;health=healthy;build=false;weapon=false": {
+      "runs": 39,
+      "completedRuns": 39,
+      "totalUnits": 39,
+      "totalTicks": 8216,
+      "bestTicksPerUnit": 142
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=near;health=critical;build=true;weapon=false": {
+      "runs": 39,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 1339,
+      "bestTicksPerUnit": 103
+    },
+    "skill|tree-chopping|minecraft:overworld|size=giant;tool=hand;approach=near": {
+      "runs": 40,
+      "completedRuns": 0,
+      "totalUnits": 0,
+      "totalTicks": 0,
+      "bestTicksPerUnit": 0
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=near;health=critical;build=false;weapon=false": {
+      "runs": 26,
+      "completedRuns": 26,
+      "totalUnits": 26,
+      "totalTicks": 5850,
+      "bestTicksPerUnit": 17
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.zombie;distance=far;health=critical;build=false;weapon=false": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 195,
+      "bestTicksPerUnit": 15
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.skeleton;distance=far;health=critical;build=true;weapon=false": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 65,
+      "bestTicksPerUnit": 5
+    },
+    "skill|self-preservation|minecraft:overworld|threat=monster;kind=entity.minecraft.spider;distance=far;health=critical;build=true;weapon=false": {
+      "runs": 13,
+      "completedRuns": 13,
+      "totalUnits": 13,
+      "totalTicks": 5226,
+      "bestTicksPerUnit": 402
+    }
+  }
+}

@@ -1,0 +1,12 @@
+plugins {
+    // https://maven.fabricmc.net/fabric-loom/fabric-loom.gradle.plugin/maven-metadata.xml
+    id 'net.fabricmc.fabric-loom' version '1.16.3' apply false
+    // https://projects.neoforged.net/neoforged/moddevgradle
+    id 'net.neoforged.moddev' version '2.0.141' apply false
+    // https://plugins.gradle.org/plugin/net.minecraftforge.gradle
+    // Pinned below 7.0.35: that release contains ForgeGradle PR #1084 (2026-08-21), which reworked
+    // the SlimeLauncher metadata task and broke runClient with "Querying the mapped value of
+    // property 'outputDirectory' before task has completed". Building the jar is unaffected, so
+    // this pin only matters for the dev client - retry a bump once FG ships the fix.
+    id 'net.minecraftforge.gradle' version '7.0.34' apply false
+}
