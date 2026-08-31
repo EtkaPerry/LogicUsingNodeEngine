@@ -2,11 +2,12 @@ package com.etka.lune.client.gui;
 
 import com.etka.lune.client.gui.tab.ConfigTab;
 import com.etka.lune.client.gui.tab.MainTab;
-import com.etka.lune.client.gui.tab.RoutinesTab;
+import com.etka.lune.client.gui.tab.TasksTab;
 import com.etka.lune.client.gui.tab.WaypointsTab;
 import com.etka.lune.client.gui.mascot.MascotAdvisor;
 import com.etka.lune.client.gui.mascot.MascotWidget;
 import com.etka.lune.client.gui.widget.BlockPicker;
+import com.etka.lune.client.gui.widget.InventoryPicker;
 import com.mojang.blaze3d.platform.Window;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -41,11 +42,12 @@ public class LuneScreen extends Screen {
     private final TabManager tabManager = new TabManager(this::addRenderableWidget, this::removeWidget);
 
     private final MainTab mainTab = new MainTab();
-    private final RoutinesTab routinesTab = new RoutinesTab();
+    private final TasksTab tasksTab = new TasksTab();
     private final ConfigTab configTab = new ConfigTab();
     private final WaypointsTab waypointsTab = new WaypointsTab();
 
     private final BlockPicker blockPicker = new BlockPicker();
+    private final InventoryPicker inventoryPicker = new InventoryPicker(0, 0, 10, 10);
     private final MascotWidget mascot = new MascotWidget();
 
     private TabNavigationBar navBar;
@@ -67,12 +69,20 @@ public class LuneScreen extends Screen {
         // Register first for pointer priority; rendering is manual so Lune still appears above tabs.
         addWidget(mascot);
         navBar = addRenderableWidget(TabNavigationBar.builder(tabManager, this.width)
-                .addTabs(mainTab, routinesTab, waypointsTab, configTab)
+                .addTabs(mainTab, tasksTab, waypointsTab, configTab)
                 .build());
+        mainTab.setTaskEditorOpener(this::openTaskEditor);
         navBar.selectTab(0, false);
         addRenderableWidget(blockPicker);
-        routinesTab.setBlockPicker(blockPicker);
+        addRenderableWidget(inventoryPicker);
+        tasksTab.setBlockPicker(blockPicker);
+        tasksTab.setInventoryPicker(inventoryPicker);
         repositionElements();
+    }
+
+    private void openTaskEditor(com.etka.lune.task.TaskGraph task, boolean focusName) {
+        navBar.selectTab(1, false);
+        tasksTab.openTask(task, focusName);
     }
 
     @Override
@@ -156,8 +166,8 @@ public class LuneScreen extends Screen {
         if (tabManager.getCurrentTab() instanceof LuneTab tab) {
             tab.tick();
         }
-        MascotAdvisor.Surface surface = tabManager.getCurrentTab() == routinesTab
-                ? MascotAdvisor.Surface.ROUTINES
+        MascotAdvisor.Surface surface = tabManager.getCurrentTab() == tasksTab
+                ? MascotAdvisor.Surface.TASKS
                 : tabManager.getCurrentTab() == waypointsTab
                 ? MascotAdvisor.Surface.WAYPOINTS
                 : tabManager.getCurrentTab() == configTab
@@ -177,7 +187,7 @@ public class LuneScreen extends Screen {
     @Override
     public void onClose() {
         configTab.save();
-        routinesTab.save();
+        tasksTab.save();
         super.onClose();
     }
 

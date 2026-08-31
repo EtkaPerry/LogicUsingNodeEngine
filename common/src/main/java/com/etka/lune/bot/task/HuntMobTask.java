@@ -44,7 +44,7 @@ public class HuntMobTask implements Task {
     /**
      * Mobs already written off, kept out here because the hunt builds a fresh {@link KillTask}
      * every time it cycles back to hunting. Held inside Kill it would be wiped each cycle, and the
-     * hunt would walk back to the same unreachable animal for as long as the routine ran.
+     * hunt would walk back to the same unreachable animal for as long as the task ran.
      */
     private final java.util.Set<Integer> unreachableMobs;
     private final boolean clearUnreachableOnStart;

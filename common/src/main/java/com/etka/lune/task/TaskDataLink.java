@@ -1,7 +1,7 @@
-package com.etka.lune.routine;
+package com.etka.lune.task;
 
 /** A data wire from one node output port to a parameter on another node. */
-public final class RoutineDataLink {
+public final class TaskDataLink {
 
     /** The source node id. */
     public String sourceNodeId;
@@ -9,9 +9,9 @@ public final class RoutineDataLink {
     /** The source data port id, for example {@code "count"}. */
     public String sourcePort;
 
-    public RoutineDataLink() {}
+    public TaskDataLink() {}
 
-    public RoutineDataLink(String sourceNodeId, String sourcePort) {
+    public TaskDataLink(String sourceNodeId, String sourcePort) {
         this.sourceNodeId = sourceNodeId;
         this.sourcePort = sourcePort;
     }

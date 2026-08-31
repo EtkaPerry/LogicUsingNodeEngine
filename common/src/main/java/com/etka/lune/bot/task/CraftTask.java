@@ -220,6 +220,7 @@ public final class CraftTask implements Task {
         if (have == lastCount) {
             noProgressTicks += ACTION_COOLDOWN;
         } else {
+            ctx.debug.count("items_crafted", have - lastCount);
             lastCount = have;
             noProgressTicks = 0;
         }

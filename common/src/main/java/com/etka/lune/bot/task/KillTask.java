@@ -264,6 +264,7 @@ public final class KillTask implements Task {
         if (target != null && (!target.isAlive() || target.distanceTo(ctx.player) > radius)) {
             if (!target.isAlive()) {
                 killed++;
+                ctx.debug.count("mobs_killed");
                 sweepPending = true;
                 dropSettleTicks = DROP_SETTLE_TICKS;
             }

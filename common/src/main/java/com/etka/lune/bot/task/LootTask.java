@@ -29,7 +29,7 @@ import java.util.function.Predicate;
  * <p>
  * There is no "pick up" action - standing on a drop collects it - so this is purely navigation. The
  * interesting part is everything that can go wrong, because a gathering step that never returns
- * blocks the whole routine behind it:
+ * blocks the whole task behind it:
  * <ul>
  *   <li><b>Arrived but not collected.</b> The approach goal is the item's own block, not "near" it.
  *       A looser goal can be satisfied while still outside pickup range, and then nothing ever
@@ -180,7 +180,7 @@ public final class LootTask implements Task {
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
-        // Nothing can be collected into a full bag; spinning here would stall the whole routine.
+        // Nothing can be collected into a full bag; spinning here would stall the whole task.
         if (InventoryHelper.isFull(ctx.player)) {
             status = "inventory full, collected " + collected;
             return TaskStatus.SUCCESS;
@@ -188,6 +188,7 @@ public final class LootTask implements Task {
 
         if (target != null && (!target.isAlive() || target.isRemoved())) {
             collected++;
+            ctx.debug.count("drops_swept");
             // Rank whatever is left from where this one was picked up, so the sweep works outward
             // through the pile rather than re-measuring from the player every time it steps.
             site.workedAt(target.blockPosition());

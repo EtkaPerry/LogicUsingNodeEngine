@@ -5,7 +5,6 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -20,29 +19,52 @@ class DashboardFrameTest {
     }
 
     @Test
-    void keepsBothCardsSideBySideWhenThereIsRoom() {
+    void splitsTheRightSideAndKeepsFourBottomColumnsWhenThereIsRoom() {
         DashboardFrame frame = frame(640, 360);
-        assertNotNull(frame.telemetry());
-        assertEquals(frame.status().y(), frame.telemetry().y(), "cards share a row");
-        assertTrue(frame.telemetry().x() > frame.status().x());
+        assertNotNull(frame.recentActivity());
+        assertNotNull(frame.workingNode());
+        assertEquals(frame.status().y(), frame.recentActivity().y(), "top cards share a row");
+        assertTrue(frame.recentActivity().x() > frame.status().x());
+        assertEquals(frame.recentActivity().y(), frame.workingNode().y(),
+                "top cards share a row");
+        assertTrue(frame.workingNode().x() > frame.recentActivity().x());
+        assertTrue(frame.tasks().x() < frame.safetyVitals().x());
+        assertTrue(frame.safetyVitals().x() < frame.safetyWorld().x());
+        assertTrue(frame.safetyWorld().x() < frame.statistics().x());
+        assertEquals(frame.tasks().y(), frame.safetyVitals().y());
+        assertEquals(frame.safetyVitals().y(), frame.safetyWorld().y());
+        assertEquals(frame.safetyWorld().y(), frame.statistics().y());
         assertEquals(DashboardFrame.CARD_H, frame.status().height());
-        assertEquals(DashboardFrame.MAX_ROWS, frame.status().rows(), "every line is shown");
+        assertTrue(frame.status().rows() >= 6, "the top card keeps the expanded monitor details");
     }
 
     @Test
-    void stacksTheCardsRatherThanSqueezingThemNarrow() {
+    void letsLineSpacingChangeHowManyDetailsFit() {
+        DashboardFrame compact = DashboardFrame.of(0, 24, 640, 360, DashboardFrame.MIN_ROW_H);
+        DashboardFrame spacious = DashboardFrame.of(0, 24, 640, 360, DashboardFrame.MAX_ROW_H);
+        assertEquals(DashboardFrame.MIN_ROW_H, compact.status().lineHeight());
+        assertEquals(DashboardFrame.MAX_ROW_H, spacious.status().lineHeight());
+        assertTrue(compact.status().rows() >= spacious.status().rows(),
+                "tighter lines should fit at least as many details");
+    }
+
+    @Test
+    void movesStatusAboveTheTwoRightCardsWhenNarrow() {
         DashboardFrame frame = frame(380, 300);
-        assertNotNull(frame.telemetry());
-        assertEquals(frame.status().x(), frame.telemetry().x(), "one column");
-        assertTrue(frame.telemetry().y() > frame.status().y() + frame.status().height() - 1);
+        assertNotNull(frame.recentActivity());
+        assertNotNull(frame.workingNode());
+        assertEquals(frame.status().x(), frame.recentActivity().x(), "status starts the second row");
+        assertTrue(frame.recentActivity().y() > frame.status().y() + frame.status().height() - 1);
+        assertTrue(frame.workingNode().x() > frame.recentActivity().x());
         assertTrue(frame.status().width() >= DashboardFrame.MIN_CARD_W,
-                "stacking is what buys the width back");
+                "the narrow layout keeps the status readable");
     }
 
     @Test
-    void dropsTelemetryWhenTwoStackedCardsWouldNotFit() {
+    void keepsTheCompactRightCardsVisibleWhenHeightIsTight() {
         DashboardFrame frame = frame(380, 190);
-        assertNull(frame.telemetry(), "bot status is the one thing this tab must answer");
+        assertNotNull(frame.recentActivity());
+        assertNotNull(frame.workingNode());
         assertTrue(frame.status().rows() >= 1);
     }
 
@@ -51,7 +73,7 @@ class DashboardFrameTest {
         int roomy = frame(640, 360).status().rows();
         int tight = frame(380, 300).status().rows();
         int tightest = frame(380, 190).status().rows();
-        assertEquals(DashboardFrame.MAX_ROWS, roomy);
+        assertTrue(roomy >= 6, "a normal top card should show the expanded monitor details");
         assertTrue(tight < roomy && tight >= 1, "some lines survive: " + tight);
         assertTrue(tightest <= tight, "shorter never shows more");
     }
@@ -66,14 +88,29 @@ class DashboardFrameTest {
                 assertTrue(frame.buttonY() + DashboardFrame.CONTROL_H <= frame.hintY() + 9,
                         "buttons overlap the hint at " + width + "x" + height);
                 assertTrue(frame.status().width() > 0, "card inverted at " + width + "x" + height);
-                if (frame.telemetry() != null) {
-                    assertTrue(frame.telemetry().width() > 0,
-                            "telemetry card inverted at " + width + "x" + height);
-                    assertTrue(frame.telemetry().width() >= DashboardFrame.MIN_CARD_W,
-                            "telemetry card starved at " + width + "x" + height);
-                }
+                assertTrue(frame.recentActivity().width() > 0,
+                        "activity card inverted at " + width + "x" + height);
+                assertTrue(frame.workingNode().width() > 0,
+                        "working node card inverted at " + width + "x" + height);
+                assertTrue(frame.tasks().width() > 0 && frame.safetyVitals().width() > 0
+                                && frame.safetyWorld().width() > 0
+                                && frame.statistics().width() > 0,
+                        "bottom columns inverted at " + width + "x" + height);
             }
         }
+    }
+
+    @Test
+    void acceptsDraggableWidthsWithoutInvertingAnyColumn() {
+        DashboardFrame frame = DashboardFrame.of(0, 24, 960, 540, DashboardFrame.ROW_H,
+                180, 300, 220, 220, 260);
+        assertEquals(180, frame.status().width());
+        assertEquals(300, frame.recentActivity().width());
+        assertEquals(220, frame.tasks().width());
+        assertEquals(220, frame.safetyVitals().width());
+        assertEquals(260, frame.safetyWorld().width());
+        assertTrue(frame.workingNode().width() > 0);
+        assertTrue(frame.statistics().width() > 0);
     }
 
     @Test

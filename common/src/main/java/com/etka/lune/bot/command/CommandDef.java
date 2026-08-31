@@ -107,6 +107,8 @@ public final class CommandDef {
                         + " seconds and forwards a pulse; it repeats " + repeat
                         + " times, then finishes.";
             }
+            case "stop_game" -> stopGameDescription();
+            case "select_item" -> selectItemDescription();
             case "counter" -> "After every " + intValue("count")
                     + " incoming pulses, Lune forwards one pulse and starts counting again.";
             case "observer" -> observerDescription();
@@ -116,20 +118,37 @@ public final class CommandDef {
         };
     }
 
-    private String observerDescription() {
-        return switch (choiceValue("watch")) {
-            case "Health drops" -> "Lune sends one pulse whenever player health drops.";
-            case "Health crosses below" -> "Lune sends one pulse when player health crosses below "
-                    + intValue("threshold") + ".";
-            case "Health changes" -> "Lune sends one pulse whenever player health changes.";
-            case "Hunger changes" -> "Lune sends one pulse whenever player hunger changes.";
-            case "Air changes" -> "Lune sends one pulse whenever remaining air changes.";
-            case "Item count changes" -> "Lune sends one pulse whenever the inventory count of "
-                    + itemName() + " changes.";
-            case "Mob enters range" -> "Lune sends one pulse when a selected mob enters "
-                    + intValue("radius") + " blocks.";
-            default -> "Lune sends a pulse when the selected event happens.";
+    private String selectItemDescription() {
+        String which = switch (choiceValue("enchanting")) {
+            case "Enchanted only" -> "an enchanted " + itemName();
+            case "Unenchanted only" -> "an unenchanted " + itemName();
+            default -> itemName();
         };
+        int floor = intValue("min_durability");
+        String durability = floor == 0 ? ""
+                : " with at least " + floor + "% durability left";
+        String tie = "Least durability".equals(choiceValue("prefer"))
+                ? " Carrying several, it holds the most worn one."
+                : " Carrying several, it holds the one with the most durability left.";
+        return "Lune will hold " + which + durability + " in the "
+                + choiceValue("hand").toLowerCase() + "." + tie
+                + " Holding it gives Success; having none left"
+                + (floor == 0 ? "" : ", or only worn-out ones,") + " gives Fail.";
+    }
+
+    private String stopGameDescription() {
+        return switch (choiceValue("ending")) {
+            case "Pause the game" -> "Lune will open the pause menu, which in singleplayer also"
+                    + " stops the world clock. On a server nothing pauses, so it gives Fail there.";
+            case "Return to main menu" -> "Lune will save and leave the world, stopping at the"
+                    + " title screen. The client stays open.";
+            default -> "Lune will save and leave the world, then close the game.";
+        };
+    }
+
+    private String observerDescription() {
+        return "Lune sends one pulse each time the watched card lights up, and one more each time"
+                + " it goes dark. Wire the card to watch into the Observer's left pin.";
     }
 
     private String stayNearDescription(int repeat) {

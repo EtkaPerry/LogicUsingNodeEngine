@@ -38,7 +38,7 @@ public final class BotContext {
      * Where the bot was standing when this run was started, or null before anything is running.
      *
      * <p>Held for the whole run rather than per task on purpose. A leash that re-measured from
-     * wherever each node happened to begin would let a long routine walk away from home one node's
+     * wherever each node happened to begin would let a long task walk away from home one node's
      * worth at a time, and arrive somewhere nobody asked for while every individual step looked
      * perfectly well behaved.
      */

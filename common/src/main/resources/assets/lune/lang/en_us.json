@@ -1,7 +1,8 @@
 {
-    "key.lune.open": "Open Lune Panel",
-    "key.lune.pause": "Lune: Pause / Resume (Shift+K stops)",
-    "key.lune.toggle_debug": "Lune: Toggle Debug Overlay",
-    "key.lune.learning_good": "Lune: Approve Last Skill Tactic",
-    "key.lune.learning_bad": "Lune: Reject Last Skill Tactic"
+    "key.category.lune.lune": "Lune",
+    "key.lune.open": "Open Control Panel",
+    "key.lune.pause": "Pause / Resume (Shift+K stops)",
+    "key.lune.toggle_debug": "Toggle Debug Overlay",
+    "key.lune.learning_good": "Approve Last Skill Tactic",
+    "key.lune.learning_bad": "Reject Last Skill Tactic"
 }

@@ -28,6 +28,17 @@ public final class BotConfig {
     public static final String LUNE_SIZE_SMALL = "Small";
     public static final String LUNE_SIZE_NORMAL = "Normal";
     public static final String LUNE_SIZE_LARGE = "Large";
+    /** Card colour families for the task canvas. */
+    public static final String THEME_SLATE = "Slate";
+    public static final String THEME_BLUE = "Blue";
+    public static final String THEME_PURPLE = "Purple";
+    public static final String THEME_AMBER = "Amber";
+    public static final String THEME_GREEN = "Green";
+
+    /** Pin and wire colours, which carry meaning rather than taste. */
+    public static final String PINS_CLASSIC = "Classic";
+    public static final String PINS_COLOUR_BLIND = "Colour-blind safe";
+
     public static final String LUNE_UI_AUTO = "Auto";
     public static final String LUNE_UI_MATCH_GAME = "Match game";
     public static final String LUNE_UI_COMPACT = "Compact";
@@ -63,6 +74,14 @@ public final class BotConfig {
     public boolean debugPathDetail = true;
     /** Write a compact, change-driven text journal for each bot run. */
     public boolean debugRunLog = true;
+
+    /**
+     * Measure where Lune's own client-tick time goes and show it on the debug overlay.
+     *
+     * <p>Off by default because it costs a branch per instrumented section even when idle, and
+     * because the readout is only meaningful to someone chasing a stall.</p>
+     */
+    public boolean debugProfiler = false;
     /** Draw world-space markers for the bot's current break, movement, placement and stay area. */
     public boolean showActionMarkers = true;
 
@@ -84,19 +103,35 @@ public final class BotConfig {
      */
     public boolean omniscientHarvesting = false;
 
-    // --- Safety -------------------------------------------------------------
-    /** Start emergency preservation, then stop if health cannot be recovered. 0 disables the check. */
-    public float stopBelowHealth = 6.0F;
-    /** Stop when hunger drops to this or below. 0 disables the check. */
-    public int stopBelowFood = 6;
-    /** Stop when another player lands a hit - the usual sign an AFK session has been noticed. */
-    public boolean stopWhenAttackedByPlayer = true;
-    /** Stop when the inventory has no free slot left. */
-    public boolean stopWhenFull = true;
+    // --- Dashboard ---------------------------------------------------------
+    /** Vertical spacing between dashboard lines; larger values make room for custom details. */
+    public int dashboardLineHeight = 17;
+    /** Optional world position line in the Safety Monitor. */
+    public boolean dashboardShowCoordinates = true;
+    /** Optional seed line in the Safety Monitor. */
+    public boolean dashboardShowSeed = true;
+    /** Optional visible-enemies line in the Safety Monitor. */
+    public boolean dashboardShowEnemies = true;
+    /** Optional saturation line in the Safety Monitor. */
+    public boolean dashboardShowSaturation = true;
+    /** Optional main/off-hand condition lines in the Safety Monitor. */
+    public boolean dashboardShowItemConditions = true;
+    /** Optional experience and level line in the Safety Monitor. */
+    public boolean dashboardShowExperience = true;
+    /** Optional active-effects line in the Safety Monitor. */
+    public boolean dashboardShowEffects = true;
+    /** Optional movement/environment state line in the Safety Monitor. */
+    public boolean dashboardShowEnvironment = true;
+    /** Optional local light level line in the Safety Monitor. */
+    public boolean dashboardShowLight = true;
+    /** Optional facing line in the Safety Monitor. */
+    public boolean dashboardShowFacing = true;
+    /** Optional learning summary in the Statistics card. */
+    public boolean dashboardShowLearning = true;
 
     // --- Editor state -------------------------------------------------------
-    /** Last routine opened in the editor; harmless when the routine was later deleted. */
-    public String lastOpenedRoutine = "";
+    /** Last task opened in the editor; harmless when the task was later deleted. */
+    public String lastOpenedTask = "";
 
     // --- Lune assistant -----------------------------------------------------
     /** Hide the assistant and compact in-world status without losing her position or preferences. */
@@ -111,13 +146,30 @@ public final class BotConfig {
      * gives the layout room; Match game leaves the player's scale alone even where it does not fit.
      */
     public String luneUiScale = LUNE_UI_AUTO;
+
+    /** Which card colour scheme the task canvas draws with. */
+    public String blueprintTheme = THEME_SLATE;
+
+    /** Which pin/wire colours the task canvas uses. */
+    public String blueprintPins = PINS_CLASSIC;
+    /** Whether starting a task from the panel closes it and hands the screen back to the game. */
+    public boolean closePanelOnRun = true;
     /** Screen-relative resting position of the movable Lune assistant. */
     public float mascotScreenX = 0.78F;
     public float mascotScreenY = 0.20F;
+    /**
+     * Speak up when one step of a running task is what is costing the frame rate.
+     *
+     * <p>On by default: a task that quietly holds the client at a third of its tick rate is the
+     * kind of problem a player experiences as "the mod is broken" and has no way to attribute. The
+     * warning never changes or cancels anything - it names the step and asks whether that was the
+     * intent - so the cost of it being wrong is one dismissable prompt.</p>
+     */
+    public boolean warnAboutSlowSteps = true;
     /** Suggestion kinds the player has permanently muted, such as FOOD or CONNECTION. */
     public Set<String> luneDismissedSuggestionTypes = new LinkedHashSet<>();
-    /** Routine/kind pairs muted only for that routine. */
-    public Set<String> luneDismissedRoutineSuggestions = new LinkedHashSet<>();
+    /** TaskGraph/kind pairs muted only for that task. */
+    public Set<String> luneDismissedTaskSuggestions = new LinkedHashSet<>();
     /** Absolute reminder times for "Remind me later", keyed by the exact suggestion identity. */
     public Map<String, Long> luneSuggestionReminders = new LinkedHashMap<>();
 

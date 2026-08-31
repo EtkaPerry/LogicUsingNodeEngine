@@ -28,6 +28,9 @@ class LearningStoreTest {
         session.taskOutcome("task", -10.0);
         first.finishSession(session, "failed", false);
 
+        // Writes are coalesced now, so persistence is what flush() promises.
+        first.flush();
+
         LearningStore reloaded = new LearningStore(file, new Random(0));
         assertEquals("conservative", reloaded.chooseSkill(context,
                 List.of("compact", "conservative"), "compact").action());
@@ -55,6 +58,9 @@ class LearningStoreTest {
 
         AutomaticApproval.Decision failed = first.recordMissionOutcome(context, false, 1);
         assertFalse(failed.approved());
+
+        // Writes are coalesced now, so persistence is what flush() promises.
+        first.flush();
 
         LearningStore reloaded = new LearningStore(file, new Random(0));
         AutomaticApproval.Decision persisted = reloaded.recordMissionOutcome(context, true, 100);
@@ -93,6 +99,9 @@ class LearningStoreTest {
         assertEquals(replacement, rejected.action());
         assertTrue(rejected.active());
 
+        // Writes are coalesced now, so persistence is what flush() promises.
+        store.flush();
+
         LearningStore reloaded = new LearningStore(file, new Random(0));
         assertTrue(reloaded.summary().contains("skills=2"));
     }
@@ -104,16 +113,44 @@ class LearningStoreTest {
 
         LearningStore.SkillChoice instant = store.chooseSkill(context,
                 List.of("local-then-worksite", "nearest-next-target"), "local-then-worksite");
-        store.recordSkillOutcome(instant, true, 1, 1, 1);
+        SkillOutcome dropped = store.recordSkillOutcome(instant, true, 1, 1, 1);
 
         assertEquals(0, store.updateCount(), "one tick is not a measurement");
         assertEquals(0.0, store.bestSkillTicksPerUnit(context),
                 "a one-tick episode must not become a best time nothing can beat");
+        // The caller scores the run from what it gets back, so the refusal has to reach it too.
+        assertFalse(dropped.scored());
+        assertEquals(0.0, dropped.reward());
 
         LearningStore.SkillChoice real = store.chooseSkill(context,
                 List.of("local-then-worksite", "nearest-next-target"), "local-then-worksite");
         store.recordSkillOutcome(real, true, 1, 1, 40);
         assertEquals(1, store.updateCount());
+    }
+
+    /**
+     * The bot standing under a tree it never chops. Every tick it reopened a movement episode that
+     * was already on its goal, closed it a tick later, and was paid full completion for it: one
+     * recorded run reached a run reward of 9,210 with no logs mined and the policy - correctly -
+     * never updating once.
+     */
+    @Test
+    void aLoopOfInstantEpisodesEarnsTheRunNothing(@TempDir Path temp) {
+        LearningStore store = new LearningStore(temp.resolve("lune-learning.json"), new Random(0));
+        LearningContext context = LearningContext.of("skill", "movement", "overworld");
+        LearningSession session = LearningSession.start("woodland-cleanup");
+
+        for (int tick = 0; tick < 500; tick++) {
+            LearningStore.SkillChoice choice = store.chooseSkill(context,
+                    List.of("balanced-search", "quick-search", "thorough-search"),
+                    "balanced-search");
+            SkillOutcome outcome = store.recordSkillOutcome(choice, true, 1, 1, 1);
+            session.skillOutcome("movement", choice.action(), outcome,
+                    outcome.scored() && choice.actions().size() > 1);
+        }
+
+        assertEquals(0.0, session.reward(), "a stuck run must not out-earn a working one");
+        assertEquals(0, store.updateCount());
     }
 
     /**

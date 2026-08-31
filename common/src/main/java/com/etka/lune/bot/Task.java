@@ -27,7 +27,16 @@ public interface Task {
     /** Shared tick entry point that measures active game ticks and captures the terminal result. */
     default TaskStatus tick(BotContext ctx) {
         TaskLearning.beforeTick(this, ctx);
-        TaskStatus result = onTick(ctx);
+        // Measured here rather than at each call site: every task, monitor and nested child goes
+        // through this one door, so one line instruments the whole tree and the profiler's nesting
+        // shows which level the time is actually spent at.
+        LuneProfiler.push(name());
+        TaskStatus result;
+        try {
+            result = onTick(ctx);
+        } finally {
+            LuneProfiler.pop();
+        }
         TaskLearning.afterTick(this, ctx, result);
         return result;
     }
@@ -47,7 +56,7 @@ public interface Task {
     /** Called every client tick while this task is the active one. */
     TaskStatus onTick(BotContext ctx);
 
-    /** Temporarily yields control to a routine's While monitor without discarding task progress. */
+    /** Temporarily yields control to a task's While monitor without discarding task progress. */
     default void onPause(BotContext ctx) {
         ctx.gameMode.stopDestroyBlock();
         if (ctx.player.isUsingItem()) {
@@ -158,22 +167,14 @@ public interface Task {
         return true;
     }
 
-    /**
-     * Whether this task is an active food-recovery route and must get a tick to find food before
-     * the global low-hunger safety stop is applied. Ordinary tasks keep the safety stop.
-     */
-    default boolean canRecoverFromLowFood(BotContext ctx) {
-        return false;
-    }
-
-    /** Values this task exposes to downstream routine data ports after it has been evaluated. */
+    /** Values this task exposes to downstream task data ports after it has been evaluated. */
     default Map<String, String> dataOutputs() {
         return Map.of();
     }
 
     /**
-     * For routine looping: did the last run of this task actually do useful work? A step that
-     * immediately finds nothing should not advance through the routine when set to "forever".
+     * For task looping: did the last run of this task actually do useful work? A step that
+     * immediately finds nothing should not advance through the task when set to "forever".
      */
     default boolean madeProgress() {
         return true;

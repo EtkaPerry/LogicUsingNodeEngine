@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
 /**
  * A set of explicit blocks and/or block tags, used by Mine/Find/Harvest/Explore/Stripmine.
  * <p>
- * Tags are stored as identifiers and resolved at runtime, so a routine that asks for
+ * Tags are stored as identifiers and resolved at runtime, so a task that asks for
  * {@code #minecraft:stone} will automatically include new stone variants added by mods.
  */
 public final class BlockTarget {

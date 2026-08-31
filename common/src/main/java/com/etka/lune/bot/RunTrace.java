@@ -220,7 +220,7 @@ public final class RunTrace implements AutoCloseable {
      */
     private void checkForStall(int tick, DebugInfo debug, LocalPlayer player, ClientLevel level) {
         // Mission progress plus the generalised status, because only the speedrun keeps a mission
-        // line - an ordinary routine that spends three minutes "coming next to the tree" is just as
+        // line - an ordinary task that spends three minutes "coming next to the tree" is just as
         // stuck, and keying on the mission alone would never say so.
         String mission = debug.missionProgress + "|" + generalise(debug.taskStatus);
         if (!mission.equals(lastMission)) {

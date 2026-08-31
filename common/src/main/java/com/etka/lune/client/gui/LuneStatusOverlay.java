@@ -27,7 +27,6 @@ public final class LuneStatusOverlay {
     private static final int LABEL = 0xFF91A4BE;
     private static final int VALUE = 0xFFE6EAF0;
     private static final int PAUSED = 0xFFB6C5D8;
-    private static final int DANGER = 0xFFFF7777;
     private static final int MAX_WIDTH = 360;
     private static final int ART_SIZE = 48;
     private static final int FRAME_SIZE = 96;
@@ -55,9 +54,8 @@ public final class LuneStatusOverlay {
 
         DebugInfo debug = engine.getDebug();
         List<Line> lines = new ArrayList<>();
-        boolean protecting = engine.isEmergencyProtectionActive();
-        int headerColour = protecting ? DANGER : engine.isPaused() ? PAUSED : HEADER;
-        String state = protecting ? "Protecting me" : engine.isPaused() ? "Paused"
+        int headerColour = engine.isPaused() ? PAUSED : HEADER;
+        String state = engine.isPaused() ? "Paused"
                 : engine.getCurrent() == null ? "Starting" : "Working";
         lines.add(new Line("Lune  " + state, headerColour));
         lines.add(new Line("doing  " + doing(engine, debug), VALUE));
@@ -75,7 +73,8 @@ public final class LuneStatusOverlay {
 
         extractor.fill(x, y, x + width, y + height, BACKGROUND);
         extractor.fill(x, y, x + width, y + 2, BORDER);
-        drawMascot(extractor, x + 8, y + 7, engine, Util.getMillis());
+        int mascotY = y + (height - ART_SIZE) / 2;
+        drawMascot(extractor, x + 8, mascotY, engine, Util.getMillis());
         var text = extractor.textRenderer();
         int lineY = y + 5;
         for (Line line : lines) {
@@ -89,10 +88,9 @@ public final class LuneStatusOverlay {
 
     private static void drawMascot(GuiGraphicsExtractor extractor, int x, int y,
                                    BotEngine engine, long now) {
-        boolean protecting = engine.isEmergencyProtectionActive();
         boolean paused = engine.isPaused();
-        int row = protecting || engine.getCurrent() == null ? 2 : paused ? 0 : 1;
-        int frameMillis = protecting ? 260 : paused ? 1400 : 480;
+        int row = engine.getCurrent() == null ? 2 : paused ? 0 : 1;
+        int frameMillis = paused ? 1400 : 480;
         int frame = (int) ((now / frameMillis) % FRAME_COUNT);
 
         extractor.blit(RenderPipelines.GUI_TEXTURED, MASCOT_BACK, x, y,
@@ -105,9 +103,6 @@ public final class LuneStatusOverlay {
     }
 
     private static String doing(BotEngine engine, DebugInfo debug) {
-        if (engine.isEmergencyProtectionActive() && !engine.getEmergencyProtectionStatus().isBlank()) {
-            return engine.getEmergencyProtectionStatus();
-        }
         if (engine.isPaused()) {
             return "waiting for you to resume";
         }

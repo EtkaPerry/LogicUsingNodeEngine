@@ -53,6 +53,22 @@ public final class TargetIndex {
     private BlockPos sortedOrigin;
     /** Where the next bounded sweep resumes, so a large candidate set is covered over time. */
     private int cursor;
+    /** Candidates the bounded sweep has looked at since the rebuild. See {@link #sweptEveryCandidate()}. */
+    private int sweptSinceRebuild;
+
+    /**
+     * How many candidates a bounded sweep may <em>look at</em> per ray cast it is allowed to spend.
+     *
+     * <p>The ray-cast budget alone does not bound the work. A sealed candidate is rejected by
+     * {@link #hasExposedFace} without spending any of it, so an index made of solid rock - every
+     * deepslate block under a hill, say - is walked from end to end in a single call while the cast
+     * budget stays untouched. Six block reads each is far cheaper than a cast, but a few hundred
+     * thousand of them still costs tens of milliseconds on the client thread, every tick, forever.
+     * So the cheap rejections are bounded too, just far more generously.</p>
+     */
+    private static final int EXAMINED_PER_CAST = 64;
+    /** Reuse the cached distance order while the work focus moves only locally. */
+    private static final int REORDER_DISTANCE = 4;
 
     /**
      * True when the cached index still describes the requested region. Any change of centre, target
@@ -78,6 +94,7 @@ public final class TargetIndex {
         sorted = null;
         sortedOrigin = null;
         cursor = 0;
+        sweptSinceRebuild = 0;
         this.centre = centre;
         this.targets = Set.copyOf(targets);
         this.radius = radius;
@@ -93,8 +110,20 @@ public final class TargetIndex {
         int maxX = centre.getX() + radius;
         int minZ = centre.getZ() - radius;
         int maxZ = centre.getZ() + radius;
-        int minY = Math.max(this.yMin, level.getMinY());
-        int maxY = Math.min(this.yMax, level.getMaxY() - 1);
+        // The radius bounds Y as well as X and Z.
+        //
+        // It used to bound only the horizontal axes, with the vertical extent taken from the
+        // caller's y band alone - so a "radius 32" search with the default -64..320 band indexed a
+        // 65x65x384 column of the world rather than a 65-block ball. Standing on a beach at Y=67
+        // and asking for deepslate, that is a quarter of a million candidates over a hundred blocks
+        // below, every one of which the visibility filter was always going to reject, and sorting
+        // them cost 393 ms in a single call.
+        //
+        // The y band stays what its tooltips promise - "ignore anything below/above this height",
+        // a filter - while the radius is what says how far away to look. Nobody setting a search
+        // radius of 32 means "and also the entire world beneath me".
+        int minY = Math.max(Math.max(this.yMin, centre.getY() - radius), level.getMinY());
+        int maxY = Math.min(Math.min(this.yMax, centre.getY() + radius), level.getMaxY() - 1);
         if (minY > maxY || minX > maxX || minZ > maxZ) {
             return;
         }
@@ -212,15 +241,23 @@ public final class TargetIndex {
             if (excluded.contains(pos.asLong())) {
                 continue;
             }
+            // Score before filtering, even though it reads oddly. The score is arithmetic on three
+            // integers; the filter is a ray cast. A candidate that cannot beat the best score
+            // already held cannot win whatever the filter says, so casting at it is pure waste -
+            // and this ran the cast on every candidate in the index, which for a mining target in
+            // solid rock is tens of thousands of them on every single tick. Ordering the two tests
+            // this way leaves the answer identical and calls the filter only when the result is
+            // actually about to change.
+            double candidateScore = score.applyAsDouble(pos);
+            if (candidateScore >= bestScore) {
+                continue;
+            }
             BlockState state = level.getBlockState(pos);
             if (!targets.contains(state.getBlock()) || !filter.test(pos, state)) {
                 continue;
             }
-            double candidateScore = score.applyAsDouble(pos);
-            if (candidateScore < bestScore) {
-                best = pos;
-                bestScore = candidateScore;
-            }
+            best = pos;
+            bestScore = candidateScore;
         }
         return best;
     }
@@ -256,9 +293,10 @@ public final class TargetIndex {
         // list before moving eight blocks rebuilt the index and started it again. Six block lookups
         // to reject a buried candidate costs far less than the cast it replaces, so those are
         // skipped for free and the budget goes to blocks that might actually be in view.
+        int examineBudget = maxChecks * EXAMINED_PER_CAST;
         int spent = 0;
         int scanned = 0;
-        while (spent < maxChecks && scanned < size) {
+        while (spent < maxChecks && scanned < size && scanned < examineBudget) {
             BlockPos pos = ordered.get((cursor + scanned) % size);
             scanned++;
             if (excluded.contains(pos.asLong())) {
@@ -277,7 +315,20 @@ public final class TargetIndex {
             }
         }
         cursor = (cursor + scanned) % size;
+        sweptSinceRebuild += scanned;
         return null;
+    }
+
+    /**
+     * Whether the bounded sweeps since the last rebuild have between them looked at every candidate.
+     *
+     * <p>This is the difference between "there is nothing visible here" and "I have not finished
+     * looking yet", and only the caller can tell them apart: {@link #nearestBounded} returns
+     * {@code null} for both. A caller that treats a part-finished sweep as a final answer ends its
+     * search on the first tick, every tick.</p>
+     */
+    public boolean sweptEveryCandidate() {
+        return sweptSinceRebuild >= candidates.size();
     }
 
     /**
@@ -328,19 +379,32 @@ public final class TargetIndex {
         sorted = null;
         sortedOrigin = null;
         cursor = 0;
+        sweptSinceRebuild = 0;
     }
 
     private List<BlockPos> inDistanceOrder(BlockPos origin) {
-        if (sorted != null && origin.equals(sortedOrigin)) {
+        // Keyed on a settled origin rather than an exact match. The work-site focus shifts by a
+        // block as mining progresses, and demanding equality re-ordered the whole index every time
+        // it twitched - measured at 393 ms in a single call against a quarter of a million
+        // candidates, which is a third of a second of frozen client for a ranking nobody could
+        // tell apart from the one already held.
+        if (sorted != null && sortedOrigin != null
+                && sortedOrigin.distSqr(origin) <= (double) REORDER_DISTANCE * REORDER_DISTANCE) {
             return sorted;
         }
-        sorted = new ArrayList<>(candidates);
         // Distance first, then which side of the work it is on. See SearchOrderPolicy: inside a
         // solid deposit every neighbour ties on distance, and insertion order used to hand that
         // decision to the scan, which fills sections bottom-up and so always chose straight down.
-        sorted.sort(Comparator.comparingDouble(origin::distSqr).thenComparingInt(
-                pos -> SearchOrderPolicy.verticalPreference(origin.getY(), pos.getY())));
+        Comparator<BlockPos> order = Comparator.comparingDouble((BlockPos pos) -> origin.distSqr(pos)).thenComparingInt(
+                pos -> SearchOrderPolicy.verticalPreference(origin.getY(), pos.getY()));
+        // Keep the complete ordering: nearestBounded relies on eventually visiting every indexed
+        // candidate before reporting that no visible target remains. A top-N selection would make
+        // that result incorrect whenever the visible candidate fell outside the selected prefix.
+        sorted = new ArrayList<>(candidates);
+        sorted.sort(order);
         sortedOrigin = origin;
+        // Positions in the previous ordering mean nothing in this one.
+        cursor = 0;
         return sorted;
     }
 }

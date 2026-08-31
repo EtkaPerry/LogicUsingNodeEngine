@@ -1,6 +1,7 @@
 package com.etka.lune.client.gui;
 
 import com.etka.lune.bot.BotEngine;
+import com.etka.lune.bot.LuneProfiler;
 import com.etka.lune.bot.DebugInfo;
 import com.etka.lune.config.BotConfig;
 import com.etka.lune.platform.BuildFeatures;
@@ -72,6 +73,40 @@ public final class DebugOverlay {
 
     private record Line(String text, int colour) {}
 
+    /**
+     * The profiler readout: worst self-time first, with how many times each ran.
+     *
+     * <p>Self time is the number to read. A row with a large total and a small self time is a
+     * parent - the time is really being spent one level in - so the list names the leaf that is
+     * actually costing the frame rather than whatever contains it.</p>
+     */
+    private static void addProfilerLines(List<Line> lines) {
+        if (!LuneProfiler.isEnabled()) {
+            return;
+        }
+        List<LuneProfiler.Row> rows = LuneProfiler.rows();
+        long worst = LuneProfiler.worstTickMicros();
+        lines.add(new Line("profile worst tick " + worst / 1000 + "." + worst / 100 % 10 + " ms"
+                + (LuneProfiler.worstTickLabel().isEmpty() ? ""
+                : "  in " + LuneProfiler.worstTickLabel()),
+                worst > 40_000 ? BAD : worst > 15_000 ? HEADING : LABEL));
+        if (rows.isEmpty()) {
+            lines.add(new Line("        measuring...", LABEL));
+            return;
+        }
+        int ticks = LuneProfiler.ticksInWindow();
+        for (LuneProfiler.Row row : rows) {
+            long perTick = row.selfMicros() / ticks;
+            lines.add(new Line(String.format("  %-16s %5d us/tick  %4d us/call  x%d",
+                            trim(row.label()), perTick, row.averageMicros(), row.calls()),
+                    perTick > 2000 ? BAD : VALUE));
+        }
+    }
+
+    private static String trim(String label) {
+        return label.length() <= 16 ? label : label.substring(0, 15) + "…";
+    }
+
     private static List<Line> buildLines(Minecraft mc, DebugInfo debug, BotConfig config) {
         List<Line> lines = new ArrayList<>();
         lines.add(new Line("Lune  " + debug.state, HEADING));
@@ -88,6 +123,8 @@ public final class DebugOverlay {
         // Thought history: newest first, no consecutive duplicates, capped at 7. This is the bot's
         // short-term memory of what it was trying to do, which is much easier to read than a single
         // line that flickers every tick.
+        addProfilerLines(lines);
+
         List<String> thoughts = new ArrayList<>(debug.thoughts);
         Collections.reverse(thoughts);
         boolean hasActiveTask = !"-".equals(debug.taskName);

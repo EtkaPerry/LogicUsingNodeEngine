@@ -1,9 +1,9 @@
 package com.etka.lune.bot;
 
 import com.etka.lune.Constants;
-import com.etka.lune.bot.task.RoutineTask;
-import com.etka.lune.routine.Routine;
-import com.etka.lune.routine.RoutineStore;
+import com.etka.lune.bot.task.TaskRunner;
+import com.etka.lune.task.TaskGraph;
+import com.etka.lune.task.TaskStore;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.core.BlockPos;
@@ -25,7 +25,7 @@ import net.minecraft.world.level.block.state.properties.IntegerProperty;
 import java.util.Optional;
 
 /**
- * Unattended test harness: join a world, start a routine, stop on a budget, quit.
+ * Unattended test harness: join a world, start a task, stop on a budget, quit.
  *
  * <p>Every long run so far has been started by hand, which quietly shaped what was measurable. A
  * ten-minute route that needs a human to press three keys first cannot be run twice on the same
@@ -36,14 +36,14 @@ import java.util.Optional;
  * config and cannot fire by accident:</p>
  *
  * <pre>
- * -Dlune.autorun.routine=Speedrun      the routine to start once the world is loaded
+ * -Dlune.autorun.task=Speedrun      the task to start once the world is loaded
  * -Dlune.autorun.createWorld=name      generate a brand new world with a random seed and join it
  * -Dlune.autorun.delayTicks=100        settling time after join, for chunks and the server
  * -Dlune.autorun.fixture=fishing        prepare a rod, water pool, and view for fishing tests
  * -Dlune.autorun.fixture=fishing-small  prepare a rod and a two-block water target
  * -Dlune.autorun.fixture=fishing-one    prepare a rod and a one-block water target
  * -Dlune.autorun.fixture=food,tools     comma-separated; see {@link #prepareFixture}
- * -Dlune.autorun.stopAfterTicks=12000  hard budget; 0 means run until the routine ends
+ * -Dlune.autorun.stopAfterTicks=12000  hard budget; 0 means run until the task ends
  * -Dlune.autorun.quit=true             close the client afterwards, so a shell run terminates
  * </pre>
  *
@@ -54,7 +54,12 @@ import java.util.Optional;
  */
 public final class AutoRun {
 
-    private static final String ROUTINE_KEY = "lune.autorun.routine";
+    private static final String TASK_KEY = "lune.autorun.task";
+    /**
+     * The key before tasks stopped being called routines. A literal on purpose: it names a
+     * property in run scripts that already exist, so it must not follow the code.
+     */
+    private static final String LEGACY_TASK_KEY = "lune.autorun.routine";
     private static final String WORLD_KEY = "lune.autorun.createWorld";
     private static final String SEED_KEY = "lune.autorun.seed";
     private static final String DELAY_KEY = "lune.autorun.delayTicks";
@@ -67,7 +72,8 @@ public final class AutoRun {
     /** Ticks to let the title screen finish loading before asking it to build a world. */
     private static final int TITLE_SETTLE_TICKS = 40;
 
-    private static final String routineName = System.getProperty(ROUTINE_KEY, "").trim();
+    private static final String taskName = System.getProperty(TASK_KEY,
+            System.getProperty(LEGACY_TASK_KEY, "")).trim();
     private static final String worldName = System.getProperty(WORLD_KEY, "").trim();
     private static final int delayTicks = intProperty(DELAY_KEY, DEFAULT_DELAY_TICKS);
     private static final int budgetTicks = intProperty(BUDGET_KEY, 0);
@@ -90,7 +96,7 @@ public final class AutoRun {
 
     /** True when the client was launched as a test run rather than by a player. */
     public static boolean isConfigured() {
-        return !routineName.isEmpty();
+        return !taskName.isEmpty();
     }
 
     /** Seed of the generated world, or 0 when this session did not generate one. */
@@ -142,7 +148,7 @@ public final class AutoRun {
     }
 
     /**
-     * Ends the run when something outside the routine ended it: the player died, or the world went
+     * Ends the run when something outside the task ended it: the player died, or the world went
      * away underneath them.
      *
      * <p>{@link #tick} only runs with a live player, which is exactly the state a dead one is not
@@ -197,30 +203,30 @@ public final class AutoRun {
             return;
         }
         if (engine.isIdle()) {
-            finish(mc, engine, "autorun routine finished after " + runTicks + " ticks");
+            finish(mc, engine, "autorun task finished after " + runTicks + " ticks");
         }
     }
 
     private static void start(Minecraft mc, BotEngine engine) {
         started = true;
-        Optional<Routine> routine = RoutineStore.get().byName(routineName);
-        if (routine.isEmpty()) {
-            Constants.LOG.error("AutoRun: no routine named '{}'. Known routines: {}",
-                    routineName, RoutineStore.get().names());
-            finish(mc, engine, "autorun could not find routine " + routineName);
+        Optional<TaskGraph> task = TaskStore.get().byName(taskName);
+        if (task.isEmpty()) {
+            Constants.LOG.error("AutoRun: no task named '{}'. Known tasks: {}",
+                    taskName, TaskStore.get().names());
+            finish(mc, engine, "autorun could not find task " + taskName);
             return;
         }
-        Constants.LOG.info("AutoRun: starting routine '{}' (budget {} ticks)",
-                routineName, budgetTicks);
+        Constants.LOG.info("AutoRun: starting task '{}' (budget {} ticks)",
+                taskName, budgetTicks);
         if (mc.player != null) {
-            mc.player.sendSystemMessage(Component.literal("[Lune] autorun: " + routineName));
+            mc.player.sendSystemMessage(Component.literal("[Lune] autorun: " + taskName));
         }
-        engine.runNow(new RoutineTask(routine.get()));
+        engine.runNow(new TaskRunner(task.get()));
     }
 
     /**
      * Builds the explicit test fixtures requested by the harness. Normal autoruns remain
-     * untouched: a fishing routine still correctly fails when the player has no rod.
+     * untouched: a fishing task still correctly fails when the player has no rod.
      *
      * <p>Fixtures compose, comma-separated, because a coverage batch needs to combine them:</p>
      *

@@ -1,71 +1,61 @@
-package com.etka.lune.routine;
+package com.etka.lune.task;
 
-import java.util.ArrayDeque;
-import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 
 /** Finds graph links that are present or required but cannot actually be followed at runtime. */
-public final class RoutineConnectionAudit {
+public final class TaskConnectionAudit {
 
-    public record Issue(RoutineNode node, String key, String message) {}
+    public record Issue(TaskNode node, String key, String message) {}
 
-    private RoutineConnectionAudit() {}
+    private TaskConnectionAudit() {}
 
-    public static Optional<Issue> firstIssue(Routine routine) {
-        if (routine == null || routine.nodes == null || routine.nodes.isEmpty()) {
+    public static Optional<Issue> firstIssue(TaskGraph task) {
+        if (task == null || task.nodes == null || task.nodes.isEmpty()) {
             return Optional.empty();
         }
 
-        if (routine.onWhile != null && routine.nodeById(routine.onWhile) == null) {
-            return Optional.of(new Issue(firstNode(routine), "routine-while-missing",
+        if (task.onWhile != null && task.nodeById(task.onWhile) == null) {
+            return Optional.of(new Issue(firstNode(task), "task-while-missing",
                     "The task's While connection points to something that no longer exists."));
         }
 
-        for (RoutineNode node : routine.nodes) {
+        for (TaskNode node : task.nodes) {
             if (node == null) {
                 continue;
             }
-            Optional<Issue> structural = structuralIssue(routine, node);
+            Optional<Issue> structural = structuralIssue(task, node);
             if (structural.isPresent()) {
                 return structural;
             }
-            Optional<Issue> data = dataIssue(routine, node);
+            Optional<Issue> data = dataIssue(task, node);
             if (data.isPresent()) {
                 return data;
             }
         }
 
-        long starts = routine.nodes.stream()
+        long starts = task.nodes.stream()
                 .filter(node -> node != null && node.isStartNode())
                 .count();
         if (starts > 1) {
-            RoutineNode first = routine.nodes.stream()
+            TaskNode first = task.nodes.stream()
                     .filter(node -> node != null && node.isStartNode())
                     .findFirst().orElse(null);
             return Optional.of(new Issue(first, "multiple-starts",
                         "This task has more than one START node; keep one entry point."));
         }
 
-        RoutineNode explicitStart = RoutineGraph.explicitStart(routine);
+        TaskNode explicitStart = TaskWiring.explicitStart(task);
         if (explicitStart != null && explicitStart.onSuccess == null) {
             return Optional.of(new Issue(explicitStart, "start-empty-" + safe(explicitStart.id),
                         "START has no action connected, so the task has nowhere to begin."));
         }
 
-        Set<RoutineNode> reachable = new HashSet<>();
-        // START, Always, Observer, and Button are separate power sources. Seed them before
-        // checking ordinary fall-through, so an event-only task is not judged by START reachability.
-        addIndependentSources(routine, reachable);
-        RoutineNode start = RoutineGraph.nextSequentialNode(routine, -1);
-        if (start != null) {
-            reachable.addAll(reachableFrom(routine, start));
-        }
-        for (RoutineNode node : routine.nodes) {
+        Set<TaskNode> reachable = TaskWiring.poweredNodes(task);
+        for (TaskNode node : task.nodes) {
             if (node != null && !node.isSourceNode()
                     && !reachable.contains(node)
-                    && !poweredByAlways(routine, node)
-                    && !RoutineGraph.isMonitorOnly(routine, node)) {
+                    && !TaskWiring.isMonitorOnly(task, node)) {
                 return Optional.of(new Issue(node, "unreachable-" + safe(node.id),
                         nodeName(node) + " isn't connected to START, Always, or another runnable step."));
             }
@@ -73,59 +63,14 @@ public final class RoutineConnectionAudit {
         return Optional.empty();
     }
 
-    private static void addIndependentSources(Routine routine, Set<RoutineNode> reachable) {
-        if (routine.onWhile != null) {
-            addCircuit(routine, routine.nodeById(routine.onWhile), reachable);
-        }
-        for (RoutineNode source : routine.nodes) {
-            if (source == null) {
-                continue;
-            }
-            if (source.isAlwaysNode()) {
-                if (source.alwaysTargets == null) {
-                    continue;
-                }
-                for (String targetId : source.alwaysTargets) {
-                    addCircuit(routine, routine.nodeById(targetId), reachable);
-                }
-            } else if ((source.isObserverNode() || source.isButtonNode())
-                    && source.signalLinks != null) {
-                for (RoutineSignalLink link : source.signalLinks) {
-                    if (link != null) {
-                        addCircuit(routine, routine.nodeById(link.targetNodeId), reachable);
-                    }
-                }
-            }
-        }
-    }
-
-    private static void addCircuit(Routine routine, RoutineNode target, Set<RoutineNode> reachable) {
-        if (target != null && !target.isSourceNode()) {
-            reachable.addAll(reachableFrom(routine, target));
-        }
-    }
-
-    private static boolean poweredByAlways(Routine routine, RoutineNode candidate) {
-        if (candidate == null || candidate.id == null) {
-            return false;
-        }
-        for (RoutineNode source : routine.nodes) {
-            if (source != null && source.isAlwaysNode() && source.alwaysTargets != null
-                    && source.alwaysTargets.contains(candidate.id)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static Optional<Issue> structuralIssue(Routine routine, RoutineNode node) {
+    private static Optional<Issue> structuralIssue(TaskGraph task, TaskNode node) {
         if (node.isStartNode()) {
             if (node.onFailure != null || node.onWhile != null) {
                 return Optional.of(new Issue(node, "start-extra-edge-" + safe(node.id),
                         "START only accepts one Success connection to the first action."));
             }
             if (node.onSuccess != null) {
-                RoutineNode target = routine.nodeById(node.onSuccess);
+                TaskNode target = task.nodeById(node.onSuccess);
                 if (target == null) {
                     return Optional.of(new Issue(node, "start-missing-" + safe(node.id),
                             "START has a Success connection that no longer reaches anything."));
@@ -137,25 +82,32 @@ public final class RoutineConnectionAudit {
             }
             return Optional.empty();
         }
-        if (node.isAlwaysNode()) {
+        if (node.isClockNode()) {
             if (node.alwaysTargets == null || node.alwaysTargets.isEmpty()) {
                 return Optional.of(new Issue(node, "always-empty-" + safe(node.id),
-                        "Always has no action connected, so it cannot send any signals."));
+                        nodeName(node) + " has no action connected, so it cannot send any signals."));
             }
             for (String target : node.alwaysTargets) {
-                if (target == null || target.isBlank() || routine.nodeById(target) == null) {
+                if (target == null || target.isBlank() || task.nodeById(target) == null) {
                     return Optional.of(new Issue(node, "always-missing-" + safe(node.id),
-                            "One of Always's connections points to something that no longer exists."));
+                            "One of " + nodeName(node)
+                                    + "'s connections points to something that no longer exists."));
                 }
-                RoutineNode targetNode = routine.nodeById(target);
+                TaskNode targetNode = task.nodeById(target);
                 int targetPort = node.alwaysTargetInputPorts == null
                         ? 0 : node.alwaysTargetInputPorts.getOrDefault(target, 0);
                 if (targetNode.isSignalRelayNode()
                         && (targetPort < 0 || targetPort >= targetNode.signalInputCount)) {
                     return Optional.of(new Issue(node, "always-relay-input-" + safe(node.id),
-                            "Always points to a Signal Relay input that is no longer available."));
+                            nodeName(node)
+                                    + " points to a Signal Relay input that is no longer available."));
                 }
             }
+        }
+        if (node.isObserverNode() && (node.observedNodeId == null
+                || task.nodeById(node.observedNodeId) == null)) {
+            return Optional.of(new Issue(node, "observer-unwatched-" + safe(node.id),
+                    "Observer has no card wired into its Watch pin, so it has nothing to react to."));
         }
         if (node.isPulseNode()) {
             if (node.isEndNode()) {
@@ -168,14 +120,14 @@ public final class RoutineConnectionAudit {
                 return Optional.of(new Issue(node, "pulse-empty-" + safe(node.id),
                         label + " has no output connected, so its pulses go nowhere."));
             }
-            for (RoutineSignalLink link : node.signalLinks == null
-                    ? java.util.List.<RoutineSignalLink>of() : node.signalLinks) {
+            for (TaskSignalLink link : node.signalLinks == null
+                    ? java.util.List.<TaskSignalLink>of() : node.signalLinks) {
                 if (link == null || link.targetNodeId == null
-                        || routine.nodeById(link.targetNodeId) == null) {
+                        || task.nodeById(link.targetNodeId) == null) {
                     return Optional.of(new Issue(node, "relay-target-missing-" + safe(node.id),
                             "One of " + pulseName(node) + "'s outputs points to something that no longer exists."));
                 }
-                RoutineNode target = routine.nodeById(link.targetNodeId);
+                TaskNode target = task.nodeById(link.targetNodeId);
                 if (link.outputPort < 0 || link.outputPort >= node.signalOutputCount
                         || !node.isSignalRelayNode() && link.outputPort != 0
                         || target.isSourceNode()
@@ -187,48 +139,48 @@ public final class RoutineConnectionAudit {
                 }
             }
         }
-        if (node.onSuccess != null && routine.nodeById(node.onSuccess) == null) {
+        if (node.onSuccess != null && task.nodeById(node.onSuccess) == null) {
             return Optional.of(new Issue(node, "success-missing-" + safe(node.id),
                     nodeName(node) + " has a success connection that no longer reaches anything."));
         }
-        if (node.onSuccess != null && routine.nodeById(node.onSuccess).isStartNode()) {
+        if (node.onSuccess != null && task.nodeById(node.onSuccess).isStartNode()) {
             return Optional.of(new Issue(node, "success-start-" + safe(node.id),
                     nodeName(node) + " cannot send Success back into START."));
         }
-        if (node.onSuccess != null && routine.nodeById(node.onSuccess).isSignalRelayNode()
+        if (node.onSuccess != null && task.nodeById(node.onSuccess).isSignalRelayNode()
                 && (node.successInputPort < 0
-                || node.successInputPort >= routine.nodeById(node.onSuccess).signalInputCount)) {
+                || node.successInputPort >= task.nodeById(node.onSuccess).signalInputCount)) {
             return Optional.of(new Issue(node, "success-relay-input-" + safe(node.id),
                     nodeName(node) + " sends Success into a Signal Relay input that is unavailable."));
         }
-        if (node.onFailure != null && routine.nodeById(node.onFailure) == null) {
+        if (node.onFailure != null && task.nodeById(node.onFailure) == null) {
             return Optional.of(new Issue(node, "failure-missing-" + safe(node.id),
                     nodeName(node) + " has a failure connection that no longer reaches anything."));
         }
-        if (node.onFailure != null && routine.nodeById(node.onFailure).isStartNode()) {
+        if (node.onFailure != null && task.nodeById(node.onFailure).isStartNode()) {
             return Optional.of(new Issue(node, "failure-start-" + safe(node.id),
                     nodeName(node) + " cannot send Fail back into START."));
         }
-        if (node.onFailure != null && routine.nodeById(node.onFailure).isSignalRelayNode()
+        if (node.onFailure != null && task.nodeById(node.onFailure).isSignalRelayNode()
                 && (node.failureInputPort < 0
-                || node.failureInputPort >= routine.nodeById(node.onFailure).signalInputCount)) {
+                || node.failureInputPort >= task.nodeById(node.onFailure).signalInputCount)) {
             return Optional.of(new Issue(node, "failure-relay-input-" + safe(node.id),
                     nodeName(node) + " sends Fail into a Signal Relay input that is unavailable."));
         }
-        if (node.onWhile != null && routine.nodeById(node.onWhile) == null) {
+        if (node.onWhile != null && task.nodeById(node.onWhile) == null) {
             return Optional.of(new Issue(node, "while-missing-" + safe(node.id),
                     nodeName(node) + " has a While connection that no longer reaches anything."));
         }
         return Optional.empty();
     }
 
-    private static Optional<Issue> dataIssue(Routine routine, RoutineNode destination) {
+    private static Optional<Issue> dataIssue(TaskGraph task, TaskNode destination) {
         if (destination.inputLinks == null || destination.inputLinks.isEmpty()) {
             return Optional.empty();
         }
         for (var entry : destination.inputLinks.entrySet()) {
             String parameter = entry.getKey();
-            RoutineDataLink link = entry.getValue();
+            TaskDataLink link = entry.getValue();
             if (link == null || link.sourceNodeId == null || link.sourceNodeId.isBlank()) {
                 return Optional.of(new Issue(destination,
                         "data-source-empty-" + safe(destination.id) + "-" + safe(parameter),
@@ -241,7 +193,7 @@ public final class RoutineConnectionAudit {
                         "data-input-missing-" + safe(destination.id) + "-" + safe(parameter),
                         nodeName(destination) + " has a data wire into an input it no longer has."));
             }
-            RoutineNode source = routine.nodeById(link.sourceNodeId);
+            TaskNode source = task.nodeById(link.sourceNodeId);
             if (source == null) {
                 return Optional.of(new Issue(destination,
                         "data-node-missing-" + safe(destination.id) + "-" + safe(parameter),
@@ -260,44 +212,26 @@ public final class RoutineConnectionAudit {
         return Optional.empty();
     }
 
-    private static boolean hasOutputValue(RoutineNode source, String port) {
+    private static boolean hasOutputValue(TaskNode source, String port) {
         return source.params != null && source.params.containsKey(port)
                 || source.inputLinks != null && source.inputLinks.containsKey(port);
     }
 
-    private static Set<RoutineNode> reachableFrom(Routine routine, RoutineNode start) {
-        Set<RoutineNode> visited = new HashSet<>();
-        ArrayDeque<RoutineNode> pending = new ArrayDeque<>();
-        pending.add(start);
-        while (!pending.isEmpty()) {
-            RoutineNode current = pending.removeFirst();
-            if (!visited.add(current)) {
-                continue;
-            }
-            for (RoutineNode next : RoutineGraph.outgoing(routine, current)) {
-                if (next != null && !visited.contains(next)) {
-                    pending.addLast(next);
-                }
-            }
-        }
-        return visited;
+    private static TaskNode firstNode(TaskGraph task) {
+        return task.nodes.stream().filter(java.util.Objects::nonNull).findFirst().orElse(null);
     }
 
-    private static RoutineNode firstNode(Routine routine) {
-        return routine.nodes.stream().filter(java.util.Objects::nonNull).findFirst().orElse(null);
-    }
-
-    private static String nodeName(RoutineNode node) {
+    private static String nodeName(TaskNode node) {
         if (node == null) {
             return "This card";
         }
-        if (node.isAlwaysNode()) {
-            return "Always";
+        if (node.isClockNode()) {
+            return node.isPulseSourceNode() ? "Pulse" : "Always";
         }
         return commandName(node.commandId);
     }
 
-    private static String pulseName(RoutineNode node) {
+    private static String pulseName(TaskNode node) {
         return node.isTimerNode() ? "Timer"
                 : node.isEndNode() ? "End"
                 : node.isCounterNode() ? "Counter"
@@ -310,13 +244,13 @@ public final class RoutineConnectionAudit {
             return "This card";
         }
         return switch (commandId) {
-            case RoutineNode.START_COMMAND -> "START";
-            case RoutineNode.SIGNAL_RELAY_COMMAND -> "Signal Relay";
-            case RoutineNode.TIMER_COMMAND -> "Timer";
-            case RoutineNode.END_COMMAND -> "End";
-            case RoutineNode.COUNTER_COMMAND -> "Counter";
-            case RoutineNode.OBSERVER_COMMAND -> "Observer";
-            case RoutineNode.BUTTON_COMMAND -> "Button";
+            case TaskNode.START_COMMAND -> "START";
+            case TaskNode.SIGNAL_RELAY_COMMAND -> "Signal Relay";
+            case TaskNode.TIMER_COMMAND -> "Timer";
+            case TaskNode.END_COMMAND -> "End";
+            case TaskNode.COUNTER_COMMAND -> "Counter";
+            case TaskNode.OBSERVER_COMMAND -> "Observer";
+            case TaskNode.BUTTON_COMMAND -> "Button";
             case "chop" -> "Chop Wood";
             case "gettool" -> "Get Tools";
             case "stripmine" -> "Stripmine";

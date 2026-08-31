@@ -204,7 +204,7 @@ public final class ToolCatalog {
         return List.copyOf(names);
     }
 
-    /** Reads back a name from {@link #kindNames()}; null when a stored routine names something else. */
+    /** Reads back a name from {@link #kindNames()}; null when a stored task names something else. */
     public static Kind parseKind(String label) {
         for (Kind kind : Kind.values()) {
             if (kind.label().equalsIgnoreCase(label)) {
@@ -214,7 +214,7 @@ public final class ToolCatalog {
         return null;
     }
 
-    /** Reads back a name from {@link #materialNames()}; null when a stored routine names something else. */
+    /** Reads back a name from {@link #materialNames()}; null when a stored task names something else. */
     public static Material parseMaterial(String label) {
         for (Material material : GATHERABLE) {
             if (material.label().equalsIgnoreCase(label)) {

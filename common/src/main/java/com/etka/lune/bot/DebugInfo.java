@@ -4,7 +4,9 @@ import net.minecraft.core.BlockPos;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Live telemetry for the on-screen debug overlay.
@@ -25,6 +27,23 @@ public final class DebugInfo {
     public final Deque<String> thoughts = new ArrayDeque<>();
     public int thoughtRepeat;
     public int taskTicks;
+    /** Runtime counters for the Main dashboard; these survive individual task transitions. */
+    public long workedTicks;
+    public long blocksBroken;
+    public long blocksPlaced;
+    public long foodEaten;
+    public long tasksCompleted;
+    public long tasksFailed;
+    /** Re-paths counted across the active top-level run, unlike {@link #repaths} per Goto task. */
+    public long runRepaths;
+    /**
+     * Named run counters raised where the work happens - a search finishing, an ore breaking, a
+     * mob dying - and read back by the dashboard through {@link BotStatistics}.
+     *
+     * <p>Keys starting with {@link BotStatistics#PEAK_PREFIX} hold a high-water mark rather than a
+     * total; write those through {@link #peak}.</p>
+     */
+    public final Map<String, Long> counters = new LinkedHashMap<>();
     /** Relative path of the persistent run journal currently being written. */
     public String runTraceFile = "";
 
@@ -197,6 +216,39 @@ public final class DebugInfo {
         breakTarget = null;
         breakBlock = "";
         breakVerdict = "";
+    }
+
+    /** Clears counters that belong to the active top-level run. */
+    public void clearRunStatistics() {
+        workedTicks = 0L;
+        blocksBroken = 0L;
+        blocksPlaced = 0L;
+        foodEaten = 0L;
+        tasksCompleted = 0L;
+        tasksFailed = 0L;
+        runRepaths = 0L;
+        counters.clear();
+    }
+
+    /** Raises a named run counter by one. */
+    public void count(String key) {
+        count(key, 1L);
+    }
+
+    /** Raises a named run counter, ignoring the no-op and nonsense cases callers would have to guard. */
+    public void count(String key, long amount) {
+        if (key == null || key.isBlank() || amount <= 0L) {
+            return;
+        }
+        counters.merge(key, amount, Long::sum);
+    }
+
+    /** Records the largest value seen this run for {@code key}, such as the longest task. */
+    public void peak(String key, long value) {
+        if (key == null || key.isBlank() || value <= 0L) {
+            return;
+        }
+        counters.merge(BotStatistics.PEAK_PREFIX + key, value, Math::max);
     }
 
     /** Clears the candidate from the previous tick before the active task publishes its own. */

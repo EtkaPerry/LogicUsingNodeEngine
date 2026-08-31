@@ -1,6 +1,7 @@
 package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.bot.LoopWatch;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
@@ -8,16 +9,18 @@ import com.etka.lune.bot.WhileMonitor;
 import com.etka.lune.bot.command.CommandDef;
 import com.etka.lune.bot.command.CommandRegistry;
 import com.etka.lune.bot.util.InventoryHelper;
-import com.etka.lune.routine.Routine;
-import com.etka.lune.routine.RoutineDataLink;
-import com.etka.lune.routine.RoutineNode;
-import com.etka.lune.routine.RoutineGraph;
-import com.etka.lune.routine.RoutineSignalLink;
+import com.etka.lune.task.TaskGraph;
+import com.etka.lune.task.TaskDataLink;
+import com.etka.lune.task.TaskNode;
+import com.etka.lune.task.TaskWiring;
+import com.etka.lune.task.TaskPower;
+import com.etka.lune.task.TaskSignalLink;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -27,7 +30,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.phys.AABB;
 
 /**
- * Runs a {@link Routine} as a set of independently powered circuits. START sends one signal into
+ * Runs a {@link TaskGraph} as a set of independently powered circuits. START sends one signal into
  * the primary circuit, while Always periodically sends a new signal into each of its independent
  * target circuits beside it.
  * <p>
@@ -35,25 +38,27 @@ import net.minecraft.world.phys.AABB;
  * or FAILED edge decides what runs next. Nodes with no edge fall through to the next in the list,
  * which makes the common "do these in order" circuit need no wiring at all, while an edge pointing
  * backwards gives a loop. Circuits share the player's input and world, but no circuit is selected
- * over another by the routine runner.
+ * over another by the task runner.
  * <p>
  * At most one node transition happens per circuit per client tick, so even a cycle of
  * instantly-failing nodes costs one step per circuit tick rather than spinning.
  */
-public final class RoutineTask implements Task {
+public final class TaskRunner implements Task {
 
-    private final Routine routine;
+    private final TaskGraph graph;
 
-    /** Static so the blueprint view can still colour the failed card after the routine stops. */
-    private static Routine lastFailedRoutine;
+    /** Static so the blueprint view can still colour the failed card after the task stops. */
+    private static TaskGraph lastFailedTask;
     private static String lastFailedNodeId;
 
-    private RoutineNode node;
+    private TaskNode node;
     private Task task;
     private WhileMonitor monitor;
-    private RoutineNode monitorNode;
+    private TaskNode monitorNode;
     private boolean monitorRunning;
-    /** Independent circuits powered by Always (or the legacy routine-level While source). */
+    /** The explicit edge that delivered the signal to {@link #node}, for the canvas to light up. */
+    private String incomingWire;
+    /** Independent circuits powered by Always (or the legacy task-level While source). */
     private final List<ParallelCircuit> parallelCircuits = new ArrayList<>();
     /** Signals emitted while a circuit is being ticked; applied after the iterator finishes. */
     private final List<ParallelCircuit> pendingParallelCircuits = new ArrayList<>();
@@ -62,7 +67,7 @@ public final class RoutineTask implements Task {
     private final List<ObserverPulseSource> observerPulseSources = new ArrayList<>();
     private final List<ButtonPulseSource> buttonPulseSources = new ArrayList<>();
     private final Map<String, Integer> counterCounts = new HashMap<>();
-    private static final Set<RoutineNode> PRESSED_BUTTONS = ConcurrentHashMap.newKeySet();
+    private static final Set<TaskNode> PRESSED_BUTTONS = ConcurrentHashMap.newKeySet();
     private int iteration;
     private String status = "";
     private String startupError = "";
@@ -72,16 +77,31 @@ public final class RoutineTask implements Task {
     private int timerPulseCount;
     /** Ticks to wait before restarting a forever step that produced no progress. */
     private int cooldown;
+    /**
+     * How long START and its outgoing edge stay lit after a run begins.
+     *
+     * <p>START emits one signal and is then finished with. Holding it lit for the lifetime of the
+     * lane drew a permanent supply out of a card whose whole meaning is that it fires once - the
+     * canvas showed current leaving START forever while nothing was leaving it at all. Long enough
+     * to see the pulse depart, then dark.</p>
+     */
+    private static final int ENTRY_PULSE_TICKS = 10;
+    /** Counts the entry pulse down. See {@link #ENTRY_PULSE_TICKS}. */
+    private int entryPulseTicks;
+    /** The START edge, so it can go dark on its own while later edges light normally. */
+    private String entryWire;
+    /** This tick's power picture, sampled once so every Observer reads the same frame. */
+    private TaskPower powerSample = TaskPower.NONE;
     /** Last completed values from each node, used by downstream exposed parameters. */
     private final Map<String, Map<String, String>> nodeOutputs = new HashMap<>();
 
-    public RoutineTask(Routine routine) {
-        this.routine = routine;
+    public TaskRunner(TaskGraph graph) {
+        this.graph = graph;
     }
 
     @Override
     public String name() {
-        return "Routine: " + routine.name;
+        return "Task: " + graph.name;
     }
 
     @Override
@@ -94,11 +114,11 @@ public final class RoutineTask implements Task {
         return task == null ? null : task.progress();
     }
 
-    public Routine currentRoutine() {
-        return routine;
+    public TaskGraph currentTask() {
+        return graph;
     }
 
-    public RoutineNode currentNode() {
+    public TaskNode currentNode() {
         return node;
     }
 
@@ -108,35 +128,86 @@ public final class RoutineTask implements Task {
      */
     @Override
     public boolean automaticSkillLearning() {
-        // A routine is a route/container. Every child task is instrumented independently.
+        // A task is a route/container. Every child task is instrumented independently.
         return false;
     }
 
-    public RoutineNode activeNode() {
+    public TaskNode activeNode() {
         return node;
     }
 
-    @Override
-    public boolean canRecoverFromLowFood(com.etka.lune.bot.BotContext ctx) {
-        return task != null && task.canRecoverFromLowFood(ctx);
+    /**
+     * Everything currently carrying a signal, across every circuit at once.
+     *
+     * <p>{@link #activeNode()} answers for the primary lane only, which is why an Always branch
+     * that was running perfectly well never lit up: it has no bearing on {@code node}. The canvas
+     * needs the whole picture - where each pulse started and where it has got to - so it reads
+     * this instead.</p>
+     */
+    public TaskPower livePower() {
+        Set<String> nodes = new LinkedHashSet<>();
+        Set<String> wires = new LinkedHashSet<>();
+        if (node != null && node.id != null) {
+            nodes.add(node.id);
+            if (entryPulseTicks > 0) {
+                TaskNode start = TaskWiring.explicitStart(graph);
+                if (start != null && start.id != null) {
+                    // Only while the entry pulse is in flight. START is a one-shot, and a card that
+                    // has already fired is not a card that is supplying anything.
+                    nodes.add(start.id);
+                }
+            }
+            addMonitorPower(nodes, wires, node, monitorNode, monitorRunning);
+            // Kept inside the guard: a lane that has run out leaves its last edge behind, and a
+            // wire still glowing into a card nothing is doing would be a lie. The START edge is
+            // held to the pulse window for the same reason - the first card of a 'forever' lane
+            // never advances, so its incoming edge would otherwise glow for the whole run.
+            if (incomingWire != null
+                    && (entryPulseTicks > 0 || !incomingWire.equals(entryWire))) {
+                wires.add(incomingWire);
+            }
+        }
+        for (ParallelCircuit circuit : parallelCircuits) {
+            circuit.collectPower(nodes, wires);
+        }
+        for (ParallelCircuit circuit : pendingParallelCircuits) {
+            circuit.collectPower(nodes, wires);
+        }
+        return new TaskPower(nodes, wires);
+    }
+
+    private void addMonitorPower(Set<String> nodes, Set<String> wires, TaskNode guarded,
+                                 TaskNode companion, boolean running) {
+        if (!running || companion == null || companion.id == null || guarded == null
+                || guarded.id == null) {
+            return;
+        }
+        nodes.add(companion.id);
+        wires.add(TaskPower.wire(guarded.id, TaskPower.WHILE, 0, companion.id));
+    }
+
+    /** Names the edge just followed. Fall-through draws no wire, so it lights none either. */
+    private String wireFrom(TaskNode from, String targetId, int kind, TaskNode to) {
+        return targetId == null || from == null || from.id == null || to == null || to.id == null
+                ? null : TaskPower.wire(from.id, kind, 0, to.id);
     }
 
     /** A short "prev -> [current] -> next" line for the status panel. */
     public String describeFlow() {
-        if (routine == null || node == null) {
-            return "no active routine";
+        if (graph == null || node == null) {
+            return "no active task";
         }
-        int index = routine.indexOf(node);
+        int index = graph.indexOf(node);
         if (index < 0) {
             return nodeName(node);
         }
         StringBuilder sb = new StringBuilder();
         if (index > 0) {
-            sb.append(nodeName(routine.nodes.get(index - 1))).append(" -> ");
+            sb.append(nodeName(graph.nodes.get(index - 1))).append(" -> ");
         }
         sb.append("[").append(nodeName(node)).append("]");
-        if (index + 1 < routine.nodes.size()) {
-            sb.append(" -> ").append(nodeName(routine.nodes.get(index + 1)));
+        if (index + 1 < graph.nodes.size()) {
+            sb.append(" -> ").append(nodeName(graph.nodes.get(index + 1)));
         }
         return sb.toString();
     }
@@ -144,30 +215,40 @@ public final class RoutineTask implements Task {
     @Override
     public void onStart(BotContext ctx) {
         startupError = "";
-        RoutineNode explicitStart = RoutineGraph.explicitStart(routine);
+        // A verdict about the previous run says nothing about this one, and carrying one over
+        // would let a task be blamed for a stall it inherited.
+        LoopWatch.get().clear();
+        TaskNode explicitStart = TaskWiring.explicitStart(graph);
         if (explicitStart != null) {
-            long startCount = routine.nodes.stream()
+            long startCount = graph.nodes.stream()
                     .filter(candidate -> candidate != null && candidate.isStartNode())
                     .count();
-            RoutineNode target = explicitStart.onSuccess == null
-                    ? null : routine.nodeById(explicitStart.onSuccess);
+            TaskNode target = explicitStart.onSuccess == null
+                    ? null : graph.nodeById(explicitStart.onSuccess);
             if (startCount > 1) {
-                startupError = "routine has more than one START node";
+                startupError = "task has more than one START node";
             } else if (target == null) {
                 startupError = "START has no action connected";
             } else if (target.isSourceNode()) {
                 startupError = "START must connect directly to a runnable action";
             }
             node = startupError.isBlank() ? target : explicitStart;
+            incomingWire = wireFrom(explicitStart, explicitStart.onSuccess,
+                    TaskPower.SUCCESS, node);
+            entryWire = incomingWire;
+            entryPulseTicks = ENTRY_PULSE_TICKS;
         } else {
             node = nextSequentialNode(-1);
+            incomingWire = null;
+            entryWire = null;
+            entryPulseTicks = 0;
         }
         iteration = 0;
         timerStarted = false;
         timerWaitTicks = 0;
         timerPulseCount = 0;
         counterCounts.clear();
-        lastFailedRoutine = null;
+        lastFailedTask = null;
         lastFailedNodeId = null;
         nodeOutputs.clear();
         prepareParallelCircuits(ctx);
@@ -179,6 +260,14 @@ public final class RoutineTask implements Task {
             status = startupError;
             markFailed();
             return TaskStatus.FAILED;
+        }
+        // Sampled before anything moves, so an Observer compares like with like: this is the
+        // picture as the previous tick left it, and a change in it is a real transition.
+        powerSample = livePower();
+        // Counted down after sampling, so the tick that starts the run is one the entry pulse is
+        // visible on rather than one it has already been spent by.
+        if (entryPulseTicks > 0) {
+            entryPulseTicks--;
         }
         tickAlwaysSources(ctx);
         if (node == null) {
@@ -268,6 +357,10 @@ public final class RoutineTask implements Task {
                 return TaskStatus.FAILED;
             }
             task.start(ctx);
+            // Every build of a step is that step starting. Counting them here rather than at the
+            // several places a step can end covers a loop that comes back round just as well as a
+            // 'forever' card restarting in place - both are "this keeps starting" to the player.
+            LoopWatch.get().recordRestart(node.id);
             if (!prepareMonitor(ctx)) {
                 task.stop(ctx);
                 task = null;
@@ -275,7 +368,7 @@ public final class RoutineTask implements Task {
             }
         }
 
-        TaskStatus result = task.tick(ctx);
+        TaskStatus result = timedTick(ctx);
         status = describeStep();
         TaskStatus monitorResult = tickLocalMonitor(ctx);
         if (monitorResult == TaskStatus.FAILED) {
@@ -305,7 +398,7 @@ public final class RoutineTask implements Task {
                 return TaskStatus.RUNNING;
             }
             stopMonitor(ctx);
-            advance(node.onSuccess);
+            advance(node.onSuccess, TaskPower.SUCCESS);
         } else {
             if (node.onFailure == null) {
                 stopMonitor(ctx);
@@ -315,7 +408,7 @@ public final class RoutineTask implements Task {
                 return TaskStatus.FAILED;
             }
             stopMonitor(ctx);
-            advance(node.onFailure);
+            advance(node.onFailure, TaskPower.FAILURE);
         }
 
         TaskStatus parallelResult = tickParallelCircuits(ctx);
@@ -335,14 +428,14 @@ public final class RoutineTask implements Task {
         if (progressed && !last) {
             // Step did work and there is more to do, so move on (e.g. Find found something -> Mine).
             stopMonitor(ctx);
-            advance(node.onSuccess);
+            advance(node.onSuccess, TaskPower.SUCCESS);
             return node == null ? TaskStatus.SUCCESS : TaskStatus.RUNNING;
         }
 
         if (!progressed && !last) {
             // No work done, but there is a later step that may handle it (e.g. Find found 0 -> Mine).
             stopMonitor(ctx);
-            advance(node.onSuccess);
+            advance(node.onSuccess, TaskPower.SUCCESS);
             return node == null ? TaskStatus.SUCCESS : TaskStatus.RUNNING;
         }
 
@@ -351,9 +444,28 @@ public final class RoutineTask implements Task {
             return TaskStatus.RUNNING;
         }
 
-        // Last step, no progress: cool down so a 'forever' routine doesn't spin tightly.
+        // Last step, no progress: cool down so a 'forever' task doesn't spin tightly.
         cooldown = 20;
         return TaskStatus.RUNNING;
+    }
+
+    /**
+     * Ticks the current step and charges the time to it, so LoopWatch can name the step that is
+     * costing the player their frame rate rather than leaving them to guess which card it was.
+     *
+     * <p>Two {@code nanoTime} calls per tick and nothing else. This has to be measured whether or
+     * not the debug profiler is running, because the whole point is to notice a stall on behalf of
+     * somebody who has not turned any diagnostics on.</p>
+     */
+    private TaskStatus timedTick(BotContext ctx) {
+        long began = System.nanoTime();
+        try {
+            return task.tick(ctx);
+        } finally {
+            LoopWatch.get().sample(node.id, nodeName(node), graph == null ? "" : graph.name,
+                    node.repeat == 0, System.nanoTime() - began,
+                    task != null && task.madeProgress());
+        }
     }
 
     private TaskStatus tickParallelOrRunning(BotContext ctx) {
@@ -370,8 +482,7 @@ public final class RoutineTask implements Task {
     }
 
     private boolean isLastNode() {
-        int index = routine.indexOf(node);
-        return index < 0 || nextSequentialNode(index) == null;
+        return !TaskWiring.hasSuccessDestination(graph, node);
     }
 
     @Override
@@ -385,18 +496,20 @@ public final class RoutineTask implements Task {
     }
 
     /** Follows an explicit edge, or falls through to the next node in the list when there is none. */
-    private void advance(String targetId) {
+    private void advance(String targetId, int kind) {
         iteration = 0;
+        TaskNode from = node;
         if (targetId != null) {
-            node = routine.nodeById(targetId);
-            return;
+            node = graph.nodeById(targetId);
+        } else {
+            int index = graph.indexOf(node);
+            node = index < 0 ? null : nextSequentialNode(index);
         }
-        int index = routine.indexOf(node);
-        node = index < 0 ? null : nextSequentialNode(index);
+        incomingWire = wireFrom(from, targetId, kind, node);
     }
 
-    private RoutineNode nextSequentialNode(int afterIndex) {
-        return RoutineGraph.nextSequentialNode(routine, afterIndex);
+    private TaskNode nextSequentialNode(int afterIndex) {
+        return TaskWiring.nextSequentialNode(graph, afterIndex);
     }
 
     private boolean prepareMonitor(BotContext ctx) {
@@ -406,7 +519,7 @@ public final class RoutineTask implements Task {
         if (monitor != null && monitorNode != null && node.onWhile.equals(monitorNode.id)) {
             return true;
         }
-        RoutineNode linked = routine.nodeById(node.onWhile);
+        TaskNode linked = graph.nodeById(node.onWhile);
         if (linked == null) {
             return false;
         }
@@ -428,13 +541,13 @@ public final class RoutineTask implements Task {
         observerPulseSources.clear();
         buttonPulseSources.clear();
         counterCounts.clear();
-        if (routine.onWhile != null) {
-            addParallelCircuit(ctx, routine.nodeById(routine.onWhile), null);
+        if (graph.onWhile != null) {
+            addParallelCircuit(ctx, graph.nodeById(graph.onWhile), null);
         }
-        for (RoutineNode source : routine.nodes) {
-            if (source.isAlwaysNode() && source.alwaysTargets != null) {
+        for (TaskNode source : graph.nodes) {
+            if (source.isClockNode() && source.alwaysTargets != null) {
                 for (String targetId : source.alwaysTargets) {
-                    addAlwaysPulseSource(source, routine.nodeById(targetId));
+                    addAlwaysPulseSource(source, graph.nodeById(targetId));
                 }
             }
             if (source.isObserverNode()) {
@@ -446,7 +559,7 @@ public final class RoutineTask implements Task {
         }
     }
 
-    private void addAlwaysPulseSource(RoutineNode source, RoutineNode target) {
+    private void addAlwaysPulseSource(TaskNode source, TaskNode target) {
         if (source != null && target != null && !target.isSourceNode()) {
             alwaysPulseSources.add(new AlwaysPulseSource(source, target));
         }
@@ -464,60 +577,73 @@ public final class RoutineTask implements Task {
         }
     }
 
-    private void addParallelCircuit(BotContext ctx, RoutineNode linked, RoutineNode source) {
+    private void addParallelCircuit(BotContext ctx, TaskNode linked, TaskNode source) {
         if (linked == null || linked.isSourceNode()) {
             return;
         }
-        parallelCircuits.add(new ParallelCircuit(linked, source));
+        // The legacy task-level While has no card of its own, so this branch has no visible
+        // origin to light.
+        parallelCircuits.add(new ParallelCircuit(linked, source, null, null));
     }
 
-    private void queueParallelCircuit(BotContext ctx, RoutineNode linked, RoutineNode source) {
+    private void queueParallelCircuit(BotContext ctx, TaskNode linked, TaskNode source,
+                                      TaskNode origin, String originWire) {
         if (linked == null || linked.isSourceNode()) {
             return;
         }
-        // A fresh electrical pulse gets a fresh circuit. Only the legacy periodic-circuit path
-        // carries a non-null source and uses this guard; Always and pulse-node links intentionally
-        // remain independent even when an earlier pulse is still running.
-        if (source != null && (hasCircuit(linked, source, parallelCircuits)
-                || hasCircuit(linked, source, pendingParallelCircuits))) {
+        // The source keeps pulsing - that is what Always is for, and its wire stays lit to show it -
+        // but a branch already carrying that source's signal absorbs the next pulse instead of
+        // forking. A power source held on energises one wire; it does not create a new independent
+        // wire twenty times a second.
+        //
+        // This is load-bearing, not tidiness. A branch that ends on a card set to x∞ never
+        // finishes, so without absorbing, every pulse would leave another live circuit and another
+        // live child task behind, and the client would stall within seconds of starting the task.
+        //
+        // Two different sources aimed at the same card still get a circuit each: what is compared
+        // is the pair of source and entry card, so independent sources stay independent.
+        if (hasCircuit(linked, origin, parallelCircuits)
+                || hasCircuit(linked, origin, pendingParallelCircuits)) {
             return;
         }
-        pendingParallelCircuits.add(new ParallelCircuit(linked, source));
+        pendingParallelCircuits.add(new ParallelCircuit(linked, source, origin, originWire));
     }
 
-    private boolean hasCircuit(RoutineNode entry, RoutineNode source, List<ParallelCircuit> circuits) {
+    /** A branch is "already carrying this signal" when the same source drives the same entry card. */
+    private boolean hasCircuit(TaskNode entry, TaskNode origin, List<ParallelCircuit> circuits) {
         return circuits.stream().anyMatch(circuit -> circuit.entryNode == entry
-                && circuit.source == source && !circuit.finished);
+                && circuit.origin == origin && !circuit.finished);
     }
 
-    private void emitRelay(RoutineNode relay, RoutineNode pulseSource, BotContext ctx) {
+    private void emitRelay(TaskNode relay, TaskNode pulseSource, BotContext ctx) {
         if (relay == null || relay.signalLinks == null) {
             return;
         }
-        for (RoutineSignalLink link : relay.signalLinks) {
+        for (TaskSignalLink link : relay.signalLinks) {
             if (link == null || link.outputPort < 0 || link.outputPort >= relay.signalOutputCount) {
                 continue;
             }
-            RoutineNode target = routine.nodeById(link.targetNodeId);
+            TaskNode target = graph.nodeById(link.targetNodeId);
             if (target == null || target.isSourceNode()) {
                 continue;
             }
-            queueParallelCircuit(ctx, target, pulseSource);
+            queueParallelCircuit(ctx, target, pulseSource, relay,
+                    TaskPower.wire(relay.id, TaskPower.SIGNAL, link.outputPort, target.id));
         }
     }
 
-    /** Queues one pulse from the editor's Button control for the next routine tick. */
-    public static void pressButton(RoutineNode button) {
+    /** Queues one pulse from the editor's Button control for the next task tick. */
+    public static void pressButton(TaskNode button) {
         if (button != null && button.isButtonNode()) {
             PRESSED_BUTTONS.add(button);
         }
     }
 
-    private static boolean consumeButtonPress(RoutineNode button) {
+    private static boolean consumeButtonPress(TaskNode button) {
         return PRESSED_BUTTONS.remove(button);
     }
 
-    private int counterTarget(RoutineNode counter) {
+    private int counterTarget(TaskNode counter) {
         if (counter == null || counter.params == null) {
             return 3;
         }
@@ -528,7 +654,7 @@ public final class RoutineTask implements Task {
         }
     }
 
-    private boolean countPulse(RoutineNode counter) {
+    private boolean countPulse(TaskNode counter) {
         int count = counterCounts.getOrDefault(counter.id, 0) + 1;
         if (count >= counterTarget(counter)) {
             counterCounts.remove(counter.id);
@@ -538,7 +664,7 @@ public final class RoutineTask implements Task {
         return false;
     }
 
-    private int timerSeconds(RoutineNode timer) {
+    private int timerSeconds(TaskNode timer) {
         if (timer == null || timer.params == null) {
             return 5;
         }
@@ -549,7 +675,7 @@ public final class RoutineTask implements Task {
         }
     }
 
-    private int timerTicks(RoutineNode timer) {
+    private int timerTicks(TaskNode timer) {
         return timerSeconds(timer) * 20;
     }
 
@@ -617,7 +743,7 @@ public final class RoutineTask implements Task {
             markFailed();
             return TaskStatus.FAILED;
         }
-        advance(node.onFailure);
+        advance(node.onFailure, TaskPower.FAILURE);
         status = reason;
         return node == null ? TaskStatus.SUCCESS : TaskStatus.RUNNING;
     }
@@ -643,7 +769,7 @@ public final class RoutineTask implements Task {
         counterCounts.clear();
     }
 
-    private Task buildTask(RoutineNode current) {
+    private Task buildTask(TaskNode current) {
         CommandDef def = CommandRegistry.byId(current.commandId);
         if (def == null) {
             return null;
@@ -653,12 +779,16 @@ public final class RoutineTask implements Task {
 
     /** One independent flow powered by a single electrical pulse. */
     private final class ParallelCircuit {
-        private final RoutineNode entryNode;
-        private final RoutineNode source;
-        private RoutineNode node;
+        private final TaskNode entryNode;
+        private final TaskNode source;
+        /** The card that emitted the pulse: where this branch's electricity started. */
+        private final TaskNode origin;
+        /** The wire that pulse arrived on, kept lit for as long as the branch is alive. */
+        private final String originWire;
+        private TaskNode node;
         private Task task;
         private WhileMonitor monitor;
-        private RoutineNode monitorNode;
+        private TaskNode monitorNode;
         private boolean monitorRunning;
         private int iteration;
         private int cooldown;
@@ -668,15 +798,41 @@ public final class RoutineTask implements Task {
         private int timerPulseCount;
         private boolean finished;
         private String status = "";
+        private String incomingWire;
 
-        private ParallelCircuit(RoutineNode start, RoutineNode source) {
+        private ParallelCircuit(TaskNode start, TaskNode source, TaskNode origin,
+                                String originWire) {
             this.entryNode = start;
             this.source = source;
+            this.origin = origin;
+            this.originWire = originWire;
             this.node = start;
+            this.incomingWire = originWire;
         }
 
         private boolean periodic() {
             return source != null;
+        }
+
+        /** Adds this branch's share of the picture: its source, its wire, and where it has got to. */
+        private void collectPower(Set<String> nodes, Set<String> wires) {
+            if (finished) {
+                return;
+            }
+            if (origin != null && origin.id != null) {
+                nodes.add(origin.id);
+            }
+            if (originWire != null) {
+                wires.add(originWire);
+            }
+            if (node == null || node.id == null) {
+                return;
+            }
+            nodes.add(node.id);
+            if (incomingWire != null) {
+                wires.add(incomingWire);
+            }
+            addMonitorPower(nodes, wires, node, monitorNode, monitorRunning);
         }
 
         private TaskStatus onTick(BotContext ctx) {
@@ -691,6 +847,7 @@ public final class RoutineTask implements Task {
                 }
                 node = entryNode;
                 iteration = 0;
+                incomingWire = originWire;
                 status = "new signal";
             }
             if (cooldown > 0) {
@@ -814,11 +971,12 @@ public final class RoutineTask implements Task {
             if (result == TaskStatus.SUCCESS) {
                 iteration++;
                 if (node.repeat == 0) {
-                    boolean hasNext = node.onSuccess != null
-                            || nextSequentialNode(routine.indexOf(node)) != null;
-                    if (hasNext) {
+                    if (TaskWiring.hasSuccessDestination(graph, node)) {
                         stopOwnMonitor(ctx);
-                        advance();
+                        // Follows the Success wire, exactly as the primary lane does. Advancing
+                        // by list order here is what left a pulse stuck on the first card of its
+                        // branch while the wire out of it never lit.
+                        advance(node.onSuccess, TaskPower.SUCCESS);
                     } else if (!finishedTask.madeProgress()) {
                         cooldown = 20;
                     }
@@ -828,7 +986,7 @@ public final class RoutineTask implements Task {
                     return TaskStatus.RUNNING;
                 }
                 stopOwnMonitor(ctx);
-                advance(node.onSuccess);
+                advance(node.onSuccess, TaskPower.SUCCESS);
             } else {
                 if (node.onFailure == null) {
                     stopOwnMonitor(ctx);
@@ -838,7 +996,7 @@ public final class RoutineTask implements Task {
                     return TaskStatus.FAILED;
                 }
                 stopOwnMonitor(ctx);
-                advance(node.onFailure);
+                advance(node.onFailure, TaskPower.FAILURE);
             }
             if (node == null) {
                 finishCycle();
@@ -869,7 +1027,7 @@ public final class RoutineTask implements Task {
             guarded.stop(ctx);
             task = null;
             stopOwnMonitor(ctx);
-            advance(node.onSuccess);
+            advance(node.onSuccess, TaskPower.SUCCESS);
             if (node == null) {
                 finishCycle();
                 return periodic() ? TaskStatus.RUNNING : TaskStatus.SUCCESS;
@@ -885,7 +1043,7 @@ public final class RoutineTask implements Task {
             task = null;
             stopOwnMonitor(ctx);
             if (node.onFailure != null) {
-                advance(node.onFailure);
+                advance(node.onFailure, TaskPower.FAILURE);
                 return TaskStatus.RUNNING;
             }
             status = failure == null || failure.isBlank() ? "failed" : failure;
@@ -897,7 +1055,7 @@ public final class RoutineTask implements Task {
             if (node.onWhile == null) {
                 return true;
             }
-            RoutineNode linked = routine.nodeById(node.onWhile);
+            TaskNode linked = graph.nodeById(node.onWhile);
             if (linked == null) {
                 return false;
             }
@@ -944,20 +1102,22 @@ public final class RoutineTask implements Task {
         }
 
         private void advance() {
-            advance(null);
+            advance(null, TaskPower.SUCCESS);
         }
 
-        private void advance(String targetId) {
+        private void advance(String targetId, int kind) {
             iteration = 0;
             timerStarted = false;
             timerWaitTicks = 0;
             timerPulseCount = 0;
+            TaskNode from = node;
             if (targetId != null) {
-                node = routine.nodeById(targetId);
-                return;
+                node = graph.nodeById(targetId);
+            } else {
+                int index = graph.indexOf(node);
+                node = index < 0 ? null : nextSequentialNode(index);
             }
-            int index = routine.indexOf(node);
-            node = index < 0 ? null : nextSequentialNode(index);
+            incomingWire = wireFrom(from, targetId, kind, node);
         }
 
         private void onStop(BotContext ctx) {
@@ -971,11 +1131,11 @@ public final class RoutineTask implements Task {
 
     /** A source-side clock. Its pulses are deliberately independent of target completion. */
     private final class AlwaysPulseSource {
-        private final RoutineNode source;
-        private final RoutineNode target;
+        private final TaskNode source;
+        private final TaskNode target;
         private int waitTicks;
 
-        private AlwaysPulseSource(RoutineNode source, RoutineNode target) {
+        private AlwaysPulseSource(TaskNode source, TaskNode target) {
             this.source = source;
             this.target = target;
         }
@@ -987,107 +1147,56 @@ public final class RoutineTask implements Task {
             }
             // This pulse is a one-shot circuit. A running target is not reused or ranked above it;
             // the next pulse gets a new circuit, exactly like a separate electrical branch.
-            queueParallelCircuit(ctx, target, null);
+            queueParallelCircuit(ctx, target, null, source,
+                    TaskPower.wire(source.id, TaskPower.ALWAYS, 0, target.id));
             waitTicks = Math.max(0, source.alwaysIntervalTicks() - 1);
         }
     }
 
-    /** An event-driven source. The first sample establishes a baseline and never fires by itself. */
+    /**
+     * Watches one card and pulses whenever its power changes.
+     *
+     * <p>An Observer is not wired into the flow: nothing travels down the wire on its left. That
+     * wire only says <em>which card to look at</em>. When that card lights up, and again when it
+     * goes dark, the Observer sends one pulse of its own to the right.</p>
+     *
+     * <p>The first sample only establishes a baseline. Without that, every Observer would fire once
+     * the moment the task started, purely because it had nothing to compare against yet.</p>
+     */
     private final class ObserverPulseSource {
-        private final RoutineNode source;
-        private final String watch;
-        private final int threshold;
-        private final Item item;
-        private final Set<EntityType<?>> entities;
-        private final int radius;
+        private final TaskNode source;
         private boolean initialized;
-        private float previousHealth;
-        private int previousHunger;
-        private int previousAir;
-        private int previousItemCount;
-        private Set<Integer> previousMobs = Set.of();
+        private boolean wasLive;
 
-        private ObserverPulseSource(RoutineNode source) {
+        private ObserverPulseSource(TaskNode source) {
             this.source = source;
-            CommandDef def = CommandRegistry.byId(RoutineNode.OBSERVER_COMMAND);
-            Map<String, String> saved = def == null ? Map.of() : def.snapshot();
-            try {
-                if (def != null) {
-                    def.apply(source.params == null ? Map.of() : source.params);
-                    watch = def.choiceValue("watch");
-                    threshold = def.intValue("threshold");
-                    item = def.itemValue("item");
-                    entities = def.entityValue("entities");
-                    radius = def.intValue("radius");
-                } else {
-                    watch = "Health drops";
-                    threshold = 4;
-                    item = null;
-                    entities = Set.of();
-                    radius = 16;
-                }
-            } finally {
-                if (def != null) {
-                    def.apply(saved);
-                }
-            }
         }
 
         private void tick(BotContext ctx) {
-            float health = ctx.player.getHealth();
-            int hunger = ctx.player.getFoodData().getFoodLevel();
-            int air = ctx.player.getAirSupply();
-            int itemCount = item == null ? 0 : InventoryHelper.count(ctx.player, item);
-            Set<Integer> mobs = mobIds(ctx);
-            if (!initialized) {
-                initialized = true;
-                previousHealth = health;
-                previousHunger = hunger;
-                previousAir = air;
-                previousItemCount = itemCount;
-                previousMobs = mobs;
+            TaskNode watched = source.observedNodeId == null
+                    ? null : graph.nodeById(source.observedNodeId);
+            if (watched == null) {
                 return;
             }
-
-            boolean event = switch (watch) {
-                case "Health drops" -> health < previousHealth - 0.001F;
-                case "Health crosses below" -> previousHealth >= threshold && health < threshold;
-                case "Health changes" -> Math.abs(health - previousHealth) > 0.001F;
-                case "Hunger changes" -> hunger != previousHunger;
-                case "Air changes" -> air != previousAir;
-                case "Item count changes" -> itemCount != previousItemCount;
-                case "Mob enters range" -> mobs.stream().anyMatch(id -> !previousMobs.contains(id));
-                default -> false;
-            };
-            previousHealth = health;
-            previousHunger = hunger;
-            previousAir = air;
-            previousItemCount = itemCount;
-            previousMobs = mobs;
-            if (event) {
-                emitRelay(source, null, ctx);
+            boolean live = powerSample.isLive(watched);
+            if (!initialized) {
+                initialized = true;
+                wasLive = live;
+                return;
             }
-        }
-
-        private Set<Integer> mobIds(BotContext ctx) {
-            if (entities == null || entities.isEmpty()) {
-                return Set.of();
+            if (live == wasLive) {
+                return;
             }
-            AABB area = ctx.player.getBoundingBox().inflate(radius);
-            Set<Integer> ids = new HashSet<>();
-            for (var entity : ctx.level.getEntities(ctx.player, area,
-                    candidate -> candidate.isAlive() && entities.contains(candidate.getType()))) {
-                ids.add(entity.getId());
-            }
-            return ids;
+            wasLive = live;
+            emitRelay(source, null, ctx);
         }
     }
 
     /** A manually triggered source. Pressing the editor control queues one pulse. */
     private final class ButtonPulseSource {
-        private final RoutineNode source;
+        private final TaskNode source;
 
-        private ButtonPulseSource(RoutineNode source) {
+        private ButtonPulseSource(TaskNode source) {
             this.source = source;
         }
 
@@ -1101,7 +1210,7 @@ public final class RoutineTask implements Task {
     /**
      * While edges may point at any command. Dedicated monitors can decide when to take control;
      * ordinary commands are wrapped so they can run as an independent circuit beside the guarded
-     * routine step.
+     * task step.
      */
     private WhileMonitor asWhileMonitor(Task built) {
         if (built == null) {
@@ -1182,13 +1291,13 @@ public final class RoutineTask implements Task {
     }
 
     /** Resolves all incoming data wires before the command factory reads its parameters. */
-    private Map<String, String> resolveParams(RoutineNode current) {
+    private Map<String, String> resolveParams(TaskNode current) {
         Map<String, String> resolved = new LinkedHashMap<>(current.params);
         if (current.inputLinks == null) {
             return resolved;
         }
-        for (Map.Entry<String, RoutineDataLink> entry : current.inputLinks.entrySet()) {
-            RoutineDataLink link = entry.getValue();
+        for (Map.Entry<String, TaskDataLink> entry : current.inputLinks.entrySet()) {
+            TaskDataLink link = entry.getValue();
             if (link == null || link.sourceNodeId == null || link.sourcePort == null) {
                 continue;
             }
@@ -1201,7 +1310,7 @@ public final class RoutineTask implements Task {
     }
 
     /** Publishes only parameters whose right-side output box the user enabled. */
-    private void recordNodeOutputs(RoutineNode current) {
+    private void recordNodeOutputs(TaskNode current) {
         Map<String, String> outputs = new LinkedHashMap<>();
         Map<String, String> resolved = resolveParams(current);
         if (current.exposedOutputs != null) {
@@ -1216,13 +1325,13 @@ public final class RoutineTask implements Task {
     }
 
     private String describeStep() {
-        int step = routine.indexOf(node) + 1;
+        int step = graph.indexOf(node) + 1;
         String detail = task == null ? "" : task.status();
-        return "step " + step + "/" + routine.nodes.size() + " " + nodeName(node)
+        return "step " + step + "/" + graph.nodes.size() + " " + nodeName(node)
                 + (detail.isEmpty() ? "" : " - " + detail);
     }
 
-    private static String nodeName(RoutineNode node) {
+    private static String nodeName(TaskNode node) {
         if (node == null) {
             return "-";
         }
@@ -1231,11 +1340,11 @@ public final class RoutineTask implements Task {
     }
 
     private void markFailed() {
-        lastFailedRoutine = routine;
+        lastFailedTask = graph;
         lastFailedNodeId = node != null ? node.id : null;
     }
 
-    public static boolean isLastFailed(Routine r, RoutineNode n) {
-        return r == lastFailedRoutine && n != null && n.id.equals(lastFailedNodeId);
+    public static boolean isLastFailed(TaskGraph r, TaskNode n) {
+        return r == lastFailedTask && n != null && n.id.equals(lastFailedNodeId);
     }
 }

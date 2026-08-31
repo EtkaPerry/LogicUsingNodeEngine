@@ -20,7 +20,7 @@ import java.util.Optional;
  * <p>It is a circuit rather than a setting because that is what it actually is - a rule that
  * watches the area and drives back when needed, the same shape as Self Preservation. Wire it to a
  * node's While pin to run it beside that step, or drop it in an Always circuit to leash the whole
- * routine, and nothing else in the graph has to know it exists.
+ * task, and nothing else in the graph has to know it exists.
  *
  * <p>Two halves make it work. This circuit is the recovery: if the bot is outside the circle, it
  * walks back in and only then returns control. The other half is {@link Leash}, which it publishes

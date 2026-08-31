@@ -40,6 +40,10 @@ public final class LearningStore {
 
     private final Path file;
     private final boolean readOnly;
+    /** Longest the profile may sit unwritten while a run keeps updating it. */
+    private static final long SAVE_INTERVAL_NANOS = 10_000_000_000L;
+    private boolean dirty;
+    private long lastSaveNanos;
     private final Data data;
     private final TabularPolicy policy;
     /** Most recent concrete skill tactic, kept outside the persisted data for live feedback. */
@@ -82,7 +86,7 @@ public final class LearningStore {
      *
      * <p>This is deliberately separate from top-level mission selection. F7/F8 feedback follows
      * this token, so feedback given while chopping a tree rewards the chopping tactic rather than
-     * the routine or speedrun route that happened to request the wood.</p>
+     * the task or speedrun route that happened to request the wood.</p>
      */
     public synchronized SkillChoice chooseSkill(LearningContext context, List<String> actions,
                                                 String fallback) {
@@ -186,16 +190,20 @@ public final class LearningStore {
     public synchronized SkillOutcome recordSkillOutcome(SkillChoice choice, boolean completed,
                                                         int workUnits, int expectedUnits,
                                                         long elapsedTicks) {
-        if (choice == null) {
-            return SkillOutcome.evaluate(completed, workUnits, expectedUnits, elapsedTicks, 0.0);
-        }
         if (elapsedTicks < MIN_MEASURABLE_TICKS) {
             // One tick is not a duration. A job that opened and closed inside a single tick did not
             // do its work quickly - it found nothing to do, or could not start - and the callers
             // that produce these produce them in bulk: one recorded run closed a hundred and
             // ninety-five thousand of them. Kept, they become the profile, and they carry a
             // best-ever "one unit in one tick" that no honest episode can ever beat.
+            //
+            // Dropping it here is only half the job: the outcome handed back is what the run's
+            // reward and the debug HUD are built from, so scoring it normally on the way out paid
+            // the caller full completion for the episode this branch just refused to believe.
             abandonSkill(choice);
+            return SkillOutcome.unmeasured(workUnits, expectedUnits, elapsedTicks);
+        }
+        if (choice == null) {
             return SkillOutcome.evaluate(completed, workUnits, expectedUnits, elapsedTicks, 0.0);
         }
         String state = choice.context.key();
@@ -412,10 +420,39 @@ public final class LearningStore {
         save();
     }
 
+    /**
+     * Records that the profile changed, and writes it out at most once every
+     * {@link #SAVE_INTERVAL_NANOS}.
+     *
+     * <p>Every method that updates the profile used to write the whole thing to disk immediately -
+     * serialise the lot with Gson, create the file, write it, close it - on the client thread. A
+     * task whose step finishes in a single tick closes a learning episode every tick, so a profile
+     * that had grown to seventy-odd kilobytes was being written twenty times a second. The game
+     * advanced one frame at a time and chunks stopped arriving, because the client thread was
+     * sitting in file I/O rather than running the game.</p>
+     *
+     * <p>Coalescing is safe here in a way it would not be for player data: this file is a cache of
+     * measured averages. The worst a lost window costs is a few timings, which the next run
+     * measures again. {@link #flush()} still forces a write at the points where the value of
+     * keeping it is highest - a task ending, a session closing, leaving the world.</p>
+     */
     public synchronized void save() {
         if (readOnly) {
             return;
         }
+        dirty = true;
+        if (System.nanoTime() - lastSaveNanos >= SAVE_INTERVAL_NANOS) {
+            flush();
+        }
+    }
+
+    /** Writes the profile now if anything is pending. Safe to call when nothing has changed. */
+    public synchronized void flush() {
+        if (readOnly || !dirty) {
+            return;
+        }
+        dirty = false;
+        lastSaveNanos = System.nanoTime();
         try {
             Path parent = file.getParent();
             if (parent != null) {

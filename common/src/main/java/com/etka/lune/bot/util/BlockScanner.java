@@ -57,11 +57,25 @@ public final class BlockScanner {
                                                int firstRadius, int lastRadius, int yMin, int yMax,
                                                Set<Long> excluded,
                                                BiPredicate<BlockPos, BlockState> filter) {
+        // Every overload funnels here, so one section covers the whole family. The filter runs
+        // inside it, which is deliberate: a vision check per candidate is part of what a sweep
+        // costs, and separating them would hide that.
+        com.etka.lune.bot.LuneProfiler.push("block sweep");
+        try {
+            return sweep(level, centre, targets, firstRadius, lastRadius, yMin, yMax, excluded, filter);
+        } finally {
+            com.etka.lune.bot.LuneProfiler.pop();
+        }
+    }
+
+    private static BlockPos sweep(BlockGetter level, BlockPos centre, Set<Block> targets,
+                                  int firstRadius, int lastRadius, int yMin, int yMax,
+                                  Set<Long> excluded, BiPredicate<BlockPos, BlockState> filter) {
         if (targets.isEmpty()) {
             return null;
         }
         int first = Math.max(0, firstRadius);
-        int last = Math.max(first, lastRadius);
+        int last = Math.min(Math.max(first, lastRadius), loadedLimit());
         for (int radius = first; radius <= last; radius++) {
             BlockPos found = scanShell(level, centre, targets, radius, yMin, yMax, excluded, filter);
             if (found != null) {
@@ -129,6 +143,33 @@ public final class BlockScanner {
 
         return best;
     }
+
+    /**
+     * The furthest a sweep can usefully reach: the edge of the loaded world.
+     *
+     * <p>A shell outside the loaded chunks holds nothing that could ever match, so scanning it is
+     * pure cost. That matters because the radius is a user-facing number and several commands
+     * accept up to 512 - and the shell sweep is {@code O(r^3)} in the case where it finds nothing,
+     * which is exactly the case a too-large radius produces. At 512 that is on the order of a
+     * billion block reads inside one client tick, which is not a stutter, it is a hang.</p>
+     *
+     * <p>Clamping here rather than at each of the ten call sites means no caller can opt out of it
+     * by forgetting.</p>
+     */
+    private static int loadedLimit() {
+        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
+        int chunks = client == null || client.options == null
+                ? DEFAULT_VIEW_CHUNKS : client.options.renderDistance().get();
+        return Math.max(MIN_SWEEP_RADIUS, chunks * 16);
+    }
+
+    /** Used when the client options are not available, which is only ever in tests. */
+    private static final int DEFAULT_VIEW_CHUNKS = 8;
+    /**
+     * Never clamp below this. A close-range sweep must keep working at any view distance, and the
+     * callers that look for a crafting table or a chest a few blocks away are the common case.
+     */
+    private static final int MIN_SWEEP_RADIUS = 32;
 
     private static BlockPos check(BlockGetter level, BlockPos centre, BlockPos.MutableBlockPos cursor,
                                   Set<Block> targets, int dx, int dy, int dz, int yMin, int yMax,

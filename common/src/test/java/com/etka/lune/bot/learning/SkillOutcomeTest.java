@@ -43,6 +43,25 @@ class SkillOutcomeTest {
         assertFalse(nothingThere.bestTime());
     }
 
+    /**
+     * The stuck-in-a-loop case: a job that closes in one tick looks like a perfect run on every
+     * axis the scorer has - one unit of one expected, completed, at the highest rate the units are
+     * capable of - so scoring it at all pays the top of the scale for doing nothing.
+     */
+    @Test
+    void anEpisodeTooShortToTimeScoresNothing() {
+        SkillOutcome instant = SkillOutcome.unmeasured(1, 1, 1);
+        SkillOutcome timed = SkillOutcome.evaluate(true, 1, 1, 20, 0.0);
+
+        assertEquals(0.0, instant.reward());
+        assertFalse(instant.scored());
+        assertFalse(instant.bestTime(), "one tick is not a record to beat");
+        assertTrue(instant.summary().contains("too short to score"));
+        assertTrue(timed.scored());
+        assertTrue(timed.reward() > instant.reward(),
+                "a real episode must be worth more than a non-event");
+    }
+
     @Test
     void anEmptySweepDoesNotOutscoreRealWork() {
         SkillOutcome nothingThere = SkillOutcome.evaluate(true, 0, 64, 80, 0.0);

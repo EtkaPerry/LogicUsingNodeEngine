@@ -4,20 +4,22 @@ import com.etka.lune.bot.BotEngine;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.command.CommandDef;
 import com.etka.lune.bot.command.CommandRegistry;
-import com.etka.lune.bot.task.RoutineTask;
+import com.etka.lune.bot.task.TaskRunner;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.LuneTab;
 import com.etka.lune.bot.command.Param;
 import com.etka.lune.client.gui.widget.BlockPicker;
+import com.etka.lune.client.gui.widget.InventoryPicker;
 import com.etka.lune.client.gui.widget.BlueprintPanel;
 import com.etka.lune.client.gui.widget.ListPanel;
 import com.etka.lune.client.gui.widget.PalettePanel;
 import com.etka.lune.client.gui.widget.ParamPanel;
 import com.etka.lune.client.gui.widget.VerticalSplitter;
-import com.etka.lune.routine.Routine;
-import com.etka.lune.routine.RoutineGraph;
-import com.etka.lune.routine.RoutineNode;
-import com.etka.lune.routine.RoutineStore;
+import com.etka.lune.task.TaskGraph;
+import com.etka.lune.task.TaskCableAnchor;
+import com.etka.lune.task.TaskWiring;
+import com.etka.lune.task.TaskNode;
+import com.etka.lune.task.TaskStore;
 import com.etka.lune.config.BotConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -45,7 +47,7 @@ import java.util.Optional;
  * can be shared. Blocks and mobs are stored as namespaced ids, so an imported task
  * works on a different mod set, quietly dropping anything unrecognised.
  */
-public class RoutinesTab extends LuneTab {
+public class TasksTab extends LuneTab {
 
     private static final int MARGIN = 8;
     private static final int GAP = 6;
@@ -81,13 +83,14 @@ public class RoutinesTab extends LuneTab {
     private static final int CONTROL_GAP = 4;
     private static final int CONTROL_ROW_H = CONTROL_H + 3;
     /** Restores the editor selection when the control screen/tab is opened again this session. */
-    private static String lastOpenedRoutineName;
+    private static String lastOpenedTaskName;
 
-    private final ListPanel<Routine> routineList;
+    private final ListPanel<TaskGraph> taskList;
     private final BlueprintPanel blueprintPanel;
     private final PalettePanel palettePanel;
     private final ParamPanel stepParams;
     private BlockPicker blockPicker;
+    private InventoryPicker inventoryPicker;
     private final EditBox nameBox;
     private final EditBox paletteSearch;
 
@@ -103,10 +106,10 @@ public class RoutinesTab extends LuneTab {
     private final ArrayDeque<HistoryEntry> undoStack = new ArrayDeque<>();
     private final ArrayDeque<HistoryEntry> redoStack = new ArrayDeque<>();
     private String lastStoreSnapshot;
-    private String selectedRoutineName;
-    private String knownRoutineList;
+    private String selectedTaskName;
+    private String knownTaskList;
 
-    private record HistoryEntry(String snapshot, String routineName) {}
+    private record HistoryEntry(String snapshot, String taskName) {}
 
     private final Button removeStepButton;
     private final Button upButton;
@@ -138,13 +141,13 @@ public class RoutinesTab extends LuneTab {
 
     private String message = "";
 
-    public RoutinesTab() {
+    public TasksTab() {
         super(Component.literal("Task"));
 
-        routineList = add(new ListPanel<>(0, 0, 10, 10, Routine::describe, this::onRoutineSelected));
+        taskList = add(new ListPanel<>(0, 0, 10, 10, TaskGraph::describe, this::onTaskSelected));
         blueprintPanel = add(new BlueprintPanel(0, 0, 10, 10, this::onStepSelected,
-                () -> RoutineStore.get().save(), value -> message = value, this::removeSteps));
-        palettePanel = add(new PalettePanel(0, 0, 10, 10, this::onPaletteSelect));
+                () -> TaskStore.get().save(), value -> message = value, this::removeSteps));
+        palettePanel = add(new PalettePanel(0, 0, 10, 10, this::onPaletteSelect, this::onPaletteDrop));
         paletteSearch = add(new EditBox(Minecraft.getInstance().font, 0, 0, 10, 16, Component.literal("Search")));
         paletteSearch.setHint(Component.literal("search nodes..."));
         paletteSearch.setMaxLength(32);
@@ -159,15 +162,19 @@ public class RoutinesTab extends LuneTab {
         nameBox.setMaxLength(32);
         nameBox.setResponder(this::onRename);
 
-        newButton = add(Button.builder(Component.literal("New"), b -> createRoutine()).size(42, 18).build());
-        deleteButton = add(Button.builder(Component.literal("Del"), b -> deleteRoutine()).size(42, 18).build());
-        importButton = add(Button.builder(Component.literal("Import"), b -> importRoutine()).size(44, 18).build());
-        exportButton = add(Button.builder(Component.literal("Export"), b -> exportRoutine()).size(50, 18).build());
-        runButton = add(Button.builder(Component.literal("Run"), b -> runRoutine()).size(44, 18).build());
+        newButton = add(Button.builder(Component.literal("New"), b -> createTask()).size(42, 18).build());
+        deleteButton = add(Button.builder(Component.literal("Delete"), b -> deleteTask()).size(42, 18)
+                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.literal("Delete this whole task. To delete a card instead,"
+                                + " select it and press Delete.")))
+                .build());
+        importButton = add(Button.builder(Component.literal("Import"), b -> importTask()).size(44, 18).build());
+        exportButton = add(Button.builder(Component.literal("Export"), b -> exportTask()).size(50, 18).build());
+        runButton = add(Button.builder(Component.literal("Run"), b -> runTask()).size(44, 18).build());
         undoButton = add(Button.builder(Component.literal("Undo"), b -> undo()).size(42, 18).build());
         redoButton = add(Button.builder(Component.literal("Redo"), b -> redo()).size(42, 18).build());
 
-        removeStepButton = add(Button.builder(Component.literal("Del"), b -> removeStep()).size(30, 18).build());
+        removeStepButton = add(Button.builder(Component.literal("Del"), b -> removeStep()).size(46, 18).build());
         upButton = add(Button.builder(Component.literal("▲"), b -> moveStep(-1)).size(22, 18).build());
         downButton = add(Button.builder(Component.literal("▼"), b -> moveStep(1)).size(22, 18).build());
         repeatButton = add(Button.builder(Component.literal("x1"), b -> cycleRepeat()).size(34, 18).build());
@@ -176,14 +183,14 @@ public class RoutinesTab extends LuneTab {
         repeatBox = add(new EditBox(Minecraft.getInstance().font, 0, 0, 34, 18,
                 Component.literal("Repeat")));
         repeatBox.setMaxLength(7);
-        repeatBox.setResponder(RoutinesTab.this::applyTypedRepeat);
+        repeatBox.setResponder(TasksTab.this::applyTypedRepeat);
         alwaysFrequencyButton = add(Button.builder(Component.literal("Every tick"),
                 b -> cycleAlwaysFrequency()).size(62, 18).build());
         alwaysSecondsBox = add(new EditBox(Minecraft.getInstance().font, 0, 0, 38, 18,
                 Component.literal("Seconds")));
         alwaysSecondsBox.setHint(Component.literal("sec"));
         alwaysSecondsBox.setMaxLength(4);
-        alwaysSecondsBox.setResponder(RoutinesTab.this::applyTypedAlwaysFrequency);
+        alwaysSecondsBox.setResponder(TasksTab.this::applyTypedAlwaysFrequency);
         relayInputsButton = add(Button.builder(Component.literal("Inputs: 1"),
                 b -> cycleRelayPorts(true)).size(64, 18).build());
         relayOutputsButton = add(Button.builder(Component.literal("Outputs: 1"),
@@ -195,20 +202,25 @@ public class RoutinesTab extends LuneTab {
         tasksButton = add(Button.builder(Component.literal("Tasks"), b -> toggleList()).size(46, 18).build());
 
         stepParams.setOpenBlockPicker(this::openBlockPicker);
+        stepParams.setOpenItemPicker(this::openItemPicker);
 
-        if (lastOpenedRoutineName == null && BotConfig.get().lastOpenedRoutine != null
-                && !BotConfig.get().lastOpenedRoutine.isBlank()) {
-            lastOpenedRoutineName = BotConfig.get().lastOpenedRoutine;
+        if (lastOpenedTaskName == null && BotConfig.get().lastOpenedTask != null
+                && !BotConfig.get().lastOpenedTask.isBlank()) {
+            lastOpenedTaskName = BotConfig.get().lastOpenedTask;
         }
-        refreshRoutines();
-        restoreRoutineSelection();
+        refreshTasks();
+        restoreTaskSelection();
         recordEdit();
     }
 
-    // --- routine level -------------------------------------------------------
+    // --- task level -------------------------------------------------------
 
     public void setBlockPicker(BlockPicker picker) {
         this.blockPicker = picker;
+    }
+
+    public void setInventoryPicker(InventoryPicker picker) {
+        this.inventoryPicker = picker;
     }
 
     private void onPaletteSearch(String value) {
@@ -228,17 +240,32 @@ public class RoutinesTab extends LuneTab {
         blockPicker.open(param, param::set);
     }
 
-    private void createRoutine() {
+    private void openItemPicker(Param.ItemChoice param) {
+        if (inventoryPicker == null) {
+            param.cycle();
+            return;
+        }
+        int w = Math.clamp(area.width() * 3 / 4, 220, 420);
+        int h = Math.clamp(area.height() * 3 / 4, 160, 320);
+        inventoryPicker.setPosition(area.left() + (area.width() - w) / 2,
+                area.top() + (area.height() - h) / 2);
+        inventoryPicker.setSize(w, h);
+        // The escape hatch keeps every registered item reachable: a backpack that stores its
+        // contents somewhere Lune cannot read contributes nothing to the grid.
+        inventoryPicker.open(param, param::set, param::cycle);
+    }
+
+    private void createTask() {
         beginEdit();
-        Routine created = RoutineStore.get().create("New Task");
-        refreshRoutines();
-        routineList.setSelected(created);
-        onRoutineSelected(created);
+        TaskGraph created = TaskStore.get().create("New Task");
+        refreshTasks();
+        taskList.setSelected(created);
+        onTaskSelected(created);
         recordEdit();
     }
 
-    private void deleteRoutine() {
-        Routine selected = routineList.getSelected();
+    private void deleteTask() {
+        TaskGraph selected = taskList.getSelected();
         if (selected == null) {
             return;
         }
@@ -249,112 +276,174 @@ public class RoutinesTab extends LuneTab {
             return;
         }
         beginEdit();
-        RoutineStore.get().remove(selected);
-        if (selected.name.equals(lastOpenedRoutineName)) {
-            lastOpenedRoutineName = null;
-            BotConfig.get().lastOpenedRoutine = "";
+        TaskStore.get().remove(selected);
+        if (selected.name.equals(lastOpenedTaskName)) {
+            lastOpenedTaskName = null;
+            BotConfig.get().lastOpenedTask = "";
             BotConfig.get().save();
         }
-        refreshRoutines();
-        setRoutine(null);
+        refreshTasks();
+        setTask(null);
         setSelectedStep(null);
         nameBox.setValue("");
-        selectedRoutineName = null;
+        selectedTaskName = null;
         recordEdit();
         resetDeleteConfirmation();
         message = "Deleted " + selected.name;
     }
 
-    private void exportRoutine() {
-        Routine selected = routineList.getSelected();
-        message = RoutineStore.get().exportToClipboard(selected)
+    private void exportTask() {
+        TaskGraph selected = taskList.getSelected();
+        message = TaskStore.get().exportToClipboard(selected)
                 ? "Copied '" + selected.name + "' to clipboard"
                 : "Select a task first";
     }
 
-    private void importRoutine() {
+    private void importTask() {
         beginEdit();
-        Optional<Routine> imported = RoutineStore.get().importFromClipboard();
+        Optional<TaskGraph> imported = TaskStore.get().importFromClipboard();
         message = imported
-                .map(routine -> "Imported '" + routine.name + "'")
+                .map(task -> "Imported '" + task.name + "'")
                 .orElse("Clipboard did not contain a task");
         if (imported.isPresent()) {
-            Routine routine = imported.get();
-            routineList.setSelected(routine);
-            onRoutineSelected(routine);
+            TaskGraph task = imported.get();
+            taskList.setSelected(task);
+            onTaskSelected(task);
         }
-        refreshRoutines();
+        refreshTasks();
         recordEdit();
     }
 
-    private void runRoutine() {
-        Routine selected = routineList.getSelected();
+    /** True when the bot is running the task currently selected in the list. */
+    private boolean selectedTaskIsRunning() {
+        TaskGraph selected = taskList.getSelected();
+        return selected != null && BotEngine.get().getCurrent() instanceof TaskRunner running
+                && running.currentTask() == selected;
+    }
+
+    /**
+     * Runs the selected task, or stops it if it is the one already running.
+     *
+     * <p>The button used to say Run whatever the bot was doing, so the only way to stop a task
+     * from the screen that started it was to leave and find the keybind. One button that reports
+     * the state it is in can also be the one that changes it.</p>
+     */
+    private void runTask() {
+        if (selectedTaskIsRunning()) {
+            BotEngine.get().stopAll();
+            message = "Stopped";
+            syncRunButton();
+            return;
+        }
+        TaskGraph selected = taskList.getSelected();
         if (selected == null || selected.nodes.isEmpty()) {
             message = "Nothing to run";
             return;
         }
-        RoutineStore.get().save();
-        BotEngine.get().runNow(new RoutineTask(selected));
-        Minecraft.getInstance().setScreen(null);
+        TaskStore.get().save();
+        BotEngine.get().runNow(new TaskRunner(selected));
+        if (BotConfig.get().closePanelOnRun) {
+            Minecraft.getInstance().setScreen(null);
+        } else {
+            message = "Running " + selected.name + " - the panel stays open";
+            syncRunButton();
+        }
+    }
+
+    private void syncRunButton() {
+        boolean running = selectedTaskIsRunning();
+        runButton.setMessage(Component.literal(running ? "Stop" : "Run"));
+        runButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
+                Component.literal(running
+                        ? "Stop this task"
+                        : BotConfig.get().closePanelOnRun
+                        ? "Start this task and close the panel"
+                        : "Start this task and keep the panel open")));
     }
 
     private void onRename(String value) {
-        Routine selected = routineList.getSelected();
+        TaskGraph selected = taskList.getSelected();
         if (selected != null && !value.isBlank() && !value.equals(selected.name)) {
             selected.name = value;
-            lastOpenedRoutineName = value;
-            BotConfig.get().lastOpenedRoutine = value;
+            lastOpenedTaskName = value;
+            BotConfig.get().lastOpenedTask = value;
             BotConfig.get().save();
-            refreshRoutines();
-            routineList.setSelected(selected);
+            refreshTasks();
+            taskList.setSelected(selected);
         }
     }
 
-    private void onRoutineSelected(Routine routine) {
-        if (routine != null) {
-            lastOpenedRoutineName = routine.name;
-            BotConfig.get().lastOpenedRoutine = routine.name;
+    private void onTaskSelected(TaskGraph task) {
+        if (task != null) {
+            lastOpenedTaskName = task.name;
+            BotConfig.get().lastOpenedTask = task.name;
             BotConfig.get().save();
         }
-        selectedRoutineName = routine != null ? routine.name : null;
+        selectedTaskName = task != null ? task.name : null;
         resetDeleteConfirmation();
-        setRoutine(routine);
+        setTask(task);
         setSelectedStep(null);
-        if (routine != null && !routine.name.equals(nameBox.getValue())) {
-            nameBox.setValue(routine.name);
+        if (task != null && !task.name.equals(nameBox.getValue())) {
+            nameBox.setValue(task.name);
         }
     }
 
-    private void refreshRoutines() {
-        List<Routine> available = RoutineStore.get().all();
-        routineList.setItems(available);
-        knownRoutineList = available.stream().map(routine -> routine.name).toList().toString();
+    /** Selects a task when another tab asks to inspect or rename it. */
+    public void openTask(TaskGraph task, boolean focusName) {
+        if (task == null) {
+            return;
+        }
+        taskList.setSelected(task);
+        onTaskSelected(task);
+        if (focusName) {
+            nameBox.setFocused(true);
+            nameBox.setCursorPosition(nameBox.getValue().length());
+        }
     }
 
-    private void restoreRoutineSelection() {
-        Routine selected = lastOpenedRoutineName == null
+    private void refreshTasks() {
+        List<TaskGraph> available = TaskStore.get().all();
+        taskList.setItems(available);
+        knownTaskList = available.stream().map(task -> task.name).toList().toString();
+    }
+
+    private void restoreTaskSelection() {
+        TaskGraph selected = lastOpenedTaskName == null
                 ? null
-                : RoutineStore.get().byName(lastOpenedRoutineName).orElse(null);
-        if (selected == null && !RoutineStore.get().all().isEmpty()) {
-            selected = RoutineStore.get().all().get(0);
+                : TaskStore.get().byName(lastOpenedTaskName).orElse(null);
+        if (selected == null && !TaskStore.get().all().isEmpty()) {
+            selected = TaskStore.get().all().get(0);
         }
-        routineList.setSelected(selected);
-        onRoutineSelected(selected);
+        taskList.setSelected(selected);
+        onTaskSelected(selected);
     }
 
     // --- step level ----------------------------------------------------------
 
+    /** A tile dropped on the canvas lands where it was released. */
+    private boolean onPaletteDrop(PalettePanel.Item item, int screenX, int screenY) {
+        if (!blueprintPanel.acceptsDropAt(screenX, screenY)) {
+            return false;
+        }
+        addFromPalette(item, screenX, screenY);
+        return true;
+    }
+
     private void onPaletteSelect(PalettePanel.Item item) {
-        Routine routine = routineList.getSelected();
-        if (routine == null) {
+        addFromPalette(item, null, null);
+    }
+
+    private void addFromPalette(PalettePanel.Item item, Integer screenX, Integer screenY) {
+        TaskGraph task = taskList.getSelected();
+        if (task == null) {
             message = "Create a task first";
             return;
         }
 
-        int index = routine.nodes.size();
-        RoutineNode selectedStep = selectedStep();
+        int index = task.nodes.size();
+        TaskNode selectedStep = selectedStep();
         if (selectedStep != null) {
-            int selectedIndex = routine.indexOf(selectedStep);
+            int selectedIndex = task.indexOf(selectedStep);
             if (selectedIndex >= 0) {
                 index = selectedIndex + 1;
             }
@@ -362,9 +451,9 @@ public class RoutinesTab extends LuneTab {
 
         beginEdit();
         if (item instanceof PalettePanel.Blueprint blueprint) {
-            List<RoutineNode> copies = new java.util.ArrayList<>();
-            for (RoutineNode node : blueprint.nodes()) {
-                RoutineNode copy = node.copy();
+            List<TaskNode> copies = new java.util.ArrayList<>();
+            for (TaskNode node : blueprint.nodes()) {
+                TaskNode copy = node.copy();
                 // Palette insertion creates independent nodes. Connections are always made by
                 // an explicit pin gesture in Blueprint view.
                 copy.onSuccess = null;
@@ -378,17 +467,21 @@ public class RoutinesTab extends LuneTab {
                 }
                 copies.add(copy);
             }
-            blueprintPanel.placeNewNodes(copies, selectedStep);
-            routine.nodes.addAll(index, copies);
+            blueprintPanel.placeNewNodesAt(copies, screenX, screenY);
+            task.nodes.addAll(index, copies);
             if (!copies.isEmpty()) {
                 setSelectedStep(copies.get(0));
                 onStepSelected(copies.get(0));
             }
             message = "Added " + copies.size() + " steps from " + blueprint.name();
         } else if (item instanceof PalettePanel.General general) {
-            RoutineNode node = new RoutineNode(general.id());
-            blueprintPanel.placeNewNodes(List.of(node), selectedStep);
-            routine.nodes.add(index, node);
+            TaskNode node = new TaskNode(general.id());
+            if (node.isPulseSourceNode()) {
+                // A clock with no rate is a clock that never ticks, so a new one arrives usable.
+                node.alwaysIntervalSeconds = TaskNode.DEFAULT_PULSE_INTERVAL_SECONDS;
+            }
+            blueprintPanel.placeNewNodesAt(List.of(node), screenX, screenY);
+            task.nodes.add(index, node);
             setSelectedStep(node);
             onStepSelected(node);
             message = "Added " + general.name() + " node";
@@ -397,36 +490,40 @@ public class RoutinesTab extends LuneTab {
             if (def == null) {
                 return;
             }
-            RoutineNode node = new RoutineNode(def.id());
+            TaskNode node = new TaskNode(def.id());
             node.params.putAll(def.snapshot());
-            blueprintPanel.placeNewNodes(List.of(node), selectedStep);
-            routine.nodes.add(index, node);
+            blueprintPanel.placeNewNodesAt(List.of(node), screenX, screenY);
+            task.nodes.add(index, node);
             setSelectedStep(node);
             onStepSelected(node);
         }
 
         recordEdit();
-        RoutineStore.get().save();
-        setRoutine(routine);
+        TaskStore.get().save();
+        setTask(task);
     }
 
     private void removeStep() {
-        List<RoutineNode> steps = blueprintPanel.getSelectedNodes();
+        List<TaskNode> steps = blueprintPanel.getSelectedNodes();
         removeSteps(steps);
     }
 
-    private void removeSteps(List<RoutineNode> steps) {
-        Routine routine = routineList.getSelected();
-        if (routine != null && !steps.isEmpty()) {
+    private void removeSteps(List<TaskNode> steps) {
+        TaskGraph task = taskList.getSelected();
+        if (task != null && !steps.isEmpty()) {
             beginEdit();
-            List<RoutineNode> removed = steps.stream()
-                    .filter(routine.nodes::contains)
+            List<TaskNode> removed = steps.stream()
+                    .filter(task.nodes::contains)
                     .toList();
             java.util.Set<String> removedIds = removed.stream()
                     .map(step -> step.id)
                     .collect(java.util.stream.Collectors.toSet());
-            routine.nodes.removeAll(removed);
-            for (RoutineNode node : routine.nodes) {
+            task.nodes.removeAll(removed);
+            if (task.cableAnchors != null) {
+                task.cableAnchors.keySet().removeIf(key -> removedIds.stream()
+                        .anyMatch(id -> TaskCableAnchor.referencesNode(key, id)));
+            }
+            for (TaskNode node : task.nodes) {
                 if (removed.stream().anyMatch(step -> step.id.equals(node.onSuccess))) {
                     node.onSuccess = null;
                 }
@@ -450,37 +547,37 @@ public class RoutinesTab extends LuneTab {
                     node.signalLinks.removeIf(link -> link == null || removedIds.contains(link.targetNodeId));
                 }
             }
-            if (removed.stream().anyMatch(step -> step.id.equals(routine.onWhile))) {
-                routine.onWhile = null;
+            if (removed.stream().anyMatch(step -> step.id.equals(task.onWhile))) {
+                task.onWhile = null;
             }
             setSelectedStep(null);
             recordEdit();
-            RoutineStore.get().save();
-            setRoutine(routine);
+            TaskStore.get().save();
+            setTask(task);
             message = removed.size() == 1 ? "Step deleted" : "Deleted " + removed.size() + " steps";
         }
     }
 
     private void moveStep(int delta) {
-        Routine routine = routineList.getSelected();
-        List<RoutineNode> steps = selectedNodesForAction();
-        if (routine != null && !steps.isEmpty()) {
+        TaskGraph task = taskList.getSelected();
+        List<TaskNode> steps = selectedNodesForAction();
+        if (task != null && !steps.isEmpty()) {
             beginEdit();
-            List<RoutineNode> ordered = routine.nodes.stream()
+            List<TaskNode> ordered = task.nodes.stream()
                     .filter(steps::contains)
                     .toList();
             if (delta < 0) {
-                for (RoutineNode step : ordered) {
-                    routine.move(step, delta);
+                for (TaskNode step : ordered) {
+                    task.move(step, delta);
                 }
             } else {
                 for (int i = ordered.size() - 1; i >= 0; i--) {
-                    routine.move(ordered.get(i), delta);
+                    task.move(ordered.get(i), delta);
                 }
             }
             recordEdit();
-            RoutineStore.get().save();
-            setRoutine(routine);
+            TaskStore.get().save();
+            setTask(task);
             setSelectedStep(steps.get(0));
         }
     }
@@ -504,21 +601,21 @@ public class RoutinesTab extends LuneTab {
         if (typed < 0 || typed > MAX_TYPED_REPEAT) {
             return;
         }
-        List<RoutineNode> steps = selectedNodesForAction();
+        List<TaskNode> steps = selectedNodesForAction();
         steps = steps.stream().filter(step -> !isWhileCompanion(step)).toList();
         if (steps.isEmpty()) {
             return;
         }
         beginEdit();
-        for (RoutineNode step : steps) {
+        for (TaskNode step : steps) {
             step.repeat = typed;
         }
         recordEdit();
-        RoutineStore.get().save();
+        TaskStore.get().save();
     }
 
     private void cycleRepeat() {
-        List<RoutineNode> steps = selectedNodesForAction();
+        List<TaskNode> steps = selectedNodesForAction();
         steps = steps.stream().filter(step -> !isWhileCompanion(step)).toList();
         if (steps.isEmpty()) {
             return;
@@ -532,11 +629,11 @@ public class RoutinesTab extends LuneTab {
             }
         }
         int nextRepeat = REPEAT_CYCLE[(index + 1) % REPEAT_CYCLE.length];
-        for (RoutineNode step : steps) {
+        for (TaskNode step : steps) {
             step.repeat = nextRepeat;
         }
         recordEdit();
-        RoutineStore.get().save();
+        TaskStore.get().save();
     }
 
     private void applyTypedAlwaysFrequency(String text) {
@@ -549,32 +646,32 @@ public class RoutinesTab extends LuneTab {
         } catch (NumberFormatException e) {
             return;
         }
-        if (typed < RoutineNode.MIN_ALWAYS_INTERVAL_SECONDS
-                || typed > RoutineNode.MAX_ALWAYS_INTERVAL_SECONDS) {
+        if (typed < TaskNode.MIN_ALWAYS_INTERVAL_SECONDS
+                || typed > TaskNode.MAX_ALWAYS_INTERVAL_SECONDS) {
             return;
         }
-        List<RoutineNode> sources = selectedNodesForAction().stream()
-                .filter(RoutineNode::isAlwaysNode).toList();
+        List<TaskNode> sources = selectedNodesForAction().stream()
+                .filter(TaskNode::isAlwaysNode).toList();
         if (sources.isEmpty()) {
             return;
         }
         beginEdit();
-        for (RoutineNode source : sources) {
+        for (TaskNode source : sources) {
             source.alwaysIntervalSeconds = typed;
         }
         recordEdit();
-        RoutineStore.get().save();
+        TaskStore.get().save();
         syncAlwaysFrequencyControls();
     }
 
     private void cycleAlwaysFrequency() {
-        List<RoutineNode> sources = selectedNodesForAction().stream()
-                .filter(RoutineNode::isAlwaysNode).toList();
+        List<TaskNode> sources = selectedNodesForAction().stream()
+                .filter(TaskNode::isAlwaysNode).toList();
         if (sources.isEmpty()) {
             return;
         }
         int current = Math.clamp(sources.get(0).alwaysIntervalSeconds,
-                RoutineNode.MIN_ALWAYS_INTERVAL_SECONDS, RoutineNode.MAX_ALWAYS_INTERVAL_SECONDS);
+                TaskNode.MIN_ALWAYS_INTERVAL_SECONDS, TaskNode.MAX_ALWAYS_INTERVAL_SECONDS);
         int index = 0;
         for (int i = 0; i < ALWAYS_INTERVAL_CYCLE.length; i++) {
             if (ALWAYS_INTERVAL_CYCLE[i] == current) {
@@ -584,25 +681,25 @@ public class RoutinesTab extends LuneTab {
         }
         int next = ALWAYS_INTERVAL_CYCLE[(index + 1) % ALWAYS_INTERVAL_CYCLE.length];
         beginEdit();
-        for (RoutineNode source : sources) {
+        for (TaskNode source : sources) {
             source.alwaysIntervalSeconds = next;
         }
         recordEdit();
-        RoutineStore.get().save();
+        TaskStore.get().save();
         syncAlwaysFrequencyControls();
     }
 
-    private List<RoutineNode> selectedNodesForAction() {
-        List<RoutineNode> selected = blueprintPanel.getSelectedNodes();
+    private List<TaskNode> selectedNodesForAction() {
+        List<TaskNode> selected = blueprintPanel.getSelectedNodes();
         if (!selected.isEmpty()) {
             return selected;
         }
-        RoutineNode step = selectedStep();
+        TaskNode step = selectedStep();
         return step == null ? List.of() : List.of(step);
     }
 
-    private boolean isWhileCompanion(RoutineNode step) {
-        return RoutineGraph.isWhileTarget(routineList.getSelected(), step);
+    private boolean isWhileCompanion(TaskNode step) {
+        return TaskWiring.isWhileTarget(taskList.getSelected(), step);
     }
 
     private void toggleMinimap() {
@@ -611,7 +708,7 @@ public class RoutinesTab extends LuneTab {
         message = visible ? "Minimap shown" : "Minimap hidden";
     }
 
-    private void onStepSelected(RoutineNode step) {
+    private void onStepSelected(TaskNode step) {
         if (step == null) {
             setSelectedStep(null);
             stepParams.setCommand(null);
@@ -624,11 +721,11 @@ public class RoutinesTab extends LuneTab {
             return;
         }
         setSelectedStep(step);
-        if (step.isStartNode() || step.isAlwaysNode() || step.isButtonNode()) {
+        if (step.isStartNode() || step.isClockNode() || step.isButtonNode()) {
             stepParams.setCommand(null);
             stepParams.setSourceDescription(step.isStartNode()
                     ? "START sends one signal to its connected Success target."
-                    : step.isAlwaysNode()
+                    : step.isClockNode()
                     ? "Always sends a new signal to each connected target "
                             + step.describeAlwaysInterval() + ". Each target runs as its own circuit."
                     : "Press this control to send one pulse to every connected output.");
@@ -671,16 +768,16 @@ public class RoutinesTab extends LuneTab {
     }
 
     private void pressSelectedButton() {
-        RoutineNode step = selectedStep();
+        TaskNode step = selectedStep();
         if (step == null || !step.isButtonNode()) {
             return;
         }
-        RoutineTask.pressButton(step);
+        TaskRunner.pressButton(step);
         message = "Button pulse queued";
     }
 
     private void syncButtonControls() {
-        RoutineNode step = selectedStep();
+        TaskNode step = selectedStep();
         boolean visible = step != null && step.isButtonNode();
         boolean changed = buttonPressButton.visible != visible;
         buttonPressButton.visible = visible;
@@ -694,8 +791,8 @@ public class RoutinesTab extends LuneTab {
     }
 
     private void syncAlwaysFrequencyControls() {
-        RoutineNode step = selectedStep();
-        boolean visible = step != null && step.isAlwaysNode();
+        TaskNode step = selectedStep();
+        boolean visible = step != null && step.isClockNode();
         boolean changed = alwaysFrequencyButton.visible != visible
                 || alwaysSecondsBox.visible != visible;
         alwaysFrequencyButton.visible = visible;
@@ -707,7 +804,7 @@ public class RoutinesTab extends LuneTab {
             alwaysSecondsBox.setFocused(false);
         } else {
             int seconds = Math.clamp(step.alwaysIntervalSeconds,
-                    RoutineNode.MIN_ALWAYS_INTERVAL_SECONDS, RoutineNode.MAX_ALWAYS_INTERVAL_SECONDS);
+                    TaskNode.MIN_ALWAYS_INTERVAL_SECONDS, TaskNode.MAX_ALWAYS_INTERVAL_SECONDS);
             alwaysFrequencyButton.setMessage(Component.literal(alwaysFrequencyLabel(seconds)));
             stepParams.setSourceDescription("Always sends a new signal to each connected target "
                     + step.describeAlwaysInterval() + ". Each target runs as its own circuit.");
@@ -724,7 +821,7 @@ public class RoutinesTab extends LuneTab {
         return seconds == 0 ? "Every tick" : "Every " + seconds + "s";
     }
 
-    private String relayDescription(RoutineNode node) {
+    private String relayDescription(TaskNode node) {
         return "Signal Relay has " + node.signalInputCount + " input"
                 + (node.signalInputCount == 1 ? "" : "s") + " and " + node.signalOutputCount
                 + " output" + (node.signalOutputCount == 1 ? "" : "s")
@@ -732,7 +829,7 @@ public class RoutinesTab extends LuneTab {
     }
 
     private void syncRelayPortControls() {
-        RoutineNode step = selectedStep();
+        TaskNode step = selectedStep();
         boolean visible = step != null && step.isSignalRelayNode();
         boolean changed = relayInputsButton.visible != visible
                 || relayOutputsButton.visible != visible;
@@ -756,32 +853,32 @@ public class RoutinesTab extends LuneTab {
     }
 
     private void cycleRelayPorts(boolean inputs) {
-        Routine routine = routineList.getSelected();
-        RoutineNode step = selectedStep();
-        if (routine == null || step == null || !step.isSignalRelayNode()) {
+        TaskGraph task = taskList.getSelected();
+        TaskNode step = selectedStep();
+        if (task == null || step == null || !step.isSignalRelayNode()) {
             return;
         }
         beginEdit();
         if (inputs) {
-            step.signalInputCount = step.signalInputCount >= RoutineNode.MAX_SIGNAL_PORTS
-                    ? RoutineNode.MIN_SIGNAL_PORTS : step.signalInputCount + 1;
-            pruneRelayInputs(routine, step);
+            step.signalInputCount = step.signalInputCount >= TaskNode.MAX_SIGNAL_PORTS
+                    ? TaskNode.MIN_SIGNAL_PORTS : step.signalInputCount + 1;
+            pruneRelayInputs(task, step);
         } else {
-            step.signalOutputCount = step.signalOutputCount >= RoutineNode.MAX_SIGNAL_PORTS
-                    ? RoutineNode.MIN_SIGNAL_PORTS : step.signalOutputCount + 1;
+            step.signalOutputCount = step.signalOutputCount >= TaskNode.MAX_SIGNAL_PORTS
+                    ? TaskNode.MIN_SIGNAL_PORTS : step.signalOutputCount + 1;
             if (step.signalLinks != null) {
                 step.signalLinks.removeIf(link -> link == null
                         || link.outputPort >= step.signalOutputCount);
             }
         }
-        RoutineStore.get().save();
-        setRoutine(routine);
+        TaskStore.get().save();
+        setTask(task);
         onStepSelected(step);
         recordEdit();
     }
 
-    private void pruneRelayInputs(Routine routine, RoutineNode relay) {
-        for (RoutineNode source : routine.nodes) {
+    private void pruneRelayInputs(TaskGraph task, TaskNode relay) {
+        for (TaskNode source : task.nodes) {
             if (relay.id.equals(source.onSuccess)
                     && source.successInputPort >= relay.signalInputCount) {
                 source.onSuccess = null;
@@ -806,9 +903,9 @@ public class RoutinesTab extends LuneTab {
         }
     }
 
-    private void togglePortExposure(RoutineNode step, String parameterId, ParamPanel.PortSide side) {
-        Routine routine = routineList.getSelected();
-        if (routine == null || step == null || !routine.nodes.contains(step)) {
+    private void togglePortExposure(TaskNode step, String parameterId, ParamPanel.PortSide side) {
+        TaskGraph task = taskList.getSelected();
+        if (task == null || step == null || !task.nodes.contains(step)) {
             return;
         }
         beginEdit();
@@ -831,7 +928,7 @@ public class RoutinesTab extends LuneTab {
             }
         } else {
             if (step.exposedOutputs.remove(parameterId)) {
-                for (RoutineNode target : routine.nodes) {
+                for (TaskNode target : task.nodes) {
                     if (target.inputLinks != null) {
                         target.inputLinks.entrySet().removeIf(entry -> {
                             var link = entry.getValue();
@@ -846,8 +943,8 @@ public class RoutinesTab extends LuneTab {
                 message = "Added " + parameterId + " data output";
             }
         }
-        RoutineStore.get().save();
-        setRoutine(routine);
+        TaskStore.get().save();
+        setTask(task);
         onStepSelected(step);
         recordEdit();
     }
@@ -855,22 +952,37 @@ public class RoutinesTab extends LuneTab {
     /** Mirrors the parameter editor back into the selected step. */
     @Override
     public void tick() {
-        String currentRoutineList = RoutineStore.get().names().toString();
-        if (!currentRoutineList.equals(knownRoutineList)) {
-            refreshRoutines();
-            restoreRoutineSelection();
+        String currentTaskList = TaskStore.get().names().toString();
+        if (!currentTaskList.equals(knownTaskList)) {
+            refreshTasks();
+            restoreTaskSelection();
         }
         maybeRecordHistory();
-        RoutineNode step = selectedStep();
+        TaskNode step = selectedStep();
         CommandDef editing = stepParams.getCommand();
         if (step != null && editing != null && editing.id().equals(step.commandId)) {
             java.util.Map<String, String> snapshot = editing.snapshot();
-            for (RoutineNode selected : selectedNodesForAction()) {
+            for (TaskNode selected : selectedNodesForAction()) {
                 if (editing.id().equals(selected.commandId)) {
                     selected.params = new java.util.LinkedHashMap<>(snapshot);
                 }
             }
         }
+        // Both delete controls used to read "Del", and the one in the task toolbar throws the
+        // whole task away. Saying how many cards this one takes is what makes the difference
+        // visible at the moment of the click rather than after it.
+        int selectedCount = selectedNodesForAction().size();
+        removeStepButton.setMessage(Component.literal(
+                selectedCount > 1 ? "Del " + selectedCount : "Del"));
+        removeStepButton.active = selectedCount > 0;
+        removeStepButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
+                Component.literal(selectedCount == 0
+                        ? "Select a card to delete it. Delete or Backspace does the same."
+                        : selectedCount == 1
+                        ? "Delete the selected card (Delete or Backspace)"
+                        : "Delete the " + selectedCount + " selected cards (Delete or Backspace)")));
+
+        syncRunButton();
         repeatButton.setMessage(Component.literal(step == null ? "-"
                 : isWhileCompanion(step) ? "x∞" : step.describeRepeat()));
         boolean repeatable = step != null && !step.isSourceNode()
@@ -887,30 +999,30 @@ public class RoutinesTab extends LuneTab {
         syncButtonControls();
     }
 
-    private RoutineNode selectedStep() {
+    private TaskNode selectedStep() {
         return blueprintPanel.getSelected();
     }
 
-    private void setSelectedStep(RoutineNode node) {
+    private void setSelectedStep(TaskNode node) {
         blueprintPanel.setSelected(node);
     }
 
-    private void setRoutine(Routine routine) {
-        blueprintPanel.setRoutine(routine);
+    private void setTask(TaskGraph task) {
+        blueprintPanel.setTask(task);
     }
 
 
     private void beginEdit() {
         if (lastStoreSnapshot != null) {
-            undoStack.push(new HistoryEntry(lastStoreSnapshot, selectedRoutineName));
+            undoStack.push(new HistoryEntry(lastStoreSnapshot, selectedTaskName));
             redoStack.clear();
         }
     }
 
     private void recordEdit() {
-        Routine routine = routineList.getSelected();
-        selectedRoutineName = routine != null ? routine.name : null;
-        lastStoreSnapshot = RoutineStore.get().exportAll();
+        TaskGraph task = taskList.getSelected();
+        selectedTaskName = task != null ? task.name : null;
+        lastStoreSnapshot = TaskStore.get().exportAll();
     }
 
     private void maybeRecordHistory() {
@@ -918,13 +1030,13 @@ public class RoutinesTab extends LuneTab {
             recordEdit();
             return;
         }
-        String current = RoutineStore.get().exportAll();
+        String current = TaskStore.get().exportAll();
         if (!current.equals(lastStoreSnapshot)) {
-            undoStack.push(new HistoryEntry(lastStoreSnapshot, selectedRoutineName));
+            undoStack.push(new HistoryEntry(lastStoreSnapshot, selectedTaskName));
             redoStack.clear();
             lastStoreSnapshot = current;
-            Routine routine = routineList.getSelected();
-            selectedRoutineName = routine != null ? routine.name : null;
+            TaskGraph task = taskList.getSelected();
+            selectedTaskName = task != null ? task.name : null;
         }
     }
 
@@ -934,19 +1046,19 @@ public class RoutinesTab extends LuneTab {
             return;
         }
         HistoryEntry entry = undoStack.pop();
-        String current = RoutineStore.get().exportAll();
-        redoStack.push(new HistoryEntry(current, selectedRoutineName));
-        RoutineStore.get().restoreAll(entry.snapshot());
+        String current = TaskStore.get().exportAll();
+        redoStack.push(new HistoryEntry(current, selectedTaskName));
+        TaskStore.get().restoreAll(entry.snapshot());
         lastStoreSnapshot = entry.snapshot();
-        selectedRoutineName = entry.routineName;
-        lastOpenedRoutineName = selectedRoutineName;
-        if (selectedRoutineName != null) {
-            BotConfig.get().lastOpenedRoutine = selectedRoutineName;
+        selectedTaskName = entry.taskName;
+        lastOpenedTaskName = selectedTaskName;
+        if (selectedTaskName != null) {
+            BotConfig.get().lastOpenedTask = selectedTaskName;
             BotConfig.get().save();
         }
         resetDeleteConfirmation();
-        refreshRoutines();
-        restoreRoutineSelection();
+        refreshTasks();
+        restoreTaskSelection();
         setSelectedStep(null);
         message = "Undone";
     }
@@ -957,19 +1069,19 @@ public class RoutinesTab extends LuneTab {
             return;
         }
         HistoryEntry entry = redoStack.pop();
-        String current = RoutineStore.get().exportAll();
-        undoStack.push(new HistoryEntry(current, selectedRoutineName));
-        RoutineStore.get().restoreAll(entry.snapshot());
+        String current = TaskStore.get().exportAll();
+        undoStack.push(new HistoryEntry(current, selectedTaskName));
+        TaskStore.get().restoreAll(entry.snapshot());
         lastStoreSnapshot = entry.snapshot();
-        selectedRoutineName = entry.routineName;
-        lastOpenedRoutineName = selectedRoutineName;
-        if (selectedRoutineName != null) {
-            BotConfig.get().lastOpenedRoutine = selectedRoutineName;
+        selectedTaskName = entry.taskName;
+        lastOpenedTaskName = selectedTaskName;
+        if (selectedTaskName != null) {
+            BotConfig.get().lastOpenedTask = selectedTaskName;
             BotConfig.get().save();
         }
         resetDeleteConfirmation();
-        refreshRoutines();
-        restoreRoutineSelection();
+        refreshTasks();
+        restoreTaskSelection();
         setSelectedStep(null);
         message = "Redone";
     }
@@ -977,14 +1089,14 @@ public class RoutinesTab extends LuneTab {
     private void resetDeleteConfirmation() {
         if (confirmingDelete) {
             confirmingDelete = false;
-            deleteButton.setMessage(Component.literal("Del"));
+            deleteButton.setMessage(Component.literal("Delete"));
         }
     }
 
     /** Called when the panel closes, so edits survive without writing the file every tick. */
     public void save() {
         tick();
-        RoutineStore.get().save();
+        TaskStore.get().save();
     }
 
     private void resizeLeftPane(int dx) {
@@ -1108,6 +1220,13 @@ public class RoutinesTab extends LuneTab {
             blockPicker.setPosition(area.left(), area.top());
             blockPicker.setSize(area.width(), area.height());
         }
+        if (inventoryPicker != null && inventoryPicker.isOpen()) {
+            int pickerW = Math.clamp(area.width() * 3 / 4, 220, 420);
+            int pickerH = Math.clamp(area.height() * 3 / 4, 160, 320);
+            inventoryPicker.setPosition(area.left() + (area.width() - pickerW) / 2,
+                    area.top() + (area.height() - pickerH) / 2);
+            inventoryPicker.setSize(pickerW, pickerH);
+        }
     }
 
     private void layoutTaskPane(Frame frame) {
@@ -1115,19 +1234,19 @@ public class RoutinesTab extends LuneTab {
         int top = frame.top();
         nameBox.setPosition(left + 2, top + 2);
         nameBox.setWidth(frame.leftPane() - 4);
-        routineList.setPosition(left, top + 22);
-        routineList.setSize(frame.leftPane(), Math.max(20, frame.listHeight() - 22));
+        taskList.setPosition(left, top + 22);
+        taskList.setSize(frame.leftPane(), Math.max(20, frame.listHeight() - 22));
 
-        int routineButtonsY = top + frame.height() - BUTTON_ROW + 4;
+        int taskButtonsY = top + frame.height() - BUTTON_ROW + 4;
         int topW = Math.max(28, (frame.leftPane() - BUTTON_GAP * 2) / 3);
-        newButton.setPosition(left, routineButtonsY);
+        newButton.setPosition(left, taskButtonsY);
         newButton.setSize(topW, CONTROL_H);
-        deleteButton.setPosition(left + topW + BUTTON_GAP, routineButtonsY);
+        deleteButton.setPosition(left + topW + BUTTON_GAP, taskButtonsY);
         deleteButton.setSize(topW, CONTROL_H);
-        runButton.setPosition(left + 2 * (topW + BUTTON_GAP), routineButtonsY);
+        runButton.setPosition(left + 2 * (topW + BUTTON_GAP), taskButtonsY);
         runButton.setSize(Math.max(28, frame.leftPane() - 2 * (topW + BUTTON_GAP)), CONTROL_H);
 
-        int midY = routineButtonsY + 21;
+        int midY = taskButtonsY + 21;
         int midW = Math.max(28, (frame.leftPane() - BUTTON_GAP) / 2);
         importButton.setPosition(left, midY);
         importButton.setSize(midW, CONTROL_H);
@@ -1142,7 +1261,7 @@ public class RoutinesTab extends LuneTab {
     }
 
     private void setLeftPaneVisible(boolean visible) {
-        for (AbstractWidget widget : List.of(nameBox, routineList, newButton, deleteButton,
+        for (AbstractWidget widget : List.of(nameBox, taskList, newButton, deleteButton,
                 importButton, exportButton, undoButton, redoButton, leftSplitter)) {
             widget.visible = visible;
             if (!visible) {
@@ -1222,11 +1341,34 @@ public class RoutinesTab extends LuneTab {
                             .withColor(LuneScreen.TEXT_DIM));
         }
 
+        syncRunButton();
         Task current = BotEngine.get().getCurrent();
-        if (current instanceof RoutineTask routine) {
+        if (current instanceof TaskRunner task) {
             text.accept(area.left() + MARGIN, y - 13,
-                    Component.literal("Running " + routine.currentRoutine().name + ": " + routine.describeFlow())
+                    Component.literal("Running " + task.currentTask().name + ": " + task.describeFlow())
                             .withColor(LuneScreen.ACCENT));
         }
+
+        drawPaletteDragGhost(extractor);
+    }
+
+    /** A card outline under the cursor, so a dragged palette tile is visibly being carried. */
+    private void drawPaletteDragGhost(GuiGraphicsExtractor extractor) {
+        PalettePanel.Item dragged = palettePanel.draggingItem();
+        if (dragged == null) {
+            return;
+        }
+        String label = dragged instanceof PalettePanel.Command command ? command.name()
+                : dragged instanceof PalettePanel.General general ? general.name()
+                : ((PalettePanel.Blueprint) dragged).name();
+        int width = Minecraft.getInstance().font.width(label) + 14;
+        int left = palettePanel.dragPointerX() - width / 2;
+        int top = palettePanel.dragPointerY() - 9;
+        boolean overCanvas = blueprintPanel.acceptsDropAt(
+                palettePanel.dragPointerX(), palettePanel.dragPointerY());
+        extractor.fill(left, top, left + width, top + 18, overCanvas ? 0xD0284F7A : 0xA01D1E24);
+        extractor.outline(left, top, width, 18, overCanvas ? LuneScreen.ACCENT : LuneScreen.TEXT_DIM);
+        extractor.textRenderer().accept(left + 7, top + 5,
+                Component.literal(label).withColor(overCanvas ? 0xFFFFFFFF : LuneScreen.TEXT_DIM));
     }
 }

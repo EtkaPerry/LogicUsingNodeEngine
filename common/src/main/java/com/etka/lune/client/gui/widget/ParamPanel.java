@@ -92,6 +92,7 @@ public class ParamPanel extends AbstractWidget {
     private Map<String, String> sections = Map.of();
     private int scrollRows;
     private Consumer<Param.BlockSet> onOpenBlockPicker;
+    private Consumer<Param.ItemChoice> onOpenItemPicker;
     private Set<String> exposedInputs = Set.of();
     private Set<String> exposedOutputs = Set.of();
     private BiConsumer<String, PortSide> onTogglePort;
@@ -117,6 +118,10 @@ public class ParamPanel extends AbstractWidget {
         this.onOpenBlockPicker = onOpenBlockPicker;
     }
 
+    public void setOpenItemPicker(Consumer<Param.ItemChoice> onOpenItemPicker) {
+        this.onOpenItemPicker = onOpenItemPicker;
+    }
+
     public void setCommand(CommandDef command) {
         if (this.command != command) {
             this.command = command;
@@ -126,6 +131,12 @@ public class ParamPanel extends AbstractWidget {
             scrollRows = 0;
             rebuild();
         }
+    }
+
+    /** Rebuilds the visible rows after the current command values changed in place. */
+    public void refresh() {
+        closeChoice();
+        rebuild();
     }
 
     /** Uses the compact, settings-style renderer instead of the task editor renderer. */
@@ -600,7 +611,15 @@ public class ParamPanel extends AbstractWidget {
                 }
             }
             case Param.EntitySet entities -> toggleExpanded(entities.id());
-            case Param.ItemChoice item -> item.cycle();
+            case Param.ItemChoice item -> {
+                // Cycling one at a time through every registered item is hopeless on a modded
+                // instance; the picker shows what the player is actually carrying instead.
+                if (onOpenItemPicker != null) {
+                    onOpenItemPicker.accept(item);
+                } else {
+                    item.cycle();
+                }
+            }
             default -> {
             }
         }

@@ -157,7 +157,7 @@ public final class CollectCraftingTableTask implements Task {
 
             // The entity can appear a tick or two after the block update. Start a fresh bounded
             // sweep next tick instead of treating one empty scan as completion. Once that grace
-            // period expires, report failure so the parent routine can recover instead of spinning.
+            // period expires, report failure so the parent task can recover instead of spinning.
             pickup.stop(ctx);
             pickup = null;
             if (++dropWaitTicks <= DROP_SPAWN_GRACE_TICKS) {

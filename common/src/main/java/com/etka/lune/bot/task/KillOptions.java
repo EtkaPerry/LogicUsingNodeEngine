@@ -34,8 +34,8 @@ public record KillOptions(
         return new KillOptions(false, false, false, EndermanSafety.DIRECT);
     }
 
-    /** Sensible defaults for the routine editor: automatic protection without forced crafting. */
-    public static KillOptions routineDefaults() {
+    /** Sensible defaults for the task editor: automatic protection without forced crafting. */
+    public static KillOptions taskDefaults() {
         return new KillOptions(true, true, false, EndermanSafety.AUTO,
                 WeaponPreference.AUTO, false);
     }

@@ -1,10 +1,12 @@
 package com.etka.lune.bot.util;
 
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.bot.knowledge.OreKnowledge;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.path.WaterEscape;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.state.BlockState;
@@ -39,6 +41,8 @@ public final class BlockBreaker {
 
     private BlockPos current;
     private boolean destroying;
+    /** What is under the swing, kept because a finished break can only be read as air. */
+    private BlockState destroyingState;
     private String failureReason = "";
 
     /** Outcome of one tick of work on a block. */
@@ -93,7 +97,13 @@ public final class BlockBreaker {
             return Progress.WORKING;
         }
         if (ctx.level.getBlockState(wanted).isAir()) {
+            boolean completedByBot = destroying;
+            BlockState broken = destroyingState;
             stop(ctx);
+            if (completedByBot) {
+                ctx.debug.blocksBroken++;
+                countHarvest(ctx, broken);
+            }
             return Progress.FINISHED;
         }
 
@@ -185,18 +195,41 @@ public final class BlockBreaker {
             // MultiPlayerGameMode rejects a stale or out-of-range destroy packet. Do not keep
             // claiming that a break is in progress: callers would reset their stall timer forever
             // while the player only swings at an unchanged block.
+            boolean completedByBot = destroying;
+            BlockState broken = destroyingState;
             destroying = false;
+            destroyingState = null;
             current = null;
             if (ctx.level.getBlockState(pos).isAir()) {
+                if (completedByBot) {
+                    ctx.debug.blocksBroken++;
+                    countHarvest(ctx, broken);
+                }
                 return Progress.FINISHED;
             }
             ctx.debug.breaking(pos, blockName, "game rejected break input");
             return Progress.WORKING;
         }
         destroying = true;
+        destroyingState = state;
         ctx.player.swing(InteractionHand.MAIN_HAND);
         ctx.debug.breaking(pos, blockName, "breaking");
         return Progress.WORKING;
+    }
+
+    /**
+     * Splits the plain break counter into the two kinds of block a run is actually judged by. A
+     * thousand broken blocks says nothing; four ores and sixteen logs says what the run was.
+     */
+    private static void countHarvest(BotContext ctx, BlockState state) {
+        if (state == null) {
+            return;
+        }
+        if (state.is(BlockTags.LOGS)) {
+            ctx.debug.count("logs_chopped");
+        } else if (OreKnowledge.forBlock(state.getBlock()).isPresent()) {
+            ctx.debug.count("ores_mined");
+        }
     }
 
     public String getFailureReason() {
@@ -220,6 +253,7 @@ public final class BlockBreaker {
             ctx.gameMode.stopDestroyBlock();
             destroying = false;
         }
+        destroyingState = null;
         current = null;
     }
 }

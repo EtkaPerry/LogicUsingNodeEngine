@@ -105,6 +105,7 @@ public final class EatTask implements Task {
             // slow second item is not judged by the first one's clock.
             lastFoodLevel = food;
             noProgressTicks = 0;
+            ctx.debug.foodEaten++;
         }
 
         // Vanilla cancels a use the moment the player is submerged, so holding the key underwater

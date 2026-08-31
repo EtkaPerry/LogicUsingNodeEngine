@@ -1,18 +1,19 @@
 package com.etka.lune.client.gui.mascot;
 
 import com.etka.lune.bot.BotEngine;
+import com.etka.lune.bot.LoopWatch;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.catalog.ToolCatalog;
 import com.etka.lune.bot.knowledge.BiomeKnowledge;
 import com.etka.lune.bot.knowledge.Need;
-import com.etka.lune.bot.task.RoutineTask;
+import com.etka.lune.bot.task.TaskRunner;
 import com.etka.lune.bot.util.InventoryHelper;
-import com.etka.lune.routine.Routine;
-import com.etka.lune.routine.RoutineGraph;
-import com.etka.lune.routine.RoutineNode;
-import com.etka.lune.routine.RoutineSafety;
-import com.etka.lune.routine.RoutineSuggestion;
-import com.etka.lune.routine.RoutineStore;
+import com.etka.lune.task.TaskGraph;
+import com.etka.lune.task.TaskWiring;
+import com.etka.lune.task.TaskNode;
+import com.etka.lune.task.TaskSafety;
+import com.etka.lune.task.TaskSuggestion;
+import com.etka.lune.task.TaskStore;
 import com.etka.lune.config.BotConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.player.Inventory;
@@ -28,7 +29,7 @@ import java.util.Set;
 /**
  * Turns real bot state into the mascot's deliberately small amount of speech.
  *
- * <p>This is deterministic and local. It does not invent advice, parse chat, or change a routine
+ * <p>This is deterministic and local. It does not invent advice, parse chat, or change a task
  * until the player presses the affirmative button. Declines are remembered for the client session
  * so reopening the screen does not turn Lune into a nag.</p>
  */
@@ -36,7 +37,7 @@ public final class MascotAdvisor {
 
     private static final int SUGGESTION_DELAY_TICKS = 60;
     /** Six stable seconds plus the normal three-second thought delay = a fresh offer after ~9 s. */
-    private static final int ROUTINE_STABLE_TICKS = 120;
+    private static final int TASK_STABLE_TICKS = 120;
     private static final int REPLY_TICKS = 140;
     private static final int NEXT_SUGGESTION_COOLDOWN_TICKS = 240;
     private static final int BLOCKED_CONFIRM_TICKS = 20;
@@ -61,7 +62,7 @@ public final class MascotAdvisor {
 
     public enum Surface {
         MAIN,
-        ROUTINES,
+        TASKS,
         WAYPOINTS,
         CONFIG
     }
@@ -75,9 +76,9 @@ public final class MascotAdvisor {
     private int replyTicks;
     private Mood replyMood = Mood.IDLE;
     private int napTicks;
-    private Routine observedRoutine;
+    private TaskGraph observedTask;
     private String observedFingerprint = "";
-    private int stableRoutineTicks;
+    private int stableTaskTicks;
     private UndoRecord undo;
     private boolean dismissalMenu;
     private final Set<String> hiddenUntilReopen = new HashSet<>();
@@ -91,22 +92,21 @@ public final class MascotAdvisor {
     private String liveDetail = "";
     private int blockedTicks;
     private int waitingTicks;
-    private boolean emergencyWasActive;
 
-    private record Pending(String key, Routine routine, RoutineSuggestion taskSuggestion) {
+    private record Pending(String key, TaskGraph task, TaskSuggestion taskSuggestion) {
         boolean isSafety() {
             return taskSuggestion == null;
         }
     }
 
-    private record UndoRecord(Routine routine, Routine snapshot, String changedFingerprint) {}
+    private record UndoRecord(TaskGraph task, TaskGraph snapshot, String changedFingerprint) {}
 
     public enum Dismissal {
         NOT_NOW("Not now", "Naps and retries shortly."),
         NEXT_TIME("Remind me next time I see you",
                 "Appears after closing and reopening the interface."),
         NEVER_TYPE("Don't ask again", "Permanently mutes that suggestion type."),
-        THIS_ROUTINE("Not for this task", "Mutes it only for the selected task."),
+        THIS_TASK("Not for this task", "Mutes it only for the selected task."),
         LATER("Remind me later", "Retries after three minutes.");
 
         private final String label;
@@ -159,29 +159,33 @@ public final class MascotAdvisor {
         updateActivityState(engine);
 
         if (suppressesSuggestions()) {
-            // Live state and recent outcomes are more useful than an unrelated routine prompt.
+            // Live state and recent outcomes are more useful than an unrelated task prompt.
             prompting = false;
             dismissalMenu = false;
             clearCandidate();
             return;
         }
 
-        if (surface != Surface.ROUTINES) {
+        if (surface != Surface.TASKS && !hasRunningStall(engine)) {
             // Do not turn the dashboard or utility tabs into an unsolicited suggestion queue.
             // The active task, replies, and milestone narration still remain visible.
+            //
+            // A measured stall is the one exception, because it is not an unsolicited idea: it
+            // explains something already happening to the player's game, and the Tasks screen is
+            // precisely where they are not sitting when they notice the world going to pieces.
             prompting = false;
             dismissalMenu = false;
-            stableRoutineTicks = 0;
+            stableTaskTicks = 0;
             clearCandidate();
             return;
         }
 
-        Routine routine = candidateRoutine(engine);
-        String fingerprint = RoutineSuggestion.fingerprint(routine);
-        if (routine != observedRoutine || !fingerprint.equals(observedFingerprint)) {
-            observedRoutine = routine;
+        TaskGraph task = candidateTask(engine);
+        String fingerprint = TaskSuggestion.fingerprint(task);
+        if (task != observedTask || !fingerprint.equals(observedFingerprint)) {
+            observedTask = task;
             observedFingerprint = fingerprint;
-            stableRoutineTicks = 0;
+            stableTaskTicks = 0;
             suggestionCooldownTicks = 0;
             if (napTicks > 0) {
                 napTicks = 0;
@@ -193,15 +197,15 @@ public final class MascotAdvisor {
             clearCandidate();
             return;
         }
-        if (routine == null || routine.nodes == null || routine.nodes.isEmpty()) {
+        if (task == null || task.nodes == null || task.nodes.isEmpty()) {
             clearCandidate();
             return;
         }
-        if (stableRoutineTicks < ROUTINE_STABLE_TICKS) {
-            stableRoutineTicks++;
+        if (stableTaskTicks < TASK_STABLE_TICKS) {
+            stableTaskTicks++;
             return;
         }
-        Pending next = nextSuggestion(engine, routine);
+        Pending next = nextSuggestion(engine, task);
         if (prompting) {
             if (candidate != null && next != null && candidate.key().equals(next.key())) {
                 return;
@@ -282,9 +286,9 @@ public final class MascotAdvisor {
                 reply = "Got it. I won't ask about this kind again.";
                 replyMood = Mood.SUCCESS;
             }
-            case THIS_ROUTINE -> {
-                config.luneDismissedRoutineSuggestions.add(routineKindKey(
-                        candidate.routine(), type));
+            case THIS_TASK -> {
+                config.luneDismissedTaskSuggestions.add(taskKindKey(
+                        candidate.task(), type));
                 config.save();
                 reply = "Understood. I'll leave this task alone.";
                 replyMood = Mood.SUCCESS;
@@ -342,7 +346,7 @@ public final class MascotAdvisor {
             return "LUNE HAS A THOUGHT";
         }
         if (candidate != null && candidate.taskSuggestion() != null
-                && !candidate.taskSuggestion().changesRoutine()) {
+                && !candidate.taskSuggestion().changesTask()) {
             return "LUNE NOTICED SOMETHING";
         }
         return "LUNE HAS AN IDEA";
@@ -376,12 +380,12 @@ public final class MascotAdvisor {
 
     public boolean canUndo() {
         if (undo == null || replyTicks <= 0
-                || !undo.changedFingerprint().equals(RoutineSuggestion.fingerprint(undo.routine()))) {
+                || !undo.changedFingerprint().equals(TaskSuggestion.fingerprint(undo.task()))) {
             return false;
         }
         Task current = BotEngine.get().getCurrent();
-        if (current instanceof RoutineTask running && running.currentRoutine() == undo.routine()) {
-            RoutineNode active = running.activeNode();
+        if (current instanceof TaskRunner running && running.currentTask() == undo.task()) {
+            TaskNode active = running.activeNode();
             return active == null || undo.snapshot().nodeById(active.id) != null;
         }
         return true;
@@ -391,12 +395,12 @@ public final class MascotAdvisor {
         if (!canUndo()) {
             return;
         }
-        Routine restored = undo.routine();
-        if (RoutineGraph.restore(restored, undo.snapshot())) {
-            RoutineStore.get().save();
-            observedRoutine = restored;
-            observedFingerprint = RoutineSuggestion.fingerprint(restored);
-            stableRoutineTicks = 0;
+        TaskGraph restored = undo.task();
+        if (TaskWiring.restore(restored, undo.snapshot())) {
+            TaskStore.get().save();
+            observedTask = restored;
+            observedFingerprint = TaskSuggestion.fingerprint(restored);
+            stableTaskTicks = 0;
             reply = "Undone. The task is back the way it was.";
             replyMood = Mood.IDLE;
             replyTicks = REPLY_TICKS;
@@ -423,7 +427,7 @@ public final class MascotAdvisor {
         if (napTicks > 0) {
             return replyTicks > 0;
         }
-        return surface != Surface.ROUTINES || prompting || replyTicks > 0 || milestoneTicks > 0
+        return surface != Surface.TASKS || prompting || replyTicks > 0 || milestoneTicks > 0
                 || liveMood != Mood.IDLE || engine.getCurrent() != null;
     }
 
@@ -478,7 +482,7 @@ public final class MascotAdvisor {
         }
         Task current = engine.getCurrent();
         if (current == null) {
-            return surface == Surface.ROUTINES
+            return surface == Surface.TASKS
                     ? "Nothing running. I'll stay right here."
                     : idleSpeech(surface);
         }
@@ -528,28 +532,9 @@ public final class MascotAdvisor {
         String status = current == null ? "" : current.status();
         liveDetail = status;
 
-        if (engine.isEmergencyProtectionActive()) {
-            emergencyWasActive = true;
-            liveMood = Mood.DANGER;
-            liveDetail = engine.getEmergencyProtectionStatus();
-            resetConfirmationTicks();
-            return;
-        }
-        if (emergencyWasActive) {
-            emergencyWasActive = false;
-            if (current != null) {
-                milestoneMood = Mood.SUCCESS;
-                milestone = stateSpeech(Mood.SUCCESS,
-                        "Emergency protection finished; we're safe again.");
-                milestoneTicks = 100;
-            }
-        }
-
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft != null && minecraft.player != null) {
             var player = minecraft.player;
-            BotConfig config = BotConfig.get();
-            float dangerHealth = config.stopBelowHealth > 0 ? config.stopBelowHealth : 4.0F;
             if (player.isInLava()) {
                 liveMood = Mood.DANGER;
                 liveDetail = status.isBlank() ? "I'm in lava." : status;
@@ -560,19 +545,6 @@ public final class MascotAdvisor {
                     && player.getAirSupply() <= player.getMaxAirSupply() / 3) {
                 liveMood = Mood.DANGER;
                 liveDetail = status.isBlank() ? "My air is running low." : status;
-                resetConfirmationTicks();
-                return;
-            }
-            if (player.getHealth() <= dangerHealth) {
-                liveMood = Mood.DANGER;
-                liveDetail = status.isBlank() ? "My health is dangerously low." : status;
-                resetConfirmationTicks();
-                return;
-            }
-            if (current != null && player.getInventory().getFreeSlot() < 0
-                    && MascotSignals.classify(status) != MascotSignals.Signal.DANGER) {
-                liveMood = Mood.INVENTORY_FULL;
-                liveDetail = status.isBlank() ? "The inventory is full." : status;
                 resetConfirmationTicks();
                 return;
             }
@@ -771,30 +743,30 @@ public final class MascotAdvisor {
     }
 
     public void accept() {
-        if (!prompting || candidate == null || candidate.routine() == null) {
+        if (!prompting || candidate == null || candidate.task() == null) {
             return;
         }
-        boolean mutating = candidate.isSafety() || candidate.taskSuggestion().changesRoutine();
-        Routine snapshot = mutating ? RoutineGraph.copy(candidate.routine()) : null;
+        boolean mutating = candidate.isSafety() || candidate.taskSuggestion().changesTask();
+        TaskGraph snapshot = mutating ? TaskWiring.copy(candidate.task()) : null;
         boolean changed;
         if (candidate.isSafety()) {
-            changed = RoutineSafety.installDefaultMonitor(candidate.routine());
+            changed = TaskSafety.installDefaultMonitor(candidate.task());
         } else {
             changed = candidate.taskSuggestion().apply(chosenAmount);
         }
         if (changed) {
             DISMISSED_THIS_SESSION.add(candidate.key());
             if (mutating) {
-                RoutineStore.get().save();
-                undo = new UndoRecord(candidate.routine(), snapshot,
-                        RoutineSuggestion.fingerprint(candidate.routine()));
+                TaskStore.get().save();
+                undo = new UndoRecord(candidate.task(), snapshot,
+                        TaskSuggestion.fingerprint(candidate.task()));
             }
             if (candidate.isSafety()) {
                 reply = "All set. I'll keep a closer eye on its next run.";
-            } else if (candidate.taskSuggestion().kind() == RoutineSuggestion.Kind.QUANTITY) {
+            } else if (candidate.taskSuggestion().kind() == TaskSuggestion.Kind.QUANTITY) {
                 reply = "Lovely. I'll stop at " + chosenAmount + " "
                         + candidate.taskSuggestion().unit() + " next time.";
-            } else if (candidate.taskSuggestion().kind() == RoutineSuggestion.Kind.AUTO_TOOL) {
+            } else if (candidate.taskSuggestion().kind() == TaskSuggestion.Kind.AUTO_TOOL) {
                 reply = "Done. I'll prepare a proper tool before mining.";
             } else {
                 reply = candidate.taskSuggestion().acceptedReply();
@@ -836,7 +808,6 @@ public final class MascotAdvisor {
         liveMood = Mood.IDLE;
         liveDetail = "";
         resetConfirmationTicks();
-        emergencyWasActive = false;
     }
 
     private void finishPrompt() {
@@ -847,59 +818,104 @@ public final class MascotAdvisor {
         clearCandidate();
     }
 
-    private static String routineKey(Routine routine) {
-        return routine == null || routine.name == null
+    private static String taskKey(TaskGraph task) {
+        return task == null || task.name == null
                 ? ""
-                : routine.name.trim().toLowerCase(Locale.ROOT);
+                : task.name.trim().toLowerCase(Locale.ROOT);
     }
 
-    private Pending nextSuggestion(BotEngine engine, Routine routine) {
-        String routineKey = routineKey(routine);
-        String safetyKey = routineKey + ":safety";
+    private Pending nextSuggestion(BotEngine engine, TaskGraph task) {
+        String taskKey = taskKey(task);
+        String safetyKey = taskKey + ":safety";
 
-        RoutineNode preferred = null;
+        TaskNode preferred = null;
+        boolean isRunningTask = false;
         Task current = engine.getCurrent();
-        if (current instanceof RoutineTask running && running.currentRoutine() == routine) {
+        if (current instanceof TaskRunner running && running.currentTask() == task) {
             preferred = running.currentNode();
+            isRunningTask = true;
         }
         Set<String> ignored = new HashSet<>(DISMISSED_THIS_SESSION);
 
+        // Ahead of everything else, and only for the task actually running. This one is measured
+        // rather than derived, and it describes something the player can see happening to their
+        // game right now - advice about mining quotas can wait until the stutter is explained.
+        Pending slow = slowStepSuggestion(task, isRunningTask, ignored);
+        if (slow != null) {
+            return slow;
+        }
+
         // Structural repairs come before safety and workload advice. In particular, an imported
-        // routine without START must be offered an explicit entry point before Lune discusses
+        // task without START must be offered an explicit entry point before Lune discusses
         // mining quotas or protection.
-        var leading = RoutineSuggestion.startFor(routine);
+        var leading = TaskSuggestion.startFor(task);
         if (leading.isEmpty() || ignored.contains(leading.get().key())) {
-            leading = RoutineSuggestion.finiteMonitorFor(routine);
+            leading = TaskSuggestion.finiteMonitorFor(task);
         }
         if (leading.isPresent()) {
-            RoutineSuggestion found = leading.get();
-            Pending pending = new Pending(found.key(), routine, found);
+            TaskSuggestion found = leading.get();
+            Pending pending = new Pending(found.key(), task, found);
             if (!isSuppressed(pending)) {
                 return pending;
             }
             ignored.add(found.key());
         }
 
-        if (!RoutineSafety.hasMonitor(routine) && !DISMISSED_THIS_SESSION.contains(safetyKey)) {
-            Pending safety = new Pending(safetyKey, routine, null);
+        if (!TaskSafety.hasMonitor(task) && !DISMISSED_THIS_SESSION.contains(safetyKey)) {
+            Pending safety = new Pending(safetyKey, task, null);
             if (!isSuppressed(safety)) {
                 return safety;
             }
         }
 
         while (true) {
-            var suggestion = RoutineSuggestion.firstFor(routine, preferred, ignored,
+            var suggestion = TaskSuggestion.firstFor(task, preferred, ignored,
                     suggestionContext());
             if (suggestion.isEmpty()) {
                 return null;
             }
-            RoutineSuggestion found = suggestion.get();
-            Pending pending = new Pending(found.key(), routine, found);
+            TaskSuggestion found = suggestion.get();
+            Pending pending = new Pending(found.key(), task, found);
             if (!isSuppressed(pending)) {
                 return pending;
             }
             ignored.add(found.key());
         }
+    }
+
+    /** Cheap precondition for letting a stall warning past the surface gate. */
+    private boolean hasRunningStall(BotEngine engine) {
+        return BotConfig.get().warnAboutSlowSteps
+                && engine.getCurrent() instanceof TaskRunner
+                && LoopWatch.get().worst() != null;
+    }
+
+    /**
+     * The running task's own measured stall, if it has one the player has not already waved away.
+     *
+     * <p>Deliberately silent for a task being edited but not run: LoopWatch only ever describes the
+     * run in progress, and attaching that verdict to whichever task happens to be open on screen
+     * would blame the wrong one.</p>
+     */
+    private Pending slowStepSuggestion(TaskGraph task, boolean isRunningTask, Set<String> ignored) {
+        if (!isRunningTask || task == null || !BotConfig.get().warnAboutSlowSteps) {
+            return null;
+        }
+        LoopWatch.Spin spin = LoopWatch.get().worst();
+        if (spin == null) {
+            return null;
+        }
+        TaskNode node = task.nodeById(spin.nodeId());
+        if (node == null) {
+            return null;
+        }
+        var suggestion = TaskSuggestion.slowStepFor(task, node, spin.microsPerTick(),
+                spin.restartsPerSecond(), spin.permanent());
+        if (suggestion.isEmpty() || ignored.contains(suggestion.get().key())) {
+            return null;
+        }
+        Pending pending = new Pending(suggestion.get().key(), task, suggestion.get());
+        return isSuppressed(pending) ? null : pending;
     }
 
     private boolean isSuppressed(Pending pending) {
@@ -907,16 +923,16 @@ public final class MascotAdvisor {
             hiddenUntilReopen.clear();
             memoryGeneration = MEMORY_GENERATION;
         }
-        if (pending == null || pending.routine() == null) {
+        if (pending == null || pending.task() == null) {
             return false;
         }
         String type = candidateType(pending);
-        String routineKind = routineKindKey(pending.routine(), type);
+        String taskKind = taskKindKey(pending.task(), type);
         BotConfig config = BotConfig.get();
         ensurePreferenceCollections(config);
         if (DISMISSED_THIS_SESSION.contains(pending.key())
                 || config.luneDismissedSuggestionTypes.contains(type)
-                || config.luneDismissedRoutineSuggestions.contains(routineKind)
+                || config.luneDismissedTaskSuggestions.contains(taskKind)
                 || hiddenUntilReopen.contains(pending.key())) {
             return true;
         }
@@ -938,26 +954,26 @@ public final class MascotAdvisor {
                 ? "SAFETY" : pending.taskSuggestion().kind().name();
     }
 
-    private static String routineKindKey(Routine routine, String type) {
-        return routineKey(routine) + ":" + type;
+    private static String taskKindKey(TaskGraph task, String type) {
+        return taskKey(task) + ":" + type;
     }
 
     private static void ensurePreferenceCollections(BotConfig config) {
         if (config.luneDismissedSuggestionTypes == null) {
             config.luneDismissedSuggestionTypes = new java.util.LinkedHashSet<>();
         }
-        if (config.luneDismissedRoutineSuggestions == null) {
-            config.luneDismissedRoutineSuggestions = new java.util.LinkedHashSet<>();
+        if (config.luneDismissedTaskSuggestions == null) {
+            config.luneDismissedTaskSuggestions = new java.util.LinkedHashSet<>();
         }
         if (config.luneSuggestionReminders == null) {
             config.luneSuggestionReminders = new java.util.LinkedHashMap<>();
         }
     }
 
-    private static RoutineSuggestion.Context suggestionContext() {
+    private static TaskSuggestion.Context suggestionContext() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player == null || minecraft.level == null) {
-            return RoutineSuggestion.Context.unknown();
+            return TaskSuggestion.Context.unknown();
         }
         Inventory inventory = minecraft.player.getInventory();
         int torches = 0;
@@ -983,7 +999,7 @@ public final class MascotAdvisor {
         long dayTime = Math.floorMod(minecraft.level.getOverworldClockTime(), 24_000L);
         String dimension = minecraft.level.dimension().identifier().toString();
         var biome = minecraft.level.getBiome(minecraft.player.blockPosition());
-        return new RoutineSuggestion.Context(
+        return new TaskSuggestion.Context(
                 InventoryHelper.freeSlots(minecraft.player),
                 minecraft.player.getFoodData().getFoodLevel(),
                 torches,
@@ -992,28 +1008,27 @@ public final class MascotAdvisor {
                 dayTime >= 12_542L && dayTime <= 23_460L,
                 dimension,
                 BiomeKnowledge.name(biome),
-                BiomeKnowledge.isBarrenFor(biome, Set.of(Need.WOOD)),
-                BotConfig.get().stopWhenFull);
+                BiomeKnowledge.isBarrenFor(biome, Set.of(Need.WOOD)));
     }
 
     /**
-     * Prefer the routine that is actually running. While idle, the last routine selected in the
-     * editor remains useful context; this also lets a very short routine finish without making the
+     * Prefer the task that is actually running. While idle, the last task selected in the
+     * editor remains useful context; this also lets a very short task finish without making the
      * recommendation disappear before the player can reopen the panel.
      */
-    private static Routine candidateRoutine(BotEngine engine) {
+    private static TaskGraph candidateTask(BotEngine engine) {
         Task current = engine.getCurrent();
-        if (current instanceof RoutineTask running) {
-            return running.currentRoutine();
+        if (current instanceof TaskRunner running) {
+            return running.currentTask();
         }
         if (current != null) {
             return null;
         }
-        String lastOpened = BotConfig.get().lastOpenedRoutine;
+        String lastOpened = BotConfig.get().lastOpenedTask;
         if (lastOpened == null || lastOpened.isBlank()) {
             return null;
         }
-        return RoutineStore.get().byName(lastOpened).orElse(null);
+        return TaskStore.get().byName(lastOpened).orElse(null);
     }
 
     private static String sentence(String value) {

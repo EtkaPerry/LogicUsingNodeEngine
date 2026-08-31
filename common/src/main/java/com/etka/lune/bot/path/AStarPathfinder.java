@@ -180,6 +180,15 @@ public final class AStarPathfinder {
     }
 
     public static Result find(BlockGetter level, BlockPos start, Goal goal, Settings settings) {
+        com.etka.lune.bot.LuneProfiler.push("A* pathfind");
+        try {
+            return search(level, start, goal, settings);
+        } finally {
+            com.etka.lune.bot.LuneProfiler.pop();
+        }
+    }
+
+    private static Result search(BlockGetter level, BlockPos start, Goal goal, Settings settings) {
         long startNanos = System.nanoTime();
         Map<Long, Node> nodes = new HashMap<>();
         PriorityQueue<Node> open = new PriorityQueue<>((a, b) -> Double.compare(a.f, b.f));

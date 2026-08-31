@@ -4,8 +4,8 @@ import com.etka.lune.bot.catalog.BlockCatalog;
 import com.etka.lune.bot.catalog.BlockTarget;
 import com.etka.lune.bot.catalog.ToolCatalog;
 import com.etka.lune.bot.path.Goals;
-import com.etka.lune.bot.task.RoutineTask;
-import com.etka.lune.routine.RoutineStore;
+import com.etka.lune.bot.task.TaskRunner;
+import com.etka.lune.task.TaskStore;
 import com.etka.lune.bot.task.FailTask;
 import com.etka.lune.bot.task.EnsureToolTask;
 import com.etka.lune.bot.task.FindTask;
@@ -32,7 +32,7 @@ import com.etka.lune.bot.task.DirectionalGotoTask;
 import com.etka.lune.bot.task.ExploreTask;
 import com.etka.lune.bot.util.HeadScanner;
 import com.etka.lune.bot.task.SmeltTask;
-import com.etka.lune.bot.task.PauseGameTask;
+import com.etka.lune.bot.task.SelectItemTask;
 import com.etka.lune.bot.task.StopGameTask;
 import com.etka.lune.bot.task.SleepTask;
 import com.etka.lune.bot.task.SelfPreservationTask;
@@ -105,8 +105,8 @@ public final class CommandRegistry {
 
     /**
      * Get Tools can be pointed at a tool directly, or left to work one out from a block. The block
-     * mode is first and is the default, so routines saved before tools could be named keep the
-     * behaviour they were built with. Public because a stored routine that omits the parameter
+     * mode is first and is the default, so tasks saved before tools could be named keep the
+     * behaviour they were built with. Public because a stored task that omits the parameter
      * inherits whatever the palette last held, so anything shipping a Get Tools node has to say
      * which mode it means.
      */
@@ -171,6 +171,7 @@ public final class CommandRegistry {
             Map.entry("huntcreepers", "Combat"),
             Map.entry("huntskeletons", "Combat"),
             Map.entry("huntsheep", "Gathering"),
+            Map.entry("select_item", "Items & Storage"),
             Map.entry("loot", "Items & Storage"),
             Map.entry("deposit", "Items & Storage"),
             Map.entry("smelt", "Items & Storage"),
@@ -178,7 +179,7 @@ public final class CommandRegistry {
             Map.entry("eat", "Items & Storage"),
             Map.entry("sleep", "Items & Storage"),
             Map.entry("boat", "Movement"),
-            Map.entry("routine", "Tasks & Missions"),
+            Map.entry("task", "Tasks & Missions"),
             Map.entry("self_preservation", "Tasks & Missions"),
             Map.entry("stay_near", "Tasks & Missions"),
             Map.entry("completegame", "Tasks & Missions"),
@@ -304,19 +305,11 @@ public final class CommandRegistry {
                         3, 1, 1_000_000)),
                 def -> new FailTask("Counter", "Counter is a pulse node")));
 
+        // No parameters: what an Observer watches is the card wired into its Watch pin, not a
+        // value picked from a list.
         register(new CommandDef("observer", "Observer",
-                "Watch the world and send a pulse when the selected event happens",
-                List.of(
-                new Param.Choice("watch", "Watch", "What event should create a pulse",
-                        List.of("Health drops", "Health crosses below", "Health changes", "Hunger changes",
-                                "Air changes", "Item count changes", "Mob enters range"), "Health drops"),
-                new Param.Ints("threshold", "Threshold", "Used by Health crosses below", 4, 0, 300),
-                new Param.ItemChoice("item", "Item", "Used by Item count changes",
-                        items(), Items.COBBLESTONE),
-                new Param.EntitySet("entities", "Mobs", "Used by Mob enters range", MOBS,
-                        Set.of(EntityType.ZOMBIE)),
-                new Param.Ints("radius", "Range", "Used by Mob enters range", 16, 1, 128)
-        ), def -> new FailTask("Observer", "Observer is a pulse source")));
+                "Watch a card and send a pulse whenever its power changes",
+                List.of(), def -> new FailTask("Observer", "Observer is a pulse source")));
 
         register(new CommandDef("end", "End",
                 "Consume an incoming pulse and finish that circuit",
@@ -590,20 +583,22 @@ public final class CommandRegistry {
 
         // Running a task is itself a command, which is what lets one task hand off to
         // another - "when the mining run is done, switch to harvesting".
-        register(new CommandDef("routine", "Run Task", "Run one of your saved tasks", List.of(
+        register(new CommandDef("task", "Run Task", "Run one of your saved tasks", List.of(
                 new Param.Choice("name", "Task", "Which task to run",
-                        () -> RoutineStore.get().names(), "")
+                        () -> TaskStore.get().names(), "")
         ), def -> {
             String name = def.choiceValue("name");
-            return RoutineStore.get().byName(name)
-                    .<com.etka.lune.bot.Task>map(RoutineTask::new)
+            return TaskStore.get().byName(name)
+                    .<com.etka.lune.bot.Task>map(TaskRunner::new)
                     .orElseGet(() -> new FailTask("Run Task",
                             name.isEmpty() ? "no task chosen" : "no task named '" + name + "'"));
         }));
 
+        // Kept as its own entry so tasks saved before Stop the Game grew its endings still load.
+        // It builds the same task, so there is one implementation of pausing, not two.
         register(new CommandDef("pause_game", "Pause the Game",
                 "Open the pause menu, which also stops the world clock. Singleplayer only",
-                List.of(), def -> new PauseGameTask()));
+                List.of(), def -> new StopGameTask(StopGameTask.Ending.PAUSE)));
 
         register(new CommandDef("timer", "Timer",
                 "Delay a received pulse, then forward it",
@@ -611,12 +606,42 @@ public final class CommandRegistry {
                 def -> new TimerTask(def.intValue("seconds"))));
 
         register(new CommandDef("stop_game", "Stop the Game",
-                "Save and leave the world, and optionally close the game. Singleplayer only",
+                "End the session: pause it, return to the main menu, or quit to desktop",
                 List.of(
-                new Param.Bool("close_client", "Close the game too",
-                        "Leave the world and quit to desktop, rather than stopping at the title screen",
-                        true)
-        ), def -> new StopGameTask(def.boolValue("close_client"))));
+                new Param.Choice("ending", "Ending", "How far to back out of the session",
+                        java.util.Arrays.stream(StopGameTask.Ending.values())
+                                .map(StopGameTask.Ending::label).toList(),
+                        StopGameTask.Ending.QUIT.label())
+        ), def -> new StopGameTask(StopGameTask.Ending.fromLabel(def.choiceValue("ending")))));
+
+        register(new CommandDef("select_item", "Select from Inventory",
+                "Put a chosen item in hand, filtered by enchantment and remaining durability",
+                List.of(
+                new Param.ItemChoice("item", "Item", "Which carried item to hold",
+                        items(), Items.DIAMOND_PICKAXE),
+                new Param.Choice("enchanting", "Enchantment",
+                        "Narrow it to the enchanted copy, such as the Silk Touch pickaxe",
+                        java.util.Arrays.stream(SelectItemTask.Enchanting.values())
+                                .map(SelectItemTask.Enchanting::label).toList(),
+                        SelectItemTask.Enchanting.ANY.label()),
+                new Param.Choice("hand", "Hand", "Where to hold it",
+                        java.util.Arrays.stream(SelectItemTask.Hand.values())
+                                .map(SelectItemTask.Hand::label).toList(),
+                        SelectItemTask.Hand.MAIN.label()),
+                new Param.Ints("min_durability", "Minimum durability",
+                        "Percent of durability a copy must still have to be used; 0 accepts any",
+                        0, 0, 100),
+                new Param.Choice("prefer", "Prefer",
+                        "Which copy to hold when several pass: save the good one, or use up the worn one",
+                        java.util.Arrays.stream(SelectItemTask.Preference.values())
+                                .map(SelectItemTask.Preference::label).toList(),
+                        SelectItemTask.Preference.MOST_DURABLE.label())
+        ), def -> new SelectItemTask(
+                def.itemValue("item"),
+                SelectItemTask.Enchanting.fromLabel(def.choiceValue("enchanting")),
+                SelectItemTask.Hand.fromLabel(def.choiceValue("hand")),
+                def.intValue("min_durability"),
+                SelectItemTask.Preference.fromLabel(def.choiceValue("prefer")))));
 
         register(new CommandDef("eat", "Eat", "Eat food until hunger is above a threshold", List.of(
                 new Param.Ints("minimum_food", "Minimum food", "Stop eating when hunger is at least this", 14, 0, 20)
@@ -640,7 +665,7 @@ public final class CommandRegistry {
                 def.intValue("radius"))));
 
         register(new CommandDef("self_preservation", "Self Preservation",
-                "Safety circuit: escape danger while the other routine circuits keep running", List.of(
+                "Safety circuit: escape danger while the other circuits keep running", List.of(
                 new Param.Bool("protect_air", "Drowning",
                         "Escape drowning: take control when the air comparison becomes true", true),
                 new Param.Choice("air_compare", "Air rule", "Air comparison: compare remaining air ticks",
@@ -725,7 +750,7 @@ public final class CommandRegistry {
         return COMMAND_CATEGORIES.getOrDefault(id, "Other");
     }
 
-    /** Looks up a command by its stored id; null when a routine names one that no longer exists. */
+    /** Looks up a command by its stored id; null when a task names one that no longer exists. */
     public static CommandDef byId(String id) {
         for (CommandDef def : COMMANDS) {
             if (def.id().equals(id)) {

@@ -1,6 +1,9 @@
 package com.etka.lune.bot.util;
 
 import com.etka.lune.bot.BotContext;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.ClipContext;
@@ -117,20 +120,29 @@ public final class Vision {
      * entities are not blocks and therefore cannot be the final block hit of a level clip.
      */
     public static boolean isEntityVisible(BotContext ctx, Entity entity) {
+        return isEntityVisible(ctx.mc, ctx.player, ctx.level, entity);
+    }
+
+    /**
+     * Client-facing form used by diagnostics that do not need to construct a full bot context.
+     * It deliberately shares the same range, view-cone, and obstruction rules as the bot form.
+     */
+    public static boolean isEntityVisible(Minecraft mc, LocalPlayer player, ClientLevel level,
+                                          Entity entity) {
         if (entity == null || !entity.isAlive()) {
             return false;
         }
 
-        Vec3 eye = ctx.player.getEyePosition();
+        Vec3 eye = player.getEyePosition();
         Vec3 centre = entity.getBoundingBox().getCenter();
         double distanceSqr = eye.distanceToSqr(centre);
-        double range = maxRange(ctx);
+        double range = mc.options.renderDistance().get() * 16.0;
         if (distanceSqr > range * range) {
             return false;
         }
 
         Vec3 to = centre.subtract(eye).normalize();
-        double angle = Math.acos(Mth.clamp(ctx.player.getViewVector(1.0F).dot(to), -1.0, 1.0));
+        double angle = Math.acos(Mth.clamp(player.getViewVector(1.0F).dot(to), -1.0, 1.0));
         if (angle > TOTAL_FOV / 2.0) {
             return false;
         }
@@ -139,8 +151,8 @@ public final class Vision {
         // and a cow standing in a pond; treating the water surface as a wall made every fish in the
         // game permanently invisible to the bot, which is why a shoreline could report no food.
         // Block visibility keeps water opaque, because mining blind through water is a drowning.
-        BlockHitResult hit = ctx.level.clip(new ClipContext(eye, centre,
-                ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, ctx.player));
+        BlockHitResult hit = level.clip(new ClipContext(eye, centre,
+                ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
         if (hit.getType() != HitResult.Type.BLOCK) {
             return true;
         }

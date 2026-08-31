@@ -117,7 +117,7 @@ public final class TaskLearning {
             workUnits = Math.max(0, progress.completed() - episode.startedCompleted);
             expectedUnits = Math.max(1, episode.expectedUnits);
         } else {
-            // madeProgress() defaults true for routine-loop compatibility, so it cannot prove a
+            // madeProgress() defaults true for task-loop compatibility, so it cannot prove a
             // failed unmeasured job did useful work. Only terminal success earns its one unit.
             workUnits = completed ? 1 : 0;
             expectedUnits = 1;
@@ -135,7 +135,8 @@ public final class TaskLearning {
                 ctx.learning.bestSkillTicksPerUnit(episode.choice.context());
         if (ctx.learningSession.active()) {
             ctx.learningSession.skillOutcome(episode.choice.context().task(),
-                    episode.choice.action(), outcome, episode.choice.actions().size() > 1);
+                    episode.choice.action(), outcome,
+                    outcome.scored() && episode.choice.actions().size() > 1);
         }
         ctx.debug.learningReward = ctx.learningSession.reward();
         ctx.debug.learningMemory = ctx.learningSession.summary(BuildFeatures.approvalFeedback())

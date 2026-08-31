@@ -651,28 +651,6 @@ public final class SpeedrunTask implements Task {
     }
 
     @Override
-    public boolean canRecoverFromLowFood(BotContext ctx) {
-        if (phase == Phase.FOOD) {
-            return true;
-        }
-        // When the Overworld has no visible food, the speedrun may still reach a Nether bastion
-        // chest. Keep the safety gate open only through the preparatory phases; health and hostile
-        // player checks remain active in SafetyMonitor.
-        if (ctx.level.dimension() == Level.OVERWORLD
-                && (phase == Phase.IRON || phase == Phase.FLINT || phase == Phase.PORTAL)) {
-            // A local animal/farm opportunity can arrive after the initial food phase. Once the
-            // route has carried food, keep low-hunger recovery open long enough for EatTask to
-            // consume it; otherwise the global safety check can stop on the same tick that the
-            // server is applying the delayed use result.
-            return foodDeferredToNether || InventoryHelper.count(ctx.player,
-                    stack -> stack.has(DataComponents.FOOD)) > 0;
-        }
-        return ctx.level.dimension() == Level.NETHER
-                && (phase == Phase.BLAZE || phase == Phase.PEARLS)
-                && needsNetherFood(ctx);
-    }
-
-    @Override
     public void onStart(BotContext ctx) {
         phase = Phase.START;
         current = null;
@@ -758,7 +736,7 @@ public final class SpeedrunTask implements Task {
             if (next == null) {
                 // createTask may advance a phase after discovering that its inventory requirement
                 // is already satisfied. Re-enter on the next tick rather than ticking a finished
-                // child task, which is an easy source of stuck routines.
+                // child task, which is an easy source of stuck tasks.
                 return TaskStatus.RUNNING;
             }
             current = next;
@@ -1755,9 +1733,8 @@ public final class SpeedrunTask implements Task {
         if (hasFood(ctx)) {
             // Gathering can finish with an empty hunger bar: raw meat counts as a carried food
             // reserve, but it does not keep the next phase alive until the player actually eats.
-            // Consume enough now while the FOOD phase still owns low-food recovery; otherwise
-            // BotEngine would hand the successful food task back to SafetyMonitor and stop before
-            // the iron phase got its first tick.
+            // Consume enough before moving on, so the next phase starts with the supplies this
+            // phase promised to provide.
             if (ctx.player.getFoodData().getFoodLevel() < 14) {
                 return new EatTask(stack -> stack.has(DataComponents.FOOD), 14);
             }

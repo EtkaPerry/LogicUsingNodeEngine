@@ -1,7 +1,7 @@
 package com.etka.lune.bot;
 
 /**
- * A task with a condition for whether it has work to do. Routine circuits may tick it beside the
+ * A task with a condition for whether it has work to do. TaskGraph circuits may tick it beside the
  * circuit that powered it; the monitor does not own or pause the other circuit.
  */
 public interface WhileMonitor extends Task {

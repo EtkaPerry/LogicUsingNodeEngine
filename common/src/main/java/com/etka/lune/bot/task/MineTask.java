@@ -1,6 +1,7 @@
 package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.bot.LuneProfiler;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
@@ -87,6 +88,18 @@ public final class MineTask implements Task {
     private static final int DECISION_TICKS = 12;
     /** How far the bot must move before a look around counts as a look from somewhere new. */
     private static final int RESCAN_DISTANCE = 3;
+    /**
+     * Ray casts one tick may spend looking for a visible target, matching Explore's travel budget.
+     *
+     * <p>Deciding whether a block can be seen costs a ray cast, and the index holds every matching
+     * block in the search cube whether or not anything could ever see it. Ask a Mine card for
+     * deepslate while it is standing in a forest and that is the whole layer under the hill: a
+     * measured run spent 52 ms per tick working through it, found nothing - correctly, it was all
+     * buried - and did it again on the next tick, holding the client at 9 TPS for as long as the
+     * task ran. A slice per tick finds a visible block just as surely, because the sweep still
+     * starts at the nearest candidate.</p>
+     */
+    private static final int SIGHT_CHECKS_PER_TICK = 64;
     /** Two seconds between "is there somewhere better now" checks during a long approach. */
     private static final int RECONSIDER_INTERVAL_TICKS = 40;
     /** How far to look for an open cave before committing to digging a staircase. */
@@ -118,6 +131,12 @@ public final class MineTask implements Task {
     private int decisionTicks;
     private BlockPos workTarget;
     private int targetWorkTicks;
+    /** Where the bot was standing when the current approach was built. */
+    private BlockPos approachStartFeet;
+    /** The target {@link #approachWatch} is counting fruitless arrivals against. */
+    private BlockPos arrivalTarget;
+    /** Stops "walk there, refuse to work it, walk there again" from running for the whole task. */
+    private final ApproachWatch approachWatch = new ApproachWatch();
 
     /** Stop after this many blocks. 0 means keep going until the radius is exhausted. */
     private final int limit;
@@ -401,6 +420,7 @@ public final class MineTask implements Task {
         caveEntryTried = false;
         stopProspect(ctx);
         target = null;
+        arrivalPaidOff();
         treeAnchor = null;
         deferredStump = null;
         treeType = null;
@@ -617,6 +637,7 @@ public final class MineTask implements Task {
                     deferredStump = null;
                     treeType = null;
                     treeViewPending = false;
+                    arrivalPaidOff();
                     resetScan(ctx);
                     if (limit > 0 && mined >= limit) {
                         status = "felled one tree (" + mined + " logs)";
@@ -664,6 +685,11 @@ public final class MineTask implements Task {
                     }
                     return prospect(ctx);
                 }
+                // Deliberately SUCCESS even when nothing was found. A step that reports failure
+                // takes down the circuit that fed it when no Fail edge is wired, so a card at the
+                // end of a chain could cancel perfectly good work in front of it over a wiring
+                // mistake. "There is nothing here" is a finding, not a fault; a job that spends
+                // its life re-reporting it is a problem for LoopWatch to raise with the player.
                 status = "mined " + mined + ", nothing visible within " + radius + " blocks";
                 if (ctx.omniscientMining()) {
                     status = "mined " + mined + ", nothing left within " + radius + " blocks";
@@ -740,6 +766,7 @@ public final class MineTask implements Task {
                 approach.stop(ctx);
                 approach = null;
             }
+            arrivalPaidOff();
             braceAgainstCurrent(ctx, target);
             return breakTarget(ctx, centre);
         }
@@ -941,6 +968,7 @@ public final class MineTask implements Task {
             // bridge/pillar recovery: both behaviours make a simple ground-level chop look like a
             // navigation failure and can leave blocks placed under the player.
             approach = new GotoTask(reachable, true, !finishCurrentTree, false, !finishCurrentTree);
+            approachStartFeet = MovementHelper.feetPosition(ctx.player).immutable();
             approach.start(ctx);
         }
 
@@ -953,7 +981,7 @@ public final class MineTask implements Task {
             // In range now; release the route so it isn't ticked again as a finished no-op.
             approach.stop(ctx);
             approach = null;
-            return TaskStatus.RUNNING;
+            return arrived(ctx);
         }
         if (result == TaskStatus.FAILED) {
             // The path was blocked (stone in the way, water, etc). Blacklist this target and try the
@@ -975,6 +1003,51 @@ public final class MineTask implements Task {
         status = (finishCurrentTree ? "coming next to the tree" : "walking to target")
                 + " - " + approach.status();
         return TaskStatus.RUNNING;
+    }
+
+    /**
+     * The route says it is there. Whether the block can actually be worked from there is the swing
+     * gate's business on the next tick, so all this does is hand {@link ApproachWatch} the two
+     * facts it needs and act on its verdict: blacklist the target the same way a failed route does,
+     * and leave the whole tree once the standing spot rather than the log looks like the problem.
+     */
+    private TaskStatus arrived(BotContext ctx) {
+        BlockPos feet = MovementHelper.feetPosition(ctx.player);
+        boolean sameTarget = target.equals(arrivalTarget);
+        arrivalTarget = target.immutable();
+        if (!approachWatch.arrived(sameTarget, !feet.equals(approachStartFeet))) {
+            // Say so from the second one. This branch returning without touching the status is why
+            // the stuck run read "coming next to the tree - 2 blocks left" for 919 ticks: the last
+            // line the walk had written, left standing by an arrival that never announced itself.
+            // A bot that is not walking must not still be reporting a walk.
+            if (approachWatch.fruitlessArrivals() > 1) {
+                status = "in position but can't work that block from here ("
+                        + approachWatch.fruitlessArrivals() + "/"
+                        + ApproachWatch.MAX_FRUITLESS_ARRIVALS + ")";
+            }
+            return TaskStatus.RUNNING;
+        }
+
+        String name = ctx.level.getBlockState(target).getBlock().getName().getString();
+        unreachable.add(target.asLong());
+        BlockMemory.get().markUnreachable(target);
+        clearTarget(ctx);
+        ctx.debug.decide("arrived at that " + name + " " + ApproachWatch.MAX_FRUITLESS_ARRIVALS
+                + " times without moving or being able to work it; writing it off");
+        if (finishCurrentTree && treeAnchor != null && approachWatch.siteIsTheProblem()) {
+            abandonCurrentTree(ctx, "can't stand anywhere that tree can be cut from; leaving it");
+        } else {
+            status = "got next to that " + name + " but still couldn't work it; trying another";
+            decisionTicks = DECISION_TICKS;
+        }
+        return TaskStatus.RUNNING;
+    }
+
+    /** An arrival that ends in a swing is not a fruitless one, whatever came before it. */
+    private void arrivalPaidOff() {
+        arrivalTarget = null;
+        approachStartFeet = null;
+        approachWatch.paidOff();
     }
 
     /**
@@ -1354,6 +1427,8 @@ public final class MineTask implements Task {
         treeType = null;
         currentTreeLogs.clear();
         treeViewPending = false;
+        // The tally is about one tree's standing positions; the next tree starts even.
+        arrivalPaidOff();
         resetScan(ctx);
         status = reason;
         decisionTicks = DECISION_TICKS;
@@ -1449,7 +1524,7 @@ public final class MineTask implements Task {
         ctx.debug.learningBestTicksPerUnit =
                 ctx.learning.bestSkillTicksPerUnit(treeSkillChoice.context());
         if (ctx.learningSession.active()) {
-            ctx.learningSession.skillOutcome("tree-chopping", action, outcome);
+            ctx.learningSession.skillOutcome("tree-chopping", action, outcome, outcome.scored());
         }
         ctx.debug.learningReward = ctx.learningSession.reward();
         ctx.debug.learningMemory = ctx.learningSession.summary(BuildFeatures.approvalFeedback())
@@ -1840,7 +1915,12 @@ public final class MineTask implements Task {
         // chunk section in the cube, so keying it on a position that drifts every tick would throw
         // the cache away every tick and undo the point of caching it at all.
         if (!index.isUsable(scanCentre, targets, scanLimit, yMin, yMax)) {
-            index.rebuild(ctx.level, scanCentre, targets, scanLimit, yMin, yMax);
+            LuneProfiler.push("Mine: index rebuild");
+            try {
+                index.rebuild(ctx.level, scanCentre, targets, scanLimit, yMin, yMax);
+            } finally {
+                LuneProfiler.pop();
+            }
         }
         ctx.debug.searchAnchor = scanCentre;
         // The stop counter is only meaningful while prospecting. Showing an 0/8 prospect budget
@@ -1864,24 +1944,34 @@ public final class MineTask implements Task {
         // skill learner's safe ordering; every candidate still passes the same tree and Vision
         // filter above, so learning changes sequence rather than knowledge or eligibility.
         BlockPos workFocus = site.focus(ctx, scanCentre);
-        if (finishCurrentTree && treeAnchor != null) {
-            BlockPos anchor = treeAnchor;
-            String strategy = activeTreeStrategy();
-            target = index.best(ctx.level, unreachable, filter, pos ->
-                    TreeChoppingPolicy.candidateScore(strategy,
-                            anchor.getX(), anchor.getY(), anchor.getZ(),
-                            workFocus.getX(), workFocus.getY(), workFocus.getZ(),
-                            pos.getX(), pos.getY(), pos.getZ(),
-                            treeMaxHorizontalRadiusSquared));
-        } else if (MiningPolicy.NEAREST_VISIBLE.equals(miningStrategy)) {
-            target = index.nearest(ctx.level, scanCentre, unreachable, filter);
-        } else if (MiningPolicy.LEVEL_FIRST.equals(miningStrategy)) {
-            target = index.best(ctx.level, unreachable, filter, pos ->
-                    MiningPolicy.levelFirstScore(
-                            workFocus.getX(), workFocus.getY(), workFocus.getZ(),
-                            pos.getX(), pos.getY(), pos.getZ()));
-        } else {
-            target = index.nearest(ctx.level, workFocus, unreachable, filter);
+        // Set when the bounded sweep ran out of budget before it had seen every candidate, so that
+        // an empty result this tick means "still looking" rather than "there is nothing here".
+        boolean stillSweeping = false;
+        LuneProfiler.push("Mine: sight sweep");
+        try {
+            if (finishCurrentTree && treeAnchor != null) {
+                BlockPos anchor = treeAnchor;
+                String strategy = activeTreeStrategy();
+                target = index.best(ctx.level, unreachable, filter, pos ->
+                        TreeChoppingPolicy.candidateScore(strategy,
+                                anchor.getX(), anchor.getY(), anchor.getZ(),
+                                workFocus.getX(), workFocus.getY(), workFocus.getZ(),
+                                pos.getX(), pos.getY(), pos.getZ(),
+                                treeMaxHorizontalRadiusSquared));
+            } else if (MiningPolicy.NEAREST_VISIBLE.equals(miningStrategy)) {
+                target = selectNearestVisible(ctx, scanCentre, filter);
+                stillSweeping = target == null && !index.sweptEveryCandidate();
+            } else if (MiningPolicy.LEVEL_FIRST.equals(miningStrategy)) {
+                target = index.best(ctx.level, unreachable, filter, pos ->
+                        MiningPolicy.levelFirstScore(
+                                workFocus.getX(), workFocus.getY(), workFocus.getZ(),
+                                pos.getX(), pos.getY(), pos.getZ()));
+            } else {
+                target = selectNearestVisible(ctx, workFocus, filter);
+                stillSweeping = target == null && !index.sweptEveryCandidate();
+            }
+        } finally {
+            LuneProfiler.pop();
         }
         if (target != null) {
             memoryTarget = false;
@@ -1971,6 +2061,14 @@ public final class MineTask implements Task {
                 return false;
             }
         }
+        // Mid-sweep. Saying "nothing visible" here would end the mining step on its first tick and,
+        // under a 'forever' card, start it again on the next one - which is the same full-index
+        // search per tick that the budget was introduced to stop.
+        if (stillSweeping) {
+            status = "looking through " + index.size() + " possible blocks";
+            return false;
+        }
+
         status = treeAnchor != null
                 ? "checking remaining visible logs in the current tree"
                 : "looking for visible blocks";
@@ -2008,6 +2106,22 @@ public final class MineTask implements Task {
         }
         ctx.debug.memory = BlockMemory.get().size() + " remembered positions; none currently selected";
         return true;
+    }
+
+    /**
+     * The nearest acceptable target, spending at most {@link #SIGHT_CHECKS_PER_TICK} ray casts.
+     *
+     * <p>The sweep resumes where the last one stopped and always restarts from the nearest candidate
+     * after a rebuild, so bounding it changes how long a fruitless search takes to give up, not
+     * which block a fruitful one picks. Omniscient mode has no ray cast to bound - it accepts blocks
+     * it cannot see - so it keeps the direct answer.</p>
+     */
+    private BlockPos selectNearestVisible(BotContext ctx, BlockPos origin,
+            java.util.function.BiPredicate<BlockPos, BlockState> filter) {
+        if (ctx.omniscientMining()) {
+            return index.nearest(ctx.level, origin, unreachable, filter);
+        }
+        return index.nearestBounded(ctx.level, origin, unreachable, filter, SIGHT_CHECKS_PER_TICK);
     }
 
     /**

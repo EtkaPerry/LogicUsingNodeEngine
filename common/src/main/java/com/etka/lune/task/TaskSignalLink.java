@@ -1,10 +1,10 @@
-package com.etka.lune.routine;
+package com.etka.lune.task;
 
 /**
  * An execution-pulse wire leaving a Signal Relay.  The target port is only used when the target
  * is another relay; ordinary command cards have one execution input and use {@code -1}.
  */
-public final class RoutineSignalLink {
+public final class TaskSignalLink {
 
     /** The numbered output on the relay. */
     public int outputPort;
@@ -15,9 +15,9 @@ public final class RoutineSignalLink {
     /** The numbered input on a relay target, or -1 for an ordinary command input. */
     public int targetPort = -1;
 
-    public RoutineSignalLink() {}
+    public TaskSignalLink() {}
 
-    public RoutineSignalLink(int outputPort, String targetNodeId, int targetPort) {
+    public TaskSignalLink(int outputPort, String targetNodeId, int targetPort) {
         this.outputPort = outputPort;
         this.targetNodeId = targetNodeId;
         this.targetPort = targetPort;

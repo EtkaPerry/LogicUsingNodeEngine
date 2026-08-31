@@ -196,6 +196,7 @@ public final class BlockPlacer {
                 new BlockHitResult(hit, face, support, false));
         ctx.player.swing(InteractionHand.MAIN_HAND);
         if (ctx.level.getBlockState(pos).is(block)) {
+            ctx.debug.blocksPlaced++;
             ctx.debug.placement(pos, blockName, "placed");
             return PlacementResult.PLACED;
         }

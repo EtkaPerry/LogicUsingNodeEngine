@@ -9,8 +9,6 @@ import com.etka.lune.bot.learning.LearningContext;
 import com.etka.lune.bot.learning.LearningSession;
 import com.etka.lune.bot.learning.LearningStore;
 import com.etka.lune.bot.learning.TaskLearning;
-import com.etka.lune.bot.task.EatTask;
-import com.etka.lune.bot.task.SelfPreservationTask;
 import com.etka.lune.bot.util.Leash;
 import com.etka.lune.bot.util.OmniscientAccess;
 import com.etka.lune.config.BotConfig;
@@ -39,40 +37,21 @@ public final class BotEngine {
     private final BotInput input = new BotInput();
     private final LookController look = new LookController();
     private final DebugInfo debug = new DebugInfo();
+    private final BotStatisticsStore statistics = BotStatisticsStore.get();
     /** The learned policy is part of the shipped bot and is shared by dev and release installs. */
     private final LearningStore learning = LearningStore.get();
     private RunTrace runTrace;
     private int botTicks;
+    private boolean runStatisticsActive;
+    private final RunSampler sampler = new RunSampler();
 
     private LearningSession learningSession = LearningSession.idle();
     private LearningContext currentLearningContext = LearningContext.of("idle", "idle", "unknown");
 
     private Task current;
     /**
-     * A global last-chance recovery for direct tasks and routines that do not have an explicit
-     * Self Preservation While monitor. A safety stop inside a cave releases the bot's keys, but
-     * that still leaves the player standing in the cave for the next hostile tick; give the shared
-     * retreat/cover/weapon logic a chance before abandoning control.
-     */
-    private final SelfPreservationTask emergencyProtection = new SelfPreservationTask(
-            true, "At most", 4,
-            true, true, "At most", 8,
-            true, "At most", 6,
-            // Fall threshold in blocks, matching the Self Preservation command's own default. It
-            // reads like a safety margin and is really a spending limit: a clutch costs a water
-            // bucket or a boat and several seconds of standing still, so three blocks - one heart
-            // of damage at worst - would have the bot bailing out of every ledge it steps off.
-            true, 10);
-    private boolean emergencyProtectionActive;
-    /** The shared meal, built when hunger gets close to the stop limit and put away afterwards. */
-    private EatTask meal;
-    private boolean mealActive;
-    /** Ticks before another attempt after a meal that could not start, e.g. mid-swim. */
-    private static final int MEAL_RETRY_TICKS = 200;
-    private int mealCooldown;
-    /**
      * Where the bot stood when the current run began, for anything that measures "home". Taken once
-     * per run and not per task, so a routine of twenty nodes cannot inch away from it.
+     * per run and not per task, so a task of twenty nodes cannot inch away from it.
      */
     private BlockPos runAnchor;
     private boolean paused;
@@ -98,16 +77,6 @@ public final class BotEngine {
         return paused;
     }
 
-    /** True while the shared emergency monitor has temporarily taken control from any job. */
-    public boolean isEmergencyProtectionActive() {
-        return emergencyProtectionActive;
-    }
-
-    /** Live emergency detail for UI consumers such as Lune's danger expression. */
-    public String getEmergencyProtectionStatus() {
-        return emergencyProtectionActive ? emergencyProtection.status() : "";
-    }
-
     /** Nothing running and nothing waiting: the queue has genuinely finished. */
     public boolean isIdle() {
         return current == null && queue.isEmpty();
@@ -127,6 +96,19 @@ public final class BotEngine {
 
     public DebugInfo getDebug() {
         return debug;
+    }
+
+    /** Returns a snapshot of the currently active run, or zeroes while the bot is idle. */
+    public BotStatistics currentRunStatistics() {
+        return runStatisticsActive ? BotStatistics.from(debug) : new BotStatistics();
+    }
+
+    public BotStatistics lastRunStatistics() {
+        return statistics.lastRun();
+    }
+
+    public BotStatistics allTimeStatistics() {
+        return statistics.allTime();
     }
 
     public String getLastMessage() {
@@ -201,6 +183,9 @@ public final class BotEngine {
             return;
         }
         this.paused = paused;
+        // Whatever happened while the player had the controls is theirs, not the run's. Without
+        // this the first tick back credits the bot with every block the player walked meanwhile.
+        sampler.reset();
         if (!paused) {
             releaseUseKey();
         }
@@ -228,17 +213,8 @@ public final class BotEngine {
      * scoring it as one is how a profile ends up with fifty-eight failures and no successes.
      */
     public void stopAll(String reason) {
-        BotContext ctx = tryBuildContext();
+        finishRunStatistics();
         cancelCurrent();
-        if (emergencyProtectionActive && ctx != null) {
-            emergencyProtection.stop(ctx);
-            emergencyProtectionActive = false;
-        }
-        if (mealActive && ctx != null) {
-            meal.stop(ctx);
-        }
-        mealActive = false;
-        mealCooldown = 0;
         queue.clear();
         paused = false;
         input.reset();
@@ -280,6 +256,21 @@ public final class BotEngine {
     // --- ticking -------------------------------------------------------------
 
     public void tick(Minecraft mc) {
+        LuneProfiler.beginTick();
+        try {
+            tickProfiled(mc);
+        } finally {
+            LuneProfiler.endTick();
+        }
+    }
+
+    private void tickProfiled(Minecraft mc) {
+        // Followed here rather than only when the Config tab writes it, so the setting survives a
+        // restart and can be turned on by hand-editing the config for a session that will not
+        // survive long enough to open a menu.
+        if (LuneProfiler.isEnabled() != BotConfig.get().debugProfiler) {
+            LuneProfiler.setEnabled(BotConfig.get().debugProfiler);
+        }
         // Before tickInternal, which returns immediately without a player - and a test run that has
         // to build its own world has no player yet.
         AutoRun.beforeWorld(mc);
@@ -298,25 +289,24 @@ public final class BotEngine {
             if (current != null) {
                 recordLearningAbort(current, "left world");
             }
+            finishRunStatistics();
             if (current != null || !queue.isEmpty()) {
                 current = null;
                 queue.clear();
             }
             finishLearningSession("left world", false);
             closeRunTrace("left world");
-            emergencyProtectionActive = false;
-            mealActive = false;
-            mealCooldown = 0;
+            learning.flush();
             Leash.get().release();
             AutoRun.runInterrupted(mc, "the world went away");
             return;
         }
 
         // A death screen leaves the LocalPlayer object around for a while. Do not keep ticking
-        // the paused routine or an emergency monitor against that dead entity; the next world
-        // must start with a clean queue and a closed trace.
+        // the task against that dead entity; the next world must start with a clean queue and a
+        // closed trace.
         if (!player.isAlive()) {
-            if (current != null || !queue.isEmpty() || emergencyProtectionActive) {
+            if (current != null || !queue.isEmpty()) {
                 // Say which one it was. The plain stopAll() closes the journal as "stopped by
                 // user", so every death read back afterwards as the player having pressed stop -
                 // with the last traced tick still mid-air and at full health, and no clue that
@@ -345,10 +335,6 @@ public final class BotEngine {
 
         installInputHook(player);
 
-        if (mealCooldown > 0) {
-            mealCooldown--;
-        }
-
         // Cleared every tick so a task that stops setting a key immediately stops pressing it.
         input.reset();
         debug.clearActionMarkers();
@@ -371,6 +357,7 @@ public final class BotEngine {
             // run continuing, so the anchor is taken here and left alone until the queue drains.
             if (runAnchor == null) {
                 runAnchor = player.blockPosition().immutable();
+                startRunStatistics();
             }
             BotContext startCtx = buildContext(mc, player, mc.level);
             debug.clearDecisionTrace();
@@ -392,9 +379,8 @@ public final class BotEngine {
 
         BotContext ctx = buildContext(mc, player, mc.level);
         debug.taskTicks++;
-        if (checkSafety(ctx)) {
-            return;
-        }
+        debug.workedTicks++;
+        sampler.tick(player, input, debug, runAnchor);
 
         TaskStatus status;
         try {
@@ -416,6 +402,8 @@ public final class BotEngine {
             }
             case SUCCESS -> {
                 Task finished = current;
+                debug.tasksCompleted++;
+                debug.peak("task_ticks", debug.taskTicks);
                 String detail = current.status().isBlank() ? "" : ": " + current.status();
                 boolean nextMission = !queue.isEmpty();
                 finished.stop(ctx);
@@ -439,10 +427,13 @@ public final class BotEngine {
                     Leash.get().release();
                     finishLearningSession("queue complete", true);
                     closeRunTrace("queue complete");
+                    finishRunStatistics();
                 }
             }
             case FAILED -> {
                 Task failed = current;
+                debug.tasksFailed++;
+                debug.peak("task_ticks", debug.taskTicks);
                 String detail = failed.status();
                 failed.stop(ctx);
                 AutomaticApproval.Decision automatic = recordLearningOutcome(failed,
@@ -462,125 +453,9 @@ public final class BotEngine {
                 queue.clear();
                 finishLearningSession("task failed", false);
                 closeRunTrace("task failed");
+                finishRunStatistics();
             }
         }
-    }
-
-    /**
-     * Preserves the player before stopping the bot when a safety limit is crossed. The emergency
-     * monitor is deliberately shared here so a direct task, a routine, Mine, and the speedrun all
-     * get the same cave/hostile recovery instead of only jobs that explicitly added a While node.
-     */
-    private boolean checkSafety(BotContext ctx) {
-        SafetyMonitor.Trigger trigger = SafetyMonitor.check(ctx,
-                current != null && current.canRecoverFromLowFood(ctx));
-        if (emergencyProtectionActive || trigger == SafetyMonitor.Trigger.LOW_HEALTH) {
-            return tickEmergencyProtection(ctx);
-        }
-        if (mealActive || (!trigger.isTriggered() && current != null
-                && SafetyMonitor.shouldEatNow(ctx))) {
-            return tickMeal(ctx);
-        }
-        if (!trigger.isTriggered()) {
-            return false;
-        }
-        ctx.chat("Stopping - " + trigger.reason() + ".");
-        debug.lastEvent = "safety: " + trigger.name().toLowerCase();
-        if (runTrace != null) {
-            runTrace.event(botTicks, "safety-stop " + trigger.reason(), debug, ctx.player, ctx.level);
-        }
-        stopAll();
-        lastMessage = "Stopped: " + trigger.reason();
-        return true;
-    }
-
-    /**
-     * Stops for a meal, in the same shared way every job gets the emergency monitor.
-     *
-     * <p>Put here rather than in a task for the reason the emergency monitor is here: every job
-     * gets hungry, and a recovery that only exists inside the routines that remembered to add an
-     * Eat step is a recovery most runs do not have. A routine <em>with</em> an Eat step still
-     * cannot use it while a fifteen-minute mining step is the thing that is running.</p>
-     */
-    private boolean tickMeal(BotContext ctx) {
-        if (!mealActive) {
-            if (current == null || mealCooldown > 0) {
-                return false;
-            }
-            current.onPause(ctx);
-            meal = new EatTask();
-            meal.start(ctx);
-            mealActive = true;
-            debug.lastEvent = "safety: stopping for a meal";
-            if (runTrace != null) {
-                runTrace.event(botTicks, "meal-start", debug, ctx.player, ctx.level);
-            }
-        }
-        TaskStatus result = meal.tick(ctx);
-        debug.lastEvent = "meal: " + meal.status();
-        if (result == TaskStatus.RUNNING) {
-            return true;
-        }
-        // Failing to eat is not itself a reason to stop; the ordinary hunger and health limits are
-        // still watching, and a bot that cannot eat right now - swimming, or with a screen open -
-        // may well be able to a few seconds from now. It has to be allowed to get there first,
-        // though: retrying on the very next tick would pause the swim to try to eat, forever.
-        String outcome = meal.status();
-        meal.stop(ctx);
-        mealActive = false;
-        mealCooldown = result == TaskStatus.SUCCESS ? 0 : MEAL_RETRY_TICKS;
-        if (current != null) {
-            current.onResume(ctx);
-        }
-        if (runTrace != null) {
-            runTrace.event(botTicks, "meal-" + (result == TaskStatus.SUCCESS ? "done" : "failed")
-                    + " " + outcome, debug, ctx.player, ctx.level);
-        }
-        return true;
-    }
-
-    private boolean tickEmergencyProtection(BotContext ctx) {
-        if (!emergencyProtectionActive) {
-            if (current == null) {
-                return false;
-            }
-            current.onPause(ctx);
-            emergencyProtection.start(ctx);
-            emergencyProtectionActive = true;
-            debug.lastEvent = "safety: emergency preservation started";
-            if (runTrace != null) {
-                runTrace.event(botTicks, "safety-recovery-start", debug, ctx.player, ctx.level);
-            }
-        }
-
-        if (emergencyProtection.shouldTakeControl(ctx)) {
-            TaskStatus result = emergencyProtection.tick(ctx);
-            debug.lastEvent = "safety: " + emergencyProtection.status();
-            if (result == TaskStatus.FAILED) {
-                ctx.chat("Emergency preservation failed - stopping.");
-                if (runTrace != null) {
-                    runTrace.event(botTicks, "safety-recovery-failed " + emergencyProtection.status(),
-                            debug, ctx.player, ctx.level);
-                }
-                emergencyProtection.stop(ctx);
-                emergencyProtectionActive = false;
-                stopAll();
-                lastMessage = "Stopped: emergency preservation failed";
-                return true;
-            }
-            return true;
-        }
-
-        emergencyProtection.stop(ctx);
-        emergencyProtectionActive = false;
-        if (current != null) {
-            current.onResume(ctx);
-        }
-        debug.lastEvent = "safety: emergency preservation complete";
-        if (runTrace != null) {
-            runTrace.event(botTicks, "safety-recovery-complete", debug, ctx.player, ctx.level);
-        }
-        return false;
     }
 
     /**
@@ -664,6 +539,23 @@ public final class BotEngine {
         runTrace.close(reason);
         runTrace = null;
         debug.runTraceFile = "";
+    }
+
+    private void startRunStatistics() {
+        debug.clearRunStatistics();
+        sampler.reset();
+        // Counted at the start so an interrupted run still appears in the lifetime totals.
+        debug.count("runs");
+        runStatisticsActive = true;
+    }
+
+    private void finishRunStatistics() {
+        if (!runStatisticsActive) {
+            return;
+        }
+        statistics.recordRun(BotStatistics.from(debug));
+        debug.clearRunStatistics();
+        runStatisticsActive = false;
     }
 
     private String describeKeys() {
@@ -756,6 +648,9 @@ public final class BotEngine {
             return;
         }
         learning.finishSession(learningSession, reason, success);
+        // A session ending is worth a real write: it is the last moment the numbers it measured
+        // are guaranteed to still be in memory.
+        learning.flush();
         debug.learningReward = learningSession.reward();
         debug.learningMemory = learningSession.summary(BuildFeatures.approvalFeedback()) + "; "
                 + learning.summary(BuildFeatures.approvalFeedback());

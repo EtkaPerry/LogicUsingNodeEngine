@@ -3,8 +3,8 @@ package com.etka.lune.client.gui.widget;
 import com.etka.lune.bot.command.CommandDef;
 import com.etka.lune.bot.command.CommandRegistry;
 import com.etka.lune.client.gui.LuneScreen;
-import com.etka.lune.routine.RoutineBlueprints;
-import com.etka.lune.routine.RoutineNode;
+import com.etka.lune.task.TaskBlueprints;
+import com.etka.lune.task.TaskNode;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
@@ -38,7 +38,7 @@ public class PalettePanel extends AbstractWidget {
 
     public record Command(String id, String name, String description) implements Item {}
     public record General(String id, String name, String description) implements Item {}
-    public record Blueprint(String name, List<RoutineNode> nodes) implements Item {}
+    public record Blueprint(String name, List<TaskNode> nodes) implements Item {}
 
     private record Section(String name, List<Item> items) {}
 
@@ -46,12 +46,26 @@ public class PalettePanel extends AbstractWidget {
     private final List<Section> filteredSections = new ArrayList<>();
     private final Map<String, Boolean> expanded = new LinkedHashMap<>();
     private final Consumer<Item> onSelect;
+    /** Called when a tile is dropped outside the palette, with the screen point it landed on. */
+    private final DropTarget onDrop;
     private int scroll;
     private String filter = "";
+    /** The tile the pointer picked up, kept until the button comes back up. */
+    private Item dragging;
+    private int dragX;
+    private int dragY;
+    private boolean dragMoved;
 
-    public PalettePanel(int x, int y, int width, int height, Consumer<Item> onSelect) {
+    /** Where a dragged palette tile was released. */
+    public interface DropTarget {
+        boolean accept(Item item, int screenX, int screenY);
+    }
+
+    public PalettePanel(int x, int y, int width, int height, Consumer<Item> onSelect,
+                        DropTarget onDrop) {
         super(x, y, width, height, Component.empty());
         this.onSelect = onSelect;
+        this.onDrop = onDrop;
         rebuild();
     }
 
@@ -69,30 +83,36 @@ public class PalettePanel extends AbstractWidget {
 
         for (String name : List.of("General", "Movement", "Gathering", "Logic & Conditions", "Mining & Building",
                 "Combat", "Items & Storage", "Tasks & Missions", "Other")) {
+            // Taken out of the map either way. The General folder is written by hand below, and
+            // the registry's own General entries are the same three cards - leaving them behind
+            // meant the leftovers loop added a second folder with the same name.
+            List<Item> fromRegistry = grouped.remove(name);
             List<Item> groupedItems = "General".equals(name)
                     ? List.<Item>of(
-                    new General(RoutineNode.START_COMMAND, "START",
+                    new General(TaskNode.START_COMMAND, "START",
                             "Explicit task entry; connect it to the first action"),
-                    new General(RoutineNode.ALWAYS_COMMAND, "Always",
-                            "Send new pulses continuously or at a selected interval"),
-                    new General(RoutineNode.SIGNAL_RELAY_COMMAND, "Signal Relay",
+                    new General(TaskNode.ALWAYS_COMMAND, "Always",
+                            "Keep the connected branch powered, every tick"),
+                    new General(TaskNode.PULSE_COMMAND, "Pulse",
+                            "Send one pulse every few seconds, like a clock"),
+                    new General(TaskNode.SIGNAL_RELAY_COMMAND, "Signal Relay",
                             "Forward an incoming pulse through configurable numbered outputs"),
-                    new General(RoutineNode.OBSERVER_COMMAND, "Observer",
-                            "Watch a world event and create a pulse when it happens"),
-                    new General(RoutineNode.BUTTON_COMMAND, "Button",
+                    new General(TaskNode.OBSERVER_COMMAND, "Observer",
+                            "Watch a card and pulse whenever its power changes"),
+                    new General(TaskNode.BUTTON_COMMAND, "Button",
                             "Send one manual pulse from the editor"),
-                    new General(RoutineNode.END_COMMAND, "End",
+                    new General(TaskNode.END_COMMAND, "End",
                             "Consume a pulse and finish that circuit"))
-                    : grouped.remove(name);
+                    : fromRegistry;
             if (groupedItems != null && !groupedItems.isEmpty()) {
                 sections.add(new Section(name, groupedItems));
             }
         }
 
         List<Item> blueprints = new ArrayList<>();
-        for (var entry : RoutineBlueprints.all().entrySet()) {
-            List<RoutineNode> copies = new ArrayList<>();
-            for (RoutineNode node : entry.getValue().nodes) {
+        for (var entry : TaskBlueprints.all().entrySet()) {
+            List<TaskNode> copies = new ArrayList<>();
+            for (TaskNode node : entry.getValue().nodes) {
                 copies.add(node.copy());
             }
             blueprints.add(new Blueprint(entry.getKey(), copies));
@@ -275,12 +295,57 @@ public class PalettePanel extends AbstractWidget {
             for (Item item : section.items()) {
                 if (event.y() >= y && event.y() < y + TILE_H
                         && event.x() >= getX() + PADDING && event.x() < getX() + getWidth() - PADDING) {
-                    onSelect.accept(item);
+                    // Picked up rather than added straight away: whether this is a click or a drag
+                    // is not known until the button comes back up.
+                    dragging = item;
+                    dragX = (int) event.x();
+                    dragY = (int) event.y();
+                    dragMoved = false;
                     return;
                 }
                 y += TILE_H + GAP;
             }
         }
+    }
+
+    @Override
+    public void onDrag(MouseButtonEvent event, double dragX2, double dragY2) {
+        if (dragging == null) {
+            return;
+        }
+        dragX = (int) event.x();
+        dragY = (int) event.y();
+        dragMoved |= !isMouseOver(dragX, dragY);
+    }
+
+    @Override
+    public void onRelease(MouseButtonEvent event) {
+        Item item = dragging;
+        dragging = null;
+        if (item == null) {
+            return;
+        }
+        int x = (int) event.x();
+        int y = (int) event.y();
+        if ((dragMoved || !isMouseOver(x, y)) && onDrop != null && onDrop.accept(item, x, y)) {
+            return;
+        }
+        // Released over the palette: an ordinary click, which drops the card into the middle of
+        // whatever the player is looking at.
+        onSelect.accept(item);
+    }
+
+    /** The tile being dragged, so the tab can draw it under the cursor. */
+    public Item draggingItem() {
+        return dragging;
+    }
+
+    public int dragPointerX() {
+        return dragX;
+    }
+
+    public int dragPointerY() {
+        return dragY;
     }
 
     @Override

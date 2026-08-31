@@ -19,7 +19,7 @@ import net.minecraft.world.phys.Vec3;
  * Small, optional world-space explanation of the bot's live intention.
  *
  * <p>The bot already publishes these markers through {@link DebugInfo}; keeping the renderer here
- * means Mine, Harvest, pathing, bridge/recovery and every routine get the same visual language.
+ * means Mine, Harvest, pathing, bridge/recovery and every task get the same visual language.
  * Red is a block being broken, cyan is the next route block, yellow is a placement, and the dark
  * ground aura is the boundary published by {@link Leash} for Stay Near.</p>
  */

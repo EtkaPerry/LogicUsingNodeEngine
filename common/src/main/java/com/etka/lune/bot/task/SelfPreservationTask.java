@@ -53,7 +53,16 @@ public final class SelfPreservationTask implements WhileMonitor {
     private static final int MAX_ESCAPE_ATTEMPTS = 3;
     /** Do not let a blocked retreat spend an entire creeper fuse in the route executor. */
     private static final int MAX_MONSTER_RECOVERY_TICKS = 20;
-    private static final int THREAT_SCAN_RADIUS = 64;
+    /**
+     * Hard ceiling on the threat scan, not the scan itself - see {@link #threatScanRadius()}.
+     *
+     * <p>This used to be the scan radius, flat. Sixty-four blocks in every direction is a box of
+     * two million cubic metres, and every hostile found anywhere in it was line-of-sight raycast
+     * before the nearest was picked. Nothing in this class ever compares a distance larger than
+     * about sixteen, so the other ninety-five percent of that volume was gathered, raycast and
+     * thrown away, four times a second, on the client thread.</p>
+     */
+    private static final int MAX_THREAT_SCAN_RADIUS = 32;
     /** A newly built wall can hide a zombie for more than a few client ticks. */
     private static final int SAFE_CONFIRM_TICKS = 30;
     /** Keep a recently seen hostile in the monitor while it is briefly behind cover. */
@@ -319,7 +328,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             return true;
         }
         // Still sitting in the boat counts. The fall itself ended the moment the player was seated,
-        // but handing control back there would leave the next routine steering a hull halfway down
+        // but handing control back there would leave the next task steering a hull halfway down
         // a ravine instead of walking, so the threat lasts until they have climbed out of it.
         if (protectFall && (ridingClutchBoat(ctx) || isFallingAndDeadly(ctx))) {
             threat = Threat.FALL;
@@ -390,7 +399,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         LivingEntity recentlySeen = recentlyRememberedHostile(ctx);
         if (protectMonsters && recentlySeen != null) {
             // The hostile is allowed to disappear from the ray cast briefly after we place a
-            // wall. Releasing the monitor at that exact moment lets the routine walk back into
+            // wall. Releasing the monitor at that exact moment lets the task walk back into
             // the same shaft while the mob pathfinds around the cover.
             hostile = recentlySeen;
             threat = Threat.MONSTER;
@@ -432,6 +441,7 @@ public final class SelfPreservationTask implements WhileMonitor {
     public TaskStatus onTick(BotContext ctx) {
         if (learningEpisode == null || learningEpisode.episodeThreat != threat) {
             finishLearningEpisode(ctx, TaskStatus.SUCCESS);
+            countThreat(ctx);
             learningEpisode = createLearningEpisode(ctx);
             learningEpisode.start(ctx);
         }
@@ -467,6 +477,27 @@ public final class SelfPreservationTask implements WhileMonitor {
             case HEALTH -> recoverHealth(ctx);
             case NONE -> TaskStatus.SUCCESS;
         };
+    }
+
+    /**
+     * Counts each new emergency for the dashboard. A run that finished in ten minutes having
+     * escaped lava twice and drowning once did something very different from one that never
+     * looked up, and neither the task list nor the block counters can tell them apart.
+     */
+    private void countThreat(BotContext ctx) {
+        String key = switch (threat) {
+            case AIR -> "danger_drowning";
+            case LAVA -> "danger_lava";
+            case FALL -> "danger_fall";
+            case MONSTER -> "danger_monster";
+            case HEALTH -> "danger_health";
+            case NONE -> null;
+        };
+        if (key == null) {
+            return;
+        }
+        ctx.debug.count("danger_responses");
+        ctx.debug.count(key);
     }
 
     private RecoveryEpisode createLearningEpisode(BotContext ctx) {
@@ -800,7 +831,7 @@ public final class SelfPreservationTask implements WhileMonitor {
 
     /**
      * A route can be impossible in a one-wide mine shaft. A monster must not turn that into a
-     * routine failure: first build a two-high wall, then try a one-block pillar, then fight with
+     * task failure: first build a two-high wall, then try a one-block pillar, then fight with
      * whatever the player is holding until there is a new opening.
      */
     private TaskStatus emergencyMonsterDefense(BotContext ctx, String reason) {
@@ -901,7 +932,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         // emergency blocks. A
         // route task can leave the sword in the main inventory after mining or collecting a drop;
         // swinging the currently selected block/tool in that state burns the few emergency ticks
-        // available and lets a skeleton keep shooting. This monitor is shared by every routine,
+        // available and lets a skeleton keep shooting. This monitor is shared by every task,
         // so the emergency handoff must repair the hand state here rather than rely on callers.
         ItemStack held = ctx.player.getItemInHand(InteractionHand.MAIN_HAND);
         if (!InventoryHelper.isCombatWeapon(held)) {
@@ -1468,23 +1499,52 @@ public final class SelfPreservationTask implements WhileMonitor {
             return cachedNearest;
         }
         lastEntityScanTick = ctx.player.tickCount;
-        AABB box = ctx.player.getBoundingBox().inflate(THREAT_SCAN_RADIUS);
+        com.etka.lune.bot.LuneProfiler.push("threat scan");
+        try {
+            return scanForThreat(ctx);
+        } finally {
+            com.etka.lune.bot.LuneProfiler.pop();
+        }
+    }
+
+    private LivingEntity scanForThreat(BotContext ctx) {
+        AABB box = ctx.player.getBoundingBox().inflate(threatScanRadius());
         // Line of sight decides whether a mob that has done nothing yet is worth reacting to. It
         // must not decide whether one that is *currently shooting* counts, which is what ANDing it
         // over everything did: a skeleton firing from behind a rise was filtered out of the threat
         // list entirely, so the bot stood there being shot down to two hearts as though not seeing
         // the archer meant the archer could not see it. Being hit is knowing.
+        //
+        // Only the cheap tests run inside the query. The raycast is the expensive half and it used
+        // to run on every candidate before the nearest was chosen, so a crowded night cost dozens
+        // of full block traces to answer a question about one mob. Sorting first and tracing in
+        // order gives the same answer - the nearest that is visible or has just hit us - and
+        // usually stops at the first.
         List<Entity> found = ctx.level.getEntities(ctx.player, box, entity ->
                 entity instanceof LivingEntity living && living.isAlive()
                         && (isDangerousHostile(entity)
                                 || (isNeutralUntilProvoked(entity) && justAttackedThePlayer(ctx, living))
-                                || isRecentPlayerAttacker(ctx, living))
-                        && (hasLineOfSight(ctx, living) || justAttackedThePlayer(ctx, living)));
+                                || isRecentPlayerAttacker(ctx, living)));
         cachedNearest = found.stream()
                 .map(LivingEntity.class::cast)
-                .min(Comparator.comparingDouble(entity -> entity.distanceToSqr(ctx.player)))
+                .sorted(Comparator.comparingDouble(entity -> entity.distanceToSqr(ctx.player)))
+                .filter(living -> hasLineOfSight(ctx, living) || justAttackedThePlayer(ctx, living))
+                .findFirst()
                 .orElse(null);
         return cachedNearest;
+    }
+
+    /**
+     * How far to look for threats: the furthest distance anything in this class actually asks
+     * about, plus a little room to see one coming.
+     *
+     * <p>Scaled to the configured monster distance rather than fixed, because the cost is cubic in
+     * the radius. At the default eight blocks this gathers a box roughly forty times smaller than
+     * the old flat sixty-four.</p>
+     */
+    private int threatScanRadius() {
+        double needed = Math.max(monsterDistance + 8.0, Math.max(CREEPER_ALERT_DISTANCE, 16.0));
+        return (int) Math.min(MAX_THREAT_SCAN_RADIUS, Math.ceil(needed) + 4);
     }
 
     /**
@@ -1524,7 +1584,7 @@ public final class SelfPreservationTask implements WhileMonitor {
                 || ctx.player.tickCount - lastHostileSeenTick > HOSTILE_MEMORY_TICKS) {
             return null;
         }
-        double releaseDistance = Math.min(THREAT_SCAN_RADIUS,
+        double releaseDistance = Math.min(threatScanRadius(),
                 Math.max(monsterDistance + 8.0, 16.0));
         return ctx.player.distanceToSqr(rememberedHostile) <= releaseDistance * releaseDistance
                 ? rememberedHostile : null;
@@ -1583,7 +1643,7 @@ public final class SelfPreservationTask implements WhileMonitor {
      * Airborne, on the way down, and carrying something that can still stop it.
      *
      * <p>The last clause is the point: a fall nobody can do anything about is not a threat worth
-     * taking control of. Seizing the keys there would only mean the routine loses them for the last
+     * taking control of. Seizing the keys there would only mean the task loses them for the last
      * second of its life.
      */
     private static boolean canClutch(BotContext ctx) {
@@ -2128,7 +2188,7 @@ public final class SelfPreservationTask implements WhileMonitor {
      * Gets out of the boat, then gets the boat back.
      *
      * <p>Climbing out is not optional. A monitor that hands control back while the bot is still
-     * seated has left every routine after it rowing instead of walking, and nothing downstream
+     * seated has left every task after it rowing instead of walking, and nothing downstream
      * knows to check. Breaking the hull afterwards is optional - it is five planks, and one of them
      * may be the next fall, so it is worth a few seconds and not worth a fight.
      */

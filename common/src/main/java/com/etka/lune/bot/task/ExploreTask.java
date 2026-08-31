@@ -30,7 +30,7 @@ import java.util.function.Predicate;
 /**
  * Walks around and looks for a matching block. When it finds one it succeeds and remembers the
  * position, but it does not mine or harvest. This is a separate "explore" box so it can be wired
- * into a routine before a Mine/Farm/Harvest step.
+ * into a task before a Mine/Farm/Harvest step.
  * <p>
  * It searches the way a player does rather than the way a lawnmower does. It looks where it is
  * already facing before turning anywhere; it picks a direction from what the land actually looks

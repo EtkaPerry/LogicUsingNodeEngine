@@ -238,7 +238,7 @@ public final class GotoTask implements Task {
         }
 
         // A route can legitimately enter water, but path following should not keep declaring a
-        // stall there and then abandon the whole routine. Once it has stalled in water, take over
+        // stall there and then abandon the whole task. Once it has stalled in water, take over
         // long enough to get the head into breathable air, then plan the route again from there.
         if (waterRecoveryTicks > 0) {
             return tickWaterRecovery(ctx);
@@ -358,6 +358,7 @@ public final class GotoTask implements Task {
                     return TaskStatus.RUNNING;
                 }
                 consecutiveStucks++;
+                ctx.debug.count("stalls");
                 ctx.debug.lastEvent = "stuck x" + consecutiveStucks;
                 ctx.debug.decide("movement stalled; replanning (" + consecutiveStucks + "/"
                         + MAX_STUCKS + ")");
@@ -771,7 +772,7 @@ public final class GotoTask implements Task {
         if (allowBreak && escalateToDigging) {
             // One shot, consumed here. Leaving it latched turns "this walk stalled twice" into
             // "dig everywhere from now on": the flag would then be true for every later repath,
-            // including the routine ones, and the bot tunnels its way across the world instead of
+            // including the task ones, and the bot tunnels its way across the world instead of
             // walking. Measured at 1351 escalations in a single run before this was one-shot.
             escalateToDigging = false;
             result = AStarPathfinder.find(ctx.level, start, goal,
@@ -829,11 +830,16 @@ public final class GotoTask implements Task {
         ctx.debug.reachedGoal = result.reachedGoal();
         ctx.debug.pathLength = result.path().size();
         ctx.debug.repaths = repaths;
+        ctx.debug.runRepaths++;
         ctx.debug.goal = goal.describe();
+        ctx.debug.count("path_nodes", result.nodesExpanded());
+        ctx.debug.count("path_micros", Math.round(result.searchMillis() * 1000.0));
+        ctx.debug.peak("path_length", result.path().size());
 
         if (result.isEmpty()) {
             // A path of just the start block means the search couldn't move at all.
             failedPaths++;
+            ctx.debug.count("path_empty");
             ctx.debug.lastEvent = "empty path x" + failedPaths;
             ctx.debug.giveUp = goalLimits();
             return failedPaths < MAX_FAILED_PATHS;

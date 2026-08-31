@@ -15,7 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * A one-tick checkpoint for routine branching. Conditions deliberately finish with SUCCESS or
+ * A one-tick checkpoint for task branching. Conditions deliberately finish with SUCCESS or
  * FAILED instead of owning a new branching system: the existing Success and Fail wires become the
  * true and false paths.
  */

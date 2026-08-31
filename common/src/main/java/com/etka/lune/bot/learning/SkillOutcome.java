@@ -10,7 +10,7 @@ package com.etka.lune.bot.learning;
 public record SkillOutcome(double reward, int workUnits, int expectedUnits, long elapsedTicks,
                            double unitsPerSecond, double completion, boolean completed,
                            double usualTicksPerUnit, double previousBestTicksPerUnit,
-                           boolean bestTime) {
+                           boolean bestTime, boolean scored) {
 
     private static final double BASE_COMPLETION_REWARD = 2.0;
     private static final double COMPLETION_WEIGHT = 8.0;
@@ -66,7 +66,27 @@ public record SkillOutcome(double reward, int workUnits, int expectedUnits, long
         }
         return new SkillOutcome(clamp(reward, -10.0, 14.0), work, expected, ticks,
                 unitsPerSecond, completion, completed, Math.max(0.0, usualTicksPerUnit),
-                Math.max(0.0, previousBestTicksPerUnit), bestTime);
+                Math.max(0.0, previousBestTicksPerUnit), bestTime, true);
+    }
+
+    /**
+     * An episode too short to be a duration. It keeps its telemetry so the journal can still show
+     * what happened, but it scores nothing and claims no best time.
+     *
+     * <p>The store already refuses to learn from these. Handing the caller a fully scored outcome
+     * anyway made the refusal cosmetic: a job that opened and closed inside one tick still reads as
+     * "1/1 units, completed", which is the top of the scale, so every one of them paid the caller
+     * the full completion reward. One recorded run spent its whole length re-opening a movement
+     * episode that was already standing on its goal - 3,701 of its 3,714 movement episodes closed
+     * in a single tick - and banked +10.00 per tick for 921 seconds without mining a log. Nothing
+     * was measured, so nothing is owed.</p>
+     */
+    public static SkillOutcome unmeasured(int workUnits, int expectedUnits, long elapsedTicks) {
+        int work = Math.max(0, workUnits);
+        int expected = Math.max(1, Math.max(work, expectedUnits));
+        long ticks = Math.max(0L, elapsedTicks);
+        return new SkillOutcome(0.0, work, expected, ticks, 0.0,
+                Math.min(1.0, (double) work / expected), false, 0.0, 0.0, false, false);
     }
 
     public String summary() {
@@ -74,7 +94,8 @@ public record SkillOutcome(double reward, int workUnits, int expectedUnits, long
                 + String.format(java.util.Locale.ROOT, "%.2f", unitsPerSecond)
                 + "/s, reward "
                 + String.format(java.util.Locale.ROOT, "%.2f", reward)
-                + (bestTime ? ", best time" : "") + ")";
+                + (bestTime ? ", best time" : "")
+                + (scored ? "" : ", too short to score") + ")";
     }
 
     private static double clamp(double value, double min, double max) {
