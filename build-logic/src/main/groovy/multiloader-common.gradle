@@ -85,8 +85,10 @@ processResources {
         expand jsonExpandProps
     }
 
+    // The same properties the loader metadata is built from, so the version Lune shows on the
+    // About tab cannot drift from the version in the jar's own name.
     filesMatching('lune-build.properties') {
-        expand luneRelease: luneRelease.get()
+        expand expandProps + [luneRelease: luneRelease.get()]
     }
 
     inputs.properties(expandProps)

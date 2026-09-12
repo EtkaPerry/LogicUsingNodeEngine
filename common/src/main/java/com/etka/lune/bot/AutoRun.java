@@ -1,14 +1,21 @@
 package com.etka.lune.bot;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.Constants;
 import com.etka.lune.bot.task.TaskRunner;
+import com.etka.lune.platform.BuildFeatures;
 import com.etka.lune.task.TaskGraph;
 import com.etka.lune.task.TaskStore;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.monster.Ghast;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.LevelSettings;
 import net.minecraft.world.level.WorldDataConfiguration;
@@ -21,6 +28,8 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.Optional;
 
@@ -42,6 +51,8 @@ import java.util.Optional;
  * -Dlune.autorun.fixture=fishing        prepare a rod, water pool, and view for fishing tests
  * -Dlune.autorun.fixture=fishing-small  prepare a rod and a two-block water target
  * -Dlune.autorun.fixture=fishing-one    prepare a rod and a one-block water target
+ * -Dlune.autorun.fixture=ghast          a platform twenty blocks up with one Ghast shelling it
+ * -Dlune.autorun.fixture=ghast-3        the same arena, kept stocked with three
  * -Dlune.autorun.fixture=food,tools     comma-separated; see {@link #prepareFixture}
  * -Dlune.autorun.stopAfterTicks=12000  hard budget; 0 means run until the task ends
  * -Dlune.autorun.quit=true             close the client afterwards, so a shell run terminates
@@ -66,11 +77,69 @@ public final class AutoRun {
     private static final String FIXTURE_KEY = "lune.autorun.fixture";
     private static final String BUDGET_KEY = "lune.autorun.stopAfterTicks";
     private static final String QUIT_KEY = "lune.autorun.quit";
+    /** Journal a human playing, with no task and no bot input. See {@link #isRecordingSession}. */
+    private static final String RECORD_KEY = "lune.autorun.record";
+    /** Hold the learner still, so a benchmark measures the code and not the bandit. */
+    private static final String FREEZE_LEARNING_KEY = "lune.autorun.freezeLearning";
 
     /** Long enough for the integrated server to hand over the chunks around the spawn. */
     private static final int DEFAULT_DELAY_TICKS = 100;
     /** Ticks to let the title screen finish loading before asking it to build a world. */
     private static final int TITLE_SETTLE_TICKS = 40;
+
+    /**
+     * How far above the terrain the Ghast arena floor sits, in blocks.
+     *
+     * <p>Above it, not in it. A Ghast needs an unbroken line to the player before its shoot goal will
+     * even start, so on ordinary ground every hill in between is a fireball that never happens.
+     */
+    private static final int GHAST_PLATFORM_RISE = 20;
+    /** Air kept above the middle of the floor, so the bot has sky over it and room to jump. */
+    private static final int GHAST_HEADROOM = 20;
+    /** Half-width of the sidestepping room in the middle, where the full headroom is worth having. */
+    private static final int GHAST_CENTRE_RADIUS = 14;
+    /**
+     * Height of the band cleared out to the Ghasts, above the floor.
+     *
+     * <p>Two cleared volumes rather than one, because the cost is not symmetrical. Over the middle the
+     * full headroom is worth having and it is only a radius of fourteen. Out where the Ghasts hover
+     * the only thing needed is a corridor the shots can cross - a Ghast is four blocks tall and is
+     * put no higher than three above the floor - and clearing twenty blocks of it instead of eight,
+     * across six times the area, is the difference between a hitch and a freeze on a mountain seed.
+     */
+    private static final int GHAST_FLIGHT_BAND = 8;
+    /**
+     * How far out a Ghast is put, in blocks.
+     *
+     * <p>The flight is the thing being watched. A fireball leaves at a tenth of a block per tick and
+     * tops out at 1.9, so from twenty-odd blocks it takes over a second to arrive - long enough to
+     * see the head come round, the bot hold still, and the shot go back.
+     */
+    private static final int GHAST_RING_MIN = 18;
+    private static final int GHAST_RING_MAX = 28;
+    /**
+     * Half-width of the arena floor: past the ring the Ghasts fly on, not just the bit underfoot.
+     *
+     * <p>Not generosity. It is the only thing that keeps them level with the bot. Vanilla's
+     * float-around goal looks up the terrain height under wherever it fancies going, and when that
+     * height is below the position it picked it <em>mirrors the move downward</em> instead - so a
+     * Ghast in open air is steered at the ground every single time it chooses somewhere to be.
+     *
+     * <p>With nothing under them they sank past the platform within a minute, dropped out of the
+     * four-block window a Ghast needs to hold a target, and went quiet - while the keeper cheerfully
+     * replaced Ghasts that had not died. Eighteen of them in one measured two-minute run, against two
+     * kills. Floor under the whole ring turns the same rule into a box they settle in: down is still
+     * where they are steered, and down is now three blocks away.
+     */
+    private static final int GHAST_FLOOR_RADIUS = GHAST_RING_MAX + 6;
+    /** Places tried for one Ghast before giving up and leaving it to the next keeper tick. */
+    private static final int GHAST_SPAWN_ATTEMPTS = 16;
+    /** Ticks between arena checks. A Ghast spends sixty winding up, so this is not a race. */
+    private static final int GHAST_KEEPER_INTERVAL = 20;
+    /** How far from the middle a Ghast still counts as one of the arena's, in blocks. */
+    private static final double GHAST_ARENA_RADIUS = 48.0;
+    /** More than this in the air at once stops being a test and starts being a fireworks display. */
+    private static final int MAX_ARENA_GHASTS = 8;
 
     private static final String taskName = System.getProperty(TASK_KEY,
             System.getProperty(LEGACY_TASK_KEY, "")).trim();
@@ -78,6 +147,8 @@ public final class AutoRun {
     private static final int delayTicks = intProperty(DELAY_KEY, DEFAULT_DELAY_TICKS);
     private static final int budgetTicks = intProperty(BUDGET_KEY, 0);
     private static final boolean quitWhenDone = Boolean.getBoolean(QUIT_KEY);
+    private static final boolean recordSession = Boolean.getBoolean(RECORD_KEY);
+    private static final boolean freezeLearning = Boolean.getBoolean(FREEZE_LEARNING_KEY);
     private static final String fixture = System.getProperty(FIXTURE_KEY, "").trim().toLowerCase();
 
     /** Seed of the world this harness generated, so the journal can record how to repeat the run. */
@@ -92,11 +163,49 @@ public final class AutoRun {
     private static boolean finished;
     private static boolean fixturePrepared;
 
+    /**
+     * Middle of the Ghast arena floor, or null when this run has not built one.
+     *
+     * <p>Volatile because the two halves of the arena live on different threads: the build runs on
+     * the integrated server and the keeper is driven from the client tick.
+     */
+    private static volatile BlockPos ghastArena;
+    private static volatile int ghastsWanted;
+    private static int ghastKeeperTicks;
+    /** Server-thread only, inside the keeper. */
+    private static final java.util.Random ghastRandom = new java.util.Random();
+
     private AutoRun() {}
 
     /** True when the client was launched as a test run rather than by a player. */
     public static boolean isConfigured() {
-        return !taskName.isEmpty();
+        return !BuildFeatures.releaseBuild() && !taskName.isEmpty();
+    }
+
+    /**
+     * Whether this session is a human being recorded rather than a bot being driven.
+     * <p>
+     * The bot's own numbers only mean something next to a person's, and until now there was no way
+     * to get a person's in the same units. Twelve measured runs say the bot gathers wood at four
+     * point eight logs a minute; nobody knows what that is a fraction of. So this opens the ordinary
+     * run journal, starts no task, and lets the player play: the motion ledger, the inventory and
+     * the position trail are recorded exactly as they are for a run, and the same analysis reads
+     * both. Nothing here touches the controls - {@code BotEngine.isDriving()} is false without a
+     * task, so the input hook passes the player's own keys straight through.
+     */
+    public static boolean isRecordingSession() {
+        return !BuildFeatures.releaseBuild() && recordSession;
+    }
+
+    /**
+     * Whether the harness should build a world: for a bot run, or for a recorded human session.
+     * <p>
+     * World creation used to be gated on there being a task, which meant the only way to get a
+     * seeded world was to hand it to the bot. Recording a person on the same seed the bot ran is
+     * the whole point of the comparison, so the two have to be separable.
+     */
+    private static boolean wantsWorld() {
+        return !worldName.isEmpty() && (isConfigured() || isRecordingSession());
     }
 
     /** Seed of the generated world, or 0 when this session did not generate one. */
@@ -111,7 +220,7 @@ public final class AutoRun {
      * does nothing without a player - and at the title screen there isn't one yet.
      */
     public static void beforeWorld(Minecraft mc) {
-        if (!isConfigured() || finished || worldName.isEmpty() || worldRequested) {
+        if (!wantsWorld() || finished || worldRequested) {
             return;
         }
         if (mc.level != null) {
@@ -175,6 +284,17 @@ public final class AutoRun {
         if (!isConfigured() || finished) {
             return;
         }
+        if (freezeLearning) {
+            // A benchmark has to be able to attribute a difference to the change being tested. The
+            // learner persists to disk and updates every run, so without this the bot that runs
+            // after a fix is not the same bot that ran before it, and a measured improvement may be
+            // the bandit drifting rather than the code getting better. Twelve runs were measured
+            // this way before anyone noticed. Held every tick because the config screen and the
+            // learner itself can both write it back.
+            com.etka.lune.config.BotConfig config = com.etka.lune.config.BotConfig.get();
+            config.learningEnabled = false;
+            config.userLearningEnabled = false;
+        }
 
         if (mc.level != lastLevel) {
             // A fresh world, including one loaded after a previous run finished.
@@ -183,7 +303,10 @@ public final class AutoRun {
             runTicks = 0;
             started = false;
             fixturePrepared = false;
+            ghastArena = null;
         }
+
+        maintainGhastArena(mc);
 
         if (!started) {
             if (!fixturePrepared) {
@@ -219,7 +342,7 @@ public final class AutoRun {
         Constants.LOG.info("AutoRun: starting task '{}' (budget {} ticks)",
                 taskName, budgetTicks);
         if (mc.player != null) {
-            mc.player.sendSystemMessage(Component.literal("[Lune] autorun: " + taskName));
+            mc.player.sendSystemMessage(Component.literal(Lang.get("lune.gui.auto_run.lune_autorun", taskName)));
         }
         engine.runNow(new TaskRunner(task.get()));
     }
@@ -243,6 +366,7 @@ public final class AutoRun {
      * gap      a chasm across the bot's path, so Bridge has something to cross.
      * obsidian obsidian, corner blocks and a lighter, so Build Nether Portal can build.
      * fishing[-small|-one]  a rod and a pool, in three target sizes.
+     * ghast[-N]             a platform twenty blocks up, kept stocked with N Ghasts (default 1).
      * </pre>
      *
      * <p>None of this is available outside the harness: the properties are set by the run scripts
@@ -284,6 +408,9 @@ public final class AutoRun {
         if (anyFishing) {
             prepareFishing(mc, serverPlayer, parts);
         }
+        if (parts.stream().anyMatch(part -> part.startsWith("ghast"))) {
+            prepareGhastArena(mc, serverPlayer, parts);
+        }
         for (String part : parts) {
             switch (part) {
                 case "food" -> giveFood(serverPlayer);
@@ -295,7 +422,7 @@ public final class AutoRun {
                 case "gap" -> digGap(serverPlayer);
                 case "obsidian" -> giveObsidian(serverPlayer);
                 default -> {
-                    if (!part.startsWith("fishing")) {
+                    if (!part.startsWith("fishing") && !part.startsWith("ghast")) {
                         Constants.LOG.warn("AutoRun: unknown fixture '{}'", part);
                     }
                 }
@@ -497,6 +624,209 @@ public final class AutoRun {
             }
         });
         Constants.LOG.info("AutoRun: prepared fishing fixture at {}", platform);
+    }
+
+    /**
+     * A flat floor twenty blocks up with a Ghast shelling it.
+     *
+     * <p>There is no way to meet a Ghast on purpose. They live in one dimension, arrive at a trickle,
+     * and the answer to one - look at it, hold still, bat the fireball back as it arrives - happens
+     * inside a window three ticks wide that a survival run might reach once an hour. Watching that
+     * behaviour, or measuring it, means building the encounter rather than waiting for it.
+     *
+     * <p>So the arena is the encounter with everything else removed: open sky, a floor that cannot be
+     * walked off by accident, a Ghast at a known distance, no other mob in the world, and no weather
+     * or nightfall to change the picture halfway through.
+     *
+     * <p>The rules go through the command dispatcher rather than the gamerule and clock APIs. They are
+     * the arena's rules rather than its geometry, a command states each one in a line, and the time
+     * system in particular is the kind of thing that gets rewritten between versions. One of them is
+     * not cosmetic: {@code mob_griefing} off is what stops a landed fireball cratering a platform
+     * twenty blocks up and turning the test into a fall.
+     */
+    private static void prepareGhastArena(Minecraft mc, ServerPlayer serverPlayer,
+                                          java.util.Set<String> parts) {
+        MinecraftServer server = mc.getSingleplayerServer();
+        if (server == null || !(serverPlayer.level() instanceof ServerLevel level)) {
+            return;
+        }
+        for (String command : new String[] {
+                "difficulty normal",
+                "gamerule mob_griefing false",
+                "gamerule spawn_monsters false",
+                "gamerule spawn_mobs false",
+                "gamerule advance_time false",
+                "gamerule advance_weather false",
+                "weather clear",
+                "time set day" }) {
+            server.getCommands().performPrefixedCommand(
+                    server.createCommandSourceStack().withSuppressedOutput(), command);
+        }
+
+        int floorY = Math.min(level.getMaxY() - GHAST_HEADROOM - 2,
+                serverPlayer.getBlockY() + GHAST_PLATFORM_RISE);
+        BlockPos centre = new BlockPos(serverPlayer.getBlockX(), floorY, serverPlayer.getBlockZ());
+        for (int dx = -GHAST_FLOOR_RADIUS; dx <= GHAST_FLOOR_RADIUS; dx++) {
+            for (int dz = -GHAST_FLOOR_RADIUS; dz <= GHAST_FLOOR_RADIUS; dz++) {
+                level.setBlockAndUpdate(centre.offset(dx, -1, dz), Blocks.STONE.defaultBlockState());
+            }
+        }
+        int cleared = clearAir(level, centre, GHAST_CENTRE_RADIUS, GHAST_HEADROOM)
+                + clearAir(level, centre, GHAST_FLOOR_RADIUS, GHAST_FLIGHT_BAND);
+
+        serverPlayer.teleportTo(level, centre.getX() + 0.5, centre.getY(), centre.getZ() + 0.5,
+                java.util.Set.of(), serverPlayer.getYRot(), 0.0F, true);
+        serverPlayer.setDeltaMovement(Vec3.ZERO);
+        serverPlayer.fallDistance = 0.0F;
+        give(serverPlayer, new ItemStack(Items.IRON_SWORD));
+        give(serverPlayer, new ItemStack(Items.COOKED_BEEF, 16));
+        // Not for the fireball - anything in hand bats one of those. This is so the arena is not
+        // quietly testing a bot with nothing to build with: the ordinary hostile branch reaches for
+        // cover and a pillar when a Ghast closes, and an empty pack turns those into no-ops.
+        give(serverPlayer, new ItemStack(Items.COBBLESTONE, 64));
+
+        ghastsWanted = ghastCount(parts);
+        ghastKeeperTicks = 0;
+        ghastArena = centre;
+        Constants.LOG.info("AutoRun: Ghast arena floor at {} ({} blocks cleared), keeping {} Ghast(s)",
+                centre, cleared, ghastsWanted);
+    }
+
+    /**
+     * Opens a square of air above the floor, and says how many blocks it had to move.
+     *
+     * <p>Reads before it writes. Twenty blocks above the terrain is usually open sky, a block read is
+     * far cheaper than a block update, and the unconditional version of this is tens of thousands of
+     * updates inside one tick - which on a hillside seed is a visible freeze rather than a fixture.
+     */
+    private static int clearAir(ServerLevel level, BlockPos centre, int radius, int height) {
+        int cleared = 0;
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                for (int dy = 0; dy <= height; dy++) {
+                    BlockPos above = centre.offset(dx, dy, dz);
+                    if (!level.getBlockState(above).isAir()) {
+                        level.setBlockAndUpdate(above, Blocks.AIR.defaultBlockState());
+                        cleared++;
+                    }
+                }
+            }
+        }
+        return cleared;
+    }
+
+    /** "ghast" is one and "ghast-3" is three: the count is the suffix, the way the fishing sizes are. */
+    private static int ghastCount(java.util.Set<String> parts) {
+        int wanted = 1;
+        for (String part : parts) {
+            if (!part.startsWith("ghast")) {
+                continue;
+            }
+            String suffix = part.substring("ghast".length());
+            if (!suffix.startsWith("-")) {
+                continue;
+            }
+            try {
+                wanted = Math.max(wanted,
+                        Math.clamp(Integer.parseInt(suffix.substring(1)), 1, MAX_ARENA_GHASTS));
+            } catch (NumberFormatException e) {
+                Constants.LOG.warn("AutoRun: '{}' is not a Ghast count", part);
+            }
+        }
+        return wanted;
+    }
+
+    /**
+     * Keeps the arena stocked, which is the half a one-shot fixture cannot do.
+     *
+     * <p>A batted fireball kills its Ghast outright - that is the whole point of the deflection - so
+     * a fixture that spawns one and walks away buys the run a single shot to look at. Replacing what
+     * has gone turns the arena into something that can be left running while the behaviour happens
+     * twenty times over.
+     */
+    private static void maintainGhastArena(Minecraft mc) {
+        BlockPos centre = ghastArena;
+        // Not until the card is actually running. The floor and the teleport happen during the join
+        // settle, which is right - the arena has to exist before anything stands on it - but a Ghast
+        // put up at the same moment gets a free shot in while nothing is watching for one. A measured
+        // run opened at sixteen hearts with "dmg=fireball (Ghast)" already in its first line.
+        if (centre == null || !started || mc.player == null || mc.getSingleplayerServer() == null) {
+            return;
+        }
+        if (++ghastKeeperTicks < GHAST_KEEPER_INTERVAL) {
+            return;
+        }
+        ghastKeeperTicks = 0;
+        java.util.UUID playerId = mc.player.getUUID();
+        int wanted = ghastsWanted;
+        mc.getSingleplayerServer().execute(() -> stockGhasts(mc, playerId, centre, wanted));
+    }
+
+    private static void stockGhasts(Minecraft mc, java.util.UUID playerId, BlockPos centre,
+                                    int wanted) {
+        if (mc.getSingleplayerServer() == null) {
+            return;
+        }
+        ServerPlayer serverPlayer = mc.getSingleplayerServer().getPlayerList().getPlayer(playerId);
+        if (serverPlayer == null || !(serverPlayer.level() instanceof ServerLevel level)) {
+            return;
+        }
+        java.util.List<Ghast> present = level.getEntitiesOfClass(Ghast.class,
+                new AABB(centre).inflate(GHAST_ARENA_RADIUS), Ghast::isAlive);
+        for (Ghast ghast : present) {
+            // A Ghast only takes a target whose height is within four blocks of its own, and one
+            // that has drifted while floating about quietly stops shooting. Handing the target back
+            // is what stops the arena going silent for no reason anybody watching can see.
+            if (ghast.getTarget() == null) {
+                ghast.setTarget(serverPlayer);
+            }
+        }
+        for (int spawned = present.size(); spawned < wanted; spawned++) {
+            spawnArenaGhast(level, serverPlayer, centre);
+        }
+    }
+
+    /**
+     * Puts one Ghast somewhere it can actually shoot from.
+     *
+     * <p>A random bearing is not enough. The ring reaches further out than the cleared band, so a
+     * bearing can land inside a hillside - where the Ghast is stuck in rock, cannot see the player,
+     * and the arena quietly has one fewer shooter than it reports. Both conditions are checked
+     * before the spawn commits: the body fits, and there is a clear line to the player, which is what
+     * vanilla's own shoot goal requires before it will wind up.
+     *
+     * <p>Giving up after {@link #GHAST_SPAWN_ATTEMPTS} rather than forcing one in is deliberate. The
+     * keeper comes back in a second, and a Ghast in a wall is worse than a Ghast a moment late.
+     */
+    private static void spawnArenaGhast(ServerLevel level, ServerPlayer serverPlayer,
+                                        BlockPos centre) {
+        Ghast ghast = EntityType.GHAST.create(level, EntitySpawnReason.COMMAND);
+        if (ghast == null) {
+            Constants.LOG.warn("AutoRun: could not create a Ghast");
+            return;
+        }
+        for (int attempt = 0; attempt < GHAST_SPAWN_ATTEMPTS; attempt++) {
+            double angle = ghastRandom.nextDouble() * Math.PI * 2.0;
+            double distance = GHAST_RING_MIN
+                    + ghastRandom.nextDouble() * (GHAST_RING_MAX - GHAST_RING_MIN);
+            ghast.snapTo(centre.getX() + 0.5 + Math.cos(angle) * distance,
+                    // Level with the floor, give or take: a Ghast only takes a target within four
+                    // blocks of its own height, so one parked overhead never fires at all.
+                    centre.getY() + ghastRandom.nextInt(4),
+                    centre.getZ() + 0.5 + Math.sin(angle) * distance,
+                    (float) Math.toDegrees(angle) + 90.0F, 0.0F);
+            if (!level.noCollision(ghast) || !ghast.hasLineOfSight(serverPlayer)) {
+                continue;
+            }
+            ghast.setPersistenceRequired();
+            ghast.setTarget(serverPlayer);
+            level.addFreshEntity(ghast);
+            Constants.LOG.info("AutoRun: Ghast at {}, {} blocks out", ghast.blockPosition(),
+                    Math.round(distance));
+            return;
+        }
+        Constants.LOG.warn("AutoRun: no clear spot for a Ghast around {} after {} tries",
+                centre, GHAST_SPAWN_ATTEMPTS);
     }
 
     private static void finish(Minecraft mc, BotEngine engine, String reason) {

@@ -1,8 +1,10 @@
 package com.etka.lune.bot.command;
 
 import com.etka.lune.bot.catalog.BlockTarget;
+import com.etka.lune.bot.catalog.CraftRecipe;
 import com.etka.lune.bot.util.InventoryHelper;
 import com.etka.lune.util.Coordinates;
+import com.etka.lune.util.Lang;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
@@ -16,6 +18,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
 /**
@@ -29,19 +32,28 @@ public abstract class Param<T> {
 
     /** Runtime-compatible kinds used to keep exposed data wires meaningful. */
     public enum DataType {
-        NUMBER, BOOLEAN, CHOICE, ITEM, BLOCK_SET, ENTITY_SET, POSITION
+        NUMBER, BOOLEAN, CHOICE, TEXT, ITEM, BLOCK_SET, ENTITY_SET, POSITION, RECIPE
     }
 
     private final String id;
-    private final String label;
-    private final String tooltip;
+    /** The command this parameter belongs to, which is half of its translation key. */
+    private String owner = "";
     protected T value;
 
-    protected Param(String id, String label, String tooltip, T initial) {
+    protected Param(String id, T initial) {
         this.id = id;
-        this.label = label;
-        this.tooltip = tooltip;
         this.value = initial;
+    }
+
+    /**
+     * Told to it by the command that declares it.
+     *
+     * <p>A parameter is only ever unique within its own command - half the commands in the
+     * palette have a "radius" - so the key needs both halves, and only the command knows
+     * which one it is.</p>
+     */
+    void attachTo(String owner) {
+        this.owner = owner == null ? "" : owner;
     }
 
     public String id() {
@@ -49,11 +61,25 @@ public abstract class Param<T> {
     }
 
     public String label() {
-        return label;
+        return text(".label");
     }
 
     public String tooltip() {
-        return tooltip;
+        return text(".tip");
+    }
+
+    /**
+     * This card's wording for the parameter, or the one every card shares.
+     *
+     * <p>Eight cards have a "Search radius" and they all call it the same thing. Writing that
+     * line out once per card is eight lines for a translator to translate identically and seven
+     * chances to translate one of them differently, so the shared
+     * {@code lune.param.radius.label} carries it and a card only writes its own when it genuinely
+     * means something else by it.</p>
+     */
+    protected String text(String suffix) {
+        String own = "lune.command." + owner + ".param." + id + suffix;
+        return Lang.has(own) ? Lang.get(own) : Lang.get("lune.param." + id + suffix);
     }
 
     public T get() {
@@ -82,6 +108,12 @@ public abstract class Param<T> {
         }
         if (this instanceof Pos) {
             return DataType.POSITION;
+        }
+        if (this instanceof Recipe) {
+            return DataType.RECIPE;
+        }
+        if (this instanceof Text) {
+            return DataType.TEXT;
         }
         throw new IllegalStateException("Unknown parameter type: " + getClass().getName());
     }
@@ -112,8 +144,8 @@ public abstract class Param<T> {
         private final int min;
         private final int max;
 
-        public Ints(String id, String label, String tooltip, int initial, int min, int max) {
-            super(id, label, tooltip, initial);
+        public Ints(String id, int initial, int min, int max) {
+            super(id, initial);
             this.min = min;
             this.max = max;
         }
@@ -153,8 +185,8 @@ public abstract class Param<T> {
 
     /** An on/off toggle. */
     public static final class Bool extends Param<Boolean> {
-        public Bool(String id, String label, String tooltip, boolean initial) {
-            super(id, label, tooltip, initial);
+        public Bool(String id, boolean initial) {
+            super(id, initial);
         }
 
         public void toggle() {
@@ -163,7 +195,7 @@ public abstract class Param<T> {
 
         @Override
         public String displayValue() {
-            return get() ? "Yes" : "No";
+            return Lang.get(get() ? "lune.gui.param.yes" : "lune.gui.param.no");
         }
 
         @Override
@@ -183,14 +215,52 @@ public abstract class Param<T> {
      */
     public static final class Choice extends Param<String> {
         private final Supplier<List<String>> options;
+        /**
+         * How this choice's values are written on screen.
+         *
+         * <p>Nearly always the shared {@code lune.choice.*} lookup. A choice whose values are not
+         * words - language codes, say - hands in its own, because "tr_tr" is a fine thing to store
+         * in a config file and a poor thing to show somebody.</p>
+         */
+        private final UnaryOperator<String> labels;
+        private final boolean ownLabels;
 
-        public Choice(String id, String label, String tooltip, List<String> options, String initial) {
-            this(id, label, tooltip, () -> options, initial);
+        public Choice(String id, List<String> options, String initial) {
+            this(id, () -> options, initial);
         }
 
-        public Choice(String id, String label, String tooltip, Supplier<List<String>> options, String initial) {
-            super(id, label, tooltip, initial);
+        public Choice(String id, Supplier<List<String>> options, String initial) {
+            super(id, initial);
             this.options = options;
+            // Names the player wrote - a waypoint, a task - are shown as typed. Everything else
+            // goes through the shared lookup, which is what the language file is checked against.
+            this.ownLabels = "waypoint".equals(id) || "name".equals(id);
+            this.labels = ownLabels ? UnaryOperator.identity() : Choice::optionLabel;
+        }
+
+        public Choice(String id, Supplier<List<String>> options, String initial,
+                      UnaryOperator<String> labels) {
+            super(id, initial);
+            this.options = options;
+            this.labels = labels;
+            this.ownLabels = true;
+        }
+
+        /**
+         * Whether this choice writes its own labels instead of using {@code lune.choice.*}.
+         *
+         * <p>For the check that every dropdown value has a line to be drawn from: a choice that
+         * asks an item what it is called, or shows a name the player typed, has no key to find and
+         * wants none. Saying so here beats the check keeping a list of which ids to skip, which
+         * went stale the moment a fifth one appeared.</p>
+         */
+        public boolean labelsItsOwnOptions() {
+            return ownLabels;
+        }
+
+        /** What one of this choice's values is called on screen. */
+        public String label(String value) {
+            return value == null || value.isEmpty() ? "" : labels.apply(value);
         }
 
         public List<String> options() {
@@ -207,13 +277,32 @@ public abstract class Param<T> {
             set(current.get((index + 1) % current.size()));
         }
 
+        /**
+         * What a choice is called, as opposed to what it is.
+         *
+         * <p>The value is an identifier: it goes into saved tasks and is compared against by the
+         * cards that read it. Translating it would rewrite every task on disk the first time
+         * somebody changed language. Translating what is drawn costs nothing and breaks nothing,
+         * and an option nobody has written a key for still reads as the English it always was.</p>
+         */
+        public static String optionLabel(String value) {
+            if (value == null || value.isEmpty()) {
+                return "";
+            }
+            return Lang.getOr("lune.choice."
+                    + value.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]+", "_")
+                            .replaceAll("^_+|_+$", ""), value);
+        }
+
         @Override
         public String displayValue() {
             String value = get();
             if (value == null || value.isEmpty()) {
-                return options().isEmpty() ? "none available" : "not set";
+                return options().isEmpty()
+                        ? Lang.get("lune.gui.param.none_available")
+                        : Lang.get("lune.gui.param.not_set");
             }
-            return value;
+            return label(value);
         }
 
         @Override
@@ -229,13 +318,66 @@ public abstract class Param<T> {
         }
     }
 
+    /**
+     * A short line the player types.
+     * <p>
+     * The one input that cannot be a list, because it names something that does not exist yet: a
+     * waypoint for a place the bot has not been to. Everything else in the palette picks from what
+     * the game or the player already has, which is why this is the only free-text parameter.
+     */
+    public static final class Text extends Param<String> {
+        private final int maxLength;
+
+        public Text(String id, String initial, int maxLength) {
+            super(id, initial == null ? "" : initial);
+            this.maxLength = Math.max(1, maxLength);
+        }
+
+        public int maxLength() {
+            return maxLength;
+        }
+
+        /**
+         * A short placeholder for the empty field. The tooltip is the long explanation.
+         *
+         * <p>Derived from the id like the label and the tooltip are, rather than passed in.
+         * The registry builds its cards in a static initialiser, so a hint written there would
+         * be resolved once, in whatever language happened to be loaded first, and then never
+         * again.</p>
+         */
+        public String hint() {
+            return text(".hint");
+        }
+
+        @Override
+        public void set(String value) {
+            String trimmed = value == null ? "" : value.strip();
+            super.set(trimmed.length() > maxLength ? trimmed.substring(0, maxLength) : trimmed);
+        }
+
+        @Override
+        public String displayValue() {
+            return get().isBlank() ? Lang.get("lune.gui.param.not_set") : get();
+        }
+
+        @Override
+        public String serialize() {
+            return get();
+        }
+
+        @Override
+        public void deserialize(String raw) {
+            set(raw);
+        }
+    }
+
     /** Any number of blocks and/or tags - Mine's ore picker. */
     public static final class BlockSet extends Param<BlockTarget> {
         private final List<Block> candidates;
         private final List<net.minecraft.tags.TagKey<net.minecraft.world.level.block.Block>> tagCandidates;
 
-        public BlockSet(String id, String label, String tooltip, List<Block> candidates, Set<Block> initial) {
-            super(id, label, tooltip, BlockTarget.ofBlocks(new LinkedHashSet<>(initial)));
+        public BlockSet(String id, List<Block> candidates, Set<Block> initial) {
+            super(id, BlockTarget.ofBlocks(new LinkedHashSet<>(initial)));
             this.candidates = List.copyOf(candidates);
             this.tagCandidates = BuiltInRegistries.BLOCK.getTags()
                     .flatMap(holderSet -> holderSet.unwrapKey().stream())
@@ -282,12 +424,12 @@ public abstract class Param<T> {
             int blockCount = get().blocks().size();
             int tagCount = get().tags().size();
             if (tagCount == 0) {
-                return blockCount == 0 ? "none" : blockCount + " selected";
+                return blockCount == 0 ? Lang.get("lune.gui.param.none") : Lang.get("lune.gui.param.selected_count", blockCount);
             }
             if (blockCount == 0) {
-                return tagCount + " tag" + (tagCount == 1 ? "" : "s");
+                return Lang.get("lune.gui.param.tag_count", tagCount);
             }
-            return blockCount + " + " + tagCount + " tags";
+            return Lang.get("lune.gui.param.blocks_and_tags", blockCount, tagCount);
         }
 
         @Override
@@ -305,9 +447,9 @@ public abstract class Param<T> {
     public static final class EntitySet extends Param<Set<EntityType<?>>> {
         private final List<EntityType<?>> candidates;
 
-        public EntitySet(String id, String label, String tooltip, List<EntityType<?>> candidates,
+        public EntitySet(String id, List<EntityType<?>> candidates,
                          Set<EntityType<?>> initial) {
-            super(id, label, tooltip, new LinkedHashSet<>(initial));
+            super(id, new LinkedHashSet<>(initial));
             this.candidates = List.copyOf(candidates);
         }
 
@@ -328,7 +470,7 @@ public abstract class Param<T> {
         @Override
         public String displayValue() {
             int count = get().size();
-            return count == 0 ? "none" : count + " selected";
+            return count == 0 ? Lang.get("lune.gui.param.none") : Lang.get("lune.gui.param.selected_count", count);
         }
 
         @Override
@@ -358,8 +500,8 @@ public abstract class Param<T> {
     public static final class ItemChoice extends Param<Item> {
         private final List<Item> candidates;
 
-        public ItemChoice(String id, String label, String tooltip, List<Item> candidates, Item initial) {
-            super(id, label, tooltip, candidates.contains(initial) ? initial
+        public ItemChoice(String id, List<Item> candidates, Item initial) {
+            super(id, candidates.contains(initial) ? initial
                     : (candidates.isEmpty() ? null : candidates.get(0)));
             this.candidates = List.copyOf(candidates);
         }
@@ -379,7 +521,7 @@ public abstract class Param<T> {
 
         @Override
         public String displayValue() {
-            return get() == null ? "none available" : InventoryHelper.itemName(get());
+            return get() == null ? Lang.get("lune.gui.param.none_available") : InventoryHelper.itemName(get());
         }
 
         @Override
@@ -396,16 +538,45 @@ public abstract class Param<T> {
         }
     }
 
+    /**
+     * What to craft: an item named from the recipe book, or a grid the player draws themselves.
+     * <p>
+     * The one parameter that can be a picture rather than a name, and the reason it is a single
+     * parameter: "which recipe?" is one question, and splitting it into a mode switch, an item and
+     * a grid made the card three rows longer without answering it any better.
+     */
+    public static final class Recipe extends Param<CraftRecipe> {
+
+        public Recipe(String id) {
+            super(id, CraftRecipe.empty());
+        }
+
+        @Override
+        public String displayValue() {
+            return get().describe();
+        }
+
+        @Override
+        public String serialize() {
+            return get().serialize();
+        }
+
+        @Override
+        public void deserialize(String raw) {
+            set(CraftRecipe.deserialize(raw));
+        }
+    }
+
     /** A world coordinate, with the UI offering a "use my position" shortcut. */
     public static final class Pos extends Param<BlockPos> {
-        public Pos(String id, String label, String tooltip, BlockPos initial) {
-            super(id, label, tooltip, initial);
+        public Pos(String id, BlockPos initial) {
+            super(id, initial);
         }
 
         @Override
         public String displayValue() {
             BlockPos pos = get();
-            return pos == null ? "not set" : pos.getX() + ", " + pos.getY() + ", " + pos.getZ();
+            return pos == null ? Lang.get("lune.gui.param.not_set") : pos.getX() + ", " + pos.getY() + ", " + pos.getZ();
         }
 
         @Override

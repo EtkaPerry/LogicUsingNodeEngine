@@ -1,6 +1,8 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.util.InventoryHelper;
@@ -113,7 +115,7 @@ public final class SelectItemTask implements Task {
     private final int minDurabilityPercent;
     private final Preference preference;
 
-    private String status = "";
+    private final StatusText status = new StatusText();
     private boolean moved;
 
     public SelectItemTask(Item item, Enchanting enchanting, Hand hand, int minDurabilityPercent,
@@ -127,11 +129,18 @@ public final class SelectItemTask implements Task {
 
     @Override
     public String name() {
-        return "Select " + (item == null ? "Item" : InventoryHelper.itemName(item));
+        return Lang.get("lune.task.select_item.name", item == null
+                ? Lang.get("lune.param.item.label") : InventoryHelper.itemName(item));
+    }
+
+    /** English on purpose: this is the learner's row key, and is never shown. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Select " + (item == null ? "Item" : InventoryHelper.itemName(item)));
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -150,7 +159,7 @@ public final class SelectItemTask implements Task {
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (item == null) {
-            status = "no item chosen";
+            status.set("lune.status.select_item.no_item_chosen");
             return TaskStatus.FAILED;
         }
         Inventory inventory = ctx.player.getInventory();
@@ -177,7 +186,7 @@ public final class SelectItemTask implements Task {
         }
 
         if (chosen < 0) {
-            status = describeMiss(sawItem, bestRejectedPercent);
+            describeMiss(sawItem, bestRejectedPercent);
             return TaskStatus.FAILED;
         }
 
@@ -186,12 +195,11 @@ public final class SelectItemTask implements Task {
         ItemStack wanted = inventory.getItem(chosen);
         boolean alreadyHeld = wanted == heldStack(inventory);
         if (!alreadyHeld && !hold(ctx, wanted)) {
-            status = "could not move " + InventoryHelper.itemName(item) + " into the "
-                    + hand.label().toLowerCase();
+            status.set("lune.status.select_item.could_not_move_into", InventoryHelper.itemName(item), com.etka.lune.bot.command.Param.Choice.optionLabel(hand.label()));
             return TaskStatus.FAILED;
         }
         moved = !alreadyHeld;
-        status = "holding " + InventoryHelper.itemName(item) + durabilityNote(wanted, chosenPercent);
+        status.set("lune.status.select_item.holding", InventoryHelper.itemName(item), durabilityNote(wanted, chosenPercent));
         if (moved) {
             ctx.debug.decide("selected " + InventoryHelper.itemName(item) + " for the "
                     + hand.label().toLowerCase());
@@ -223,20 +231,23 @@ public final class SelectItemTask implements Task {
         return Math.max(0, stack.getMaxDamage() - stack.getDamageValue()) * 100 / stack.getMaxDamage();
     }
 
-    private String describeMiss(boolean sawItem, int bestRejectedPercent) {
+    /** Says why nothing was picked up. Writes the status rather than returning words. */
+    private void describeMiss(boolean sawItem, int bestRejectedPercent) {
         String name = InventoryHelper.itemName(item);
         if (!sawItem) {
-            return switch (enchanting) {
-                case ENCHANTED -> "no enchanted " + name + " left";
-                case PLAIN -> "no unenchanted " + name + " left";
-                case ANY -> "no " + name + " left";
-            };
+            status.set(switch (enchanting) {
+                case ENCHANTED -> "lune.status.select_item.no_enchanted_left";
+                case PLAIN -> "lune.status.select_item.no_unenchanted_left";
+                case ANY -> "lune.status.select_item.none_left";
+            }, name);
+            return;
         }
-        return name + " is down to " + bestRejectedPercent + "%, below the "
-                + minDurabilityPercent + "% needed";
+        status.set("lune.status.select_item.below_durability", name, bestRejectedPercent,
+                minDurabilityPercent);
     }
 
     private String durabilityNote(ItemStack stack, int percent) {
-        return stack.isDamageableItem() ? " (" + percent + "% durability)" : "";
+        return stack.isDamageableItem()
+                ? Lang.get("lune.status.select_item.durability_note", percent) : "";
     }
 }

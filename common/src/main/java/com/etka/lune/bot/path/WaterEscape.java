@@ -5,7 +5,6 @@ import com.etka.lune.bot.util.BlockBreaker;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.util.Mth;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.phys.Vec3;
 
@@ -71,6 +70,15 @@ public final class WaterEscape {
         }
         if (next.getY() > start.getY()) {
             ctx.input.jump = true;
+            // Aim up, and say it is urgent, because in water the body goes where the eyes go and
+            // the eyes are not necessarily ours. This escape runs beside the work circuit, not
+            // instead of it, so the card that was looking for trees is still swinging the view
+            // around on the same tick - and a swimmer looking sideways rises barely at all. One
+            // run drowned exactly here: the guard fired on time at 120 air, held jump for 320
+            // ticks while Explore scanned left and right, and never reached a surface four blocks
+            // above it.
+            ctx.look.urgent();
+            ctx.look.lookAt(ctx.player, Vec3.atCenterOf(next));
             return;
         }
         if (next.getY() < start.getY()) {
@@ -78,6 +86,8 @@ public final class WaterEscape {
         }
 
         Vec3 target = Vec3.atCenterOf(next);
+        // Same reason as the upward leg: an eased turn loses the tick to whichever card scans next.
+        ctx.look.urgent();
         ctx.look.lookAt(ctx.player, new Vec3(target.x, ctx.player.getEyeY(), target.z));
         steer(ctx.player, ctx, target);
         // Stay near the surface on horizontal legs, but don't fight an intentionally downward
@@ -189,16 +199,6 @@ public final class WaterEscape {
     }
 
     private static void steer(LocalPlayer player, BotContext ctx, Vec3 target) {
-        double dx = target.x - player.getX();
-        double dz = target.z - player.getZ();
-        if (dx * dx + dz * dz < 1.0E-4) {
-            return;
-        }
-        float desiredYaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
-        double relative = Mth.wrapDegrees(desiredYaw - player.getYRot());
-        if (Math.abs(relative) < 67.5) ctx.input.forward = true;
-        if (Math.abs(relative) > 112.5) ctx.input.backward = true;
-        if (relative >= 22.5 && relative <= 157.5) ctx.input.right = true;
-        if (relative <= -22.5 && relative >= -157.5) ctx.input.left = true;
+        ctx.input.steerToward(player, target);
     }
 }

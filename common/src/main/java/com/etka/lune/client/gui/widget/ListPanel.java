@@ -1,8 +1,10 @@
 package com.etka.lune.client.gui.widget;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.client.gui.LuneScreen;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
@@ -29,7 +31,7 @@ public class ListPanel<T> extends AbstractWidget {
     private static final int PADDING = 3;
 
     private static final int ROW_HOVER = 0x30FFFFFF;
-    private static final int ROW_SELECTED = 0x504C9EFF;
+    private static final int ROW_SELECTED = LuneScreen.ACCENT_SELECTION;
     private static final int ACTION_CELL = 14;
     private static final int ACTION_HOVER = 0x405C6B80;
     private static final int ACTION_DISABLED = 0xFF5A5A64;
@@ -97,6 +99,8 @@ public class ListPanel<T> extends AbstractWidget {
         clampScroll();
         int visible = visibleRows();
         var text = extractor.textRenderer();
+        // Rebuilt each frame from whichever row is under the pointer; see the trimmed labels below.
+        setTooltip(null);
 
         for (int row = 0; row < visible; row++) {
             int index = scrollRows + row;
@@ -120,6 +124,12 @@ public class ListPanel<T> extends AbstractWidget {
             String label = labeller.apply(item);
             int available = Math.max(0, textRight - (getX() + 5));
             if (MinecraftFont.width(label) > available) {
+                // A pane narrow enough to cut a name is a pane the player chose the width of, so
+                // the answer is not to widen it - but a row reading "Woodland Cleanup  (8 s" still
+                // has to be identifiable without dragging the splitter and back again.
+                if (hovered) {
+                    setTooltip(Tooltip.create(Component.literal(label)));
+                }
                 label = MinecraftFont.plainSubstrByWidth(label, available);
             }
             text.accept(getX() + 5, rowY + 3, Component.literal(label).withColor(colour));
@@ -218,7 +228,7 @@ public class ListPanel<T> extends AbstractWidget {
             return null;
         }
         RowAction<T> action = visibleActions.get(actionIndex);
-        return action.enabled().test(items.get(index)) ? action.label() : action.label() + " unavailable";
+        return action.enabled().test(items.get(index)) ? action.label() : Lang.get("lune.gui.list.action_unavailable", action.label());
     }
 
     private List<RowAction<T>> visibleActions(T item) {

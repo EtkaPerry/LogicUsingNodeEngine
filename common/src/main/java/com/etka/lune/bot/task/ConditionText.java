@@ -1,5 +1,6 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
 import java.util.Locale;
 
 /** Shared, side-effect-free wording for condition comparisons in the task and node editor. */
@@ -9,19 +10,18 @@ public final class ConditionText {
 
     public static String comparisonPhrase(String comparison) {
         return switch (comparison) {
-            case "Greater than" -> "is greater than";
-            case "Less than" -> "is less than";
-            case "Equal to" -> "is equal to";
-            case "Not equal" -> "is not equal to";
-            case "At least" -> "is at least";
-            case "At most" -> "is at most";
-            default -> "matches '" + comparison + "'";
+            case "Greater than" -> Lang.get("lune.condition.greater_than");
+            case "Less than" -> Lang.get("lune.condition.less_than");
+            case "Equal to" -> Lang.get("lune.condition.equal");
+            case "Not equal" -> Lang.get("lune.condition.equal_2");
+            case "At least" -> Lang.get("lune.condition.least");
+            case "At most" -> Lang.get("lune.condition.most");
+            default -> Lang.get("lune.condition.matches", comparison);
         };
     }
 
     public static String describeRule(String subject, String comparison, double threshold) {
-        return "If " + subject + " " + comparisonPhrase(comparison) + " " + format(threshold)
-                + ": Success; otherwise: Fail.";
+        return Lang.get("lune.condition.rule", subject, comparisonPhrase(comparison), format(threshold));
     }
 
     private static String format(double value) {

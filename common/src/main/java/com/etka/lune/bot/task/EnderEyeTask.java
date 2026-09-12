@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -44,15 +46,21 @@ public final class EnderEyeTask implements Task {
     private int watchTicks;
     private int spawnWait;
     private int walkTicks;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     @Override
     public String name() {
-        return "Find Stronghold";
+        return Lang.get("lune.task.ender_eye.find_stronghold");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Find Stronghold");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -70,12 +78,12 @@ public final class EnderEyeTask implements Task {
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (stronghold != null) {
-            status = "stronghold near " + stronghold.getX() + ", " + stronghold.getZ();
+            status.set("lune.status.ender_eye.stronghold_near", stronghold.getX(), stronghold.getZ());
             return TaskStatus.SUCCESS;
         }
 
         if (!InventoryHelper.has(ctx.player, Items.ENDER_EYE, 1)) {
-            status = "out of eyes of ender";
+            status.set("lune.status.ender_eye.out_eyes_ender");
             return TaskStatus.FAILED;
         }
 
@@ -97,7 +105,7 @@ public final class EnderEyeTask implements Task {
 
     private TaskStatus throwEye(BotContext ctx) {
         if (InventoryHelper.equip(ctx, stack -> stack.is(Items.ENDER_EYE)) < 0) {
-            status = "no eyes of ender";
+            status.set("lune.status.ender_eye.no_eyes_ender");
             return TaskStatus.FAILED;
         }
 
@@ -111,7 +119,7 @@ public final class EnderEyeTask implements Task {
         watchTicks = 0;
         spawnWait = 0;
         state = State.TRACK;
-        status = "threw eye";
+        status.set("lune.status.ender_eye.threw_eye");
         return TaskStatus.RUNNING;
     }
 
@@ -120,7 +128,7 @@ public final class EnderEyeTask implements Task {
 
         if (eye == null) {
             spawnWait++;
-            status = "waiting for eye (" + spawnWait + ")";
+            status.set("lune.status.ender_eye.waiting_eye", spawnWait);
             if (spawnWait >= SPAWN_TIMEOUT) {
                 state = State.THROW;
             }
@@ -136,7 +144,7 @@ public final class EnderEyeTask implements Task {
         }
 
         watchTicks++;
-        status = "tracking eye";
+        status.set("lune.status.ender_eye.tracking_eye");
 
         if (watchTicks >= WATCH_TICKS) {
             Vec3 h = new Vec3(motion.x, 0, motion.z);
@@ -149,7 +157,7 @@ public final class EnderEyeTask implements Task {
             }
             state = State.WALK;
             walkTicks = 0;
-            status = "heading " + (int) heading.x + ", " + (int) heading.z;
+            status.set("lune.status.ender_eye.heading", (int) heading.x, (int) heading.z);
         }
 
         return TaskStatus.RUNNING;
@@ -184,20 +192,20 @@ public final class EnderEyeTask implements Task {
                     && ctx.player.position().distanceToSqr(Vec3.atCenterOf(lastThrowPos)) > RETHROW_DISTANCE_SQR
                     && walkTicks > 20) {
                 state = State.THROW;
-                status = "rethrowing";
+                status.set("lune.status.ender_eye.rethrowing");
                 return TaskStatus.RUNNING;
             }
 
             if (walkTicks > 300) {
                 state = State.THROW;
-                status = "rethrowing";
+                status.set("lune.status.ender_eye.rethrowing");
                 return TaskStatus.RUNNING;
             }
         }
 
         if (heading.lengthSqr() < 1.0E-6) {
             state = State.THROW;
-            status = "lost heading, rethrowing";
+            status.set("lune.status.ender_eye.lost_heading_rethrowing");
             return TaskStatus.RUNNING;
         }
 
@@ -205,7 +213,7 @@ public final class EnderEyeTask implements Task {
         ctx.look.lookAt(ctx.player, target);
         ctx.input.forward = true;
         ctx.input.sprint = true;
-        status = "following eye";
+        status.set("lune.status.ender_eye.following_eye");
         return TaskStatus.RUNNING;
     }
 
@@ -233,7 +241,7 @@ public final class EnderEyeTask implements Task {
     private TaskStatus land(BotContext ctx, BlockPos pos) {
         stronghold = pos;
         ctx.input.reset();
-        status = "eye landed at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ();
+        status.set("lune.status.ender_eye.eye_landed", pos.getX(), pos.getY(), pos.getZ());
         return TaskStatus.SUCCESS;
     }
 }

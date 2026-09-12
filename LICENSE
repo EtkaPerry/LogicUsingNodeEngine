@@ -30,14 +30,22 @@ routines and documentation. "The Author" means the copyright holder named above.
       enough to rebuild the Software — when discussing it, reviewing it,
       reporting a bug, or asking for or giving help.
 
+   g. Publish an unmodified copy of the Software on a Modrinth project page
+      controlled by the Author, and include an unmodified copy in free modpacks
+      published on Modrinth. The project or modpack must retain this license and
+      the attribution, link to the official repository, and must not present Lune
+      as someone else's work. This permission includes Modrinth hosting and
+      delivering the Software for those purposes.
+
 
 2. WHAT YOU MAY NOT DO
 
    a. Publish, redistribute, mirror, re-upload or otherwise make the Software
       available to anyone else, in source or compiled form, whole or in part,
-      modified or unmodified. This includes mod portals, launchers, modpacks,
-      file hosts, archives, and any repository other than a platform fork
-      permitted by section 1(e).
+      modified or unmodified, except for the Modrinth permissions in section
+      1(g). This includes other mod portals, launchers, modpacks, file hosts,
+      archives, and any repository other than a platform fork permitted by
+      section 1(e).
 
    b. Sell, license, rent or otherwise commercially exploit the Software, or
       include a copy of it in anything offered for payment, donation or other

@@ -1,19 +1,2 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" aria-labelledby="luneTitle luneDescription">
-  <title>Lune mascot</title>
-  <desc>
-    A dark round spirit shell with small ears, a golden liquid soul, and one vertical eye.
-  </desc>
-  <defs>
-    <clipPath id="a">
-      <circle cx="100" cy="105" r="68"/>
-    </clipPath>
-  </defs>
-  <path d="M50 68q0-38 26-19l16 23Zm58 4 16-23q26-19 26 19z" fill="#252033" stroke="#171522" stroke-width="3"/>
-  <circle cx="100" cy="105" r="68" fill="#252033" stroke="#171522" stroke-width="3"/>
-  <g clip-path="url(#a)">
-    <path d="M20 76c32 0 50-3 80-3s48 3 80 3v114H20Z" fill="#f4c95d"/>
-  </g>
-  <ellipse cx="100" cy="100" rx="25" ry="33" fill="#fff4c7"/>
-  <ellipse cx="100" cy="100" rx="7" ry="25" fill="#3d2b12"/>
-  <circle cx="100" cy="105" r="68" fill="none" stroke="#171522" stroke-width="3"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="28 33 144 144" aria-labelledby="title desc"><title>Lune</title><desc>A dark round spirit shell with small ears, a golden liquid soul, and one
+    vertical eye.</desc><defs><clipPath id="a"><circle cx="100" cy="105" r="68"/></clipPath></defs><path d="M50 68q0-38 26-19l16 23Zm58 4 16-23q26-19 26 19z" fill="#252033" stroke="#171522" stroke-width="3"/><circle cx="100" cy="105" r="68" fill="#252033"/><g clip-path="url(#a)"><path d="M20 76c32 0 50-2.4 80-2.4s48 2.4 80 2.4v114H20Z" fill="#f4c95d"/></g><circle cx="100" cy="105" r="68" fill="none" stroke="#171522" stroke-width="3"/><ellipse cx="100" cy="100" rx="25" ry="33" fill="#fff4c7"/><ellipse cx="100" cy="100" rx="7" ry="25" fill="#3d2b12"/></svg>

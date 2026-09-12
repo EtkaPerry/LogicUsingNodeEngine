@@ -1,8 +1,10 @@
 package com.etka.lune.bot.knowledge;
 
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.util.Vision;
+import com.etka.lune.util.Lang;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.util.Mth;
@@ -38,8 +40,14 @@ public final class BiomeScout {
     /** Inside this angle counts as "the same way". */
     private static final float SAME_WAY_DEGREES = 50.0F;
 
+    /**
+     * Keys, not words. A compass point is a whole word in every language and a suffix in some,
+     * so it is looked up rather than assembled.
+     */
     private static final String[] COMPASS = {
-            "south", "south-west", "west", "north-west", "north", "north-east", "east", "south-east"
+            "lune.compass.south", "lune.compass.south_west", "lune.compass.west",
+            "lune.compass.north_west", "lune.compass.north", "lune.compass.north_east",
+            "lune.compass.east", "lune.compass.south_east"
     };
 
     private BiomeScout() {}
@@ -51,7 +59,7 @@ public final class BiomeScout {
      * @param score  0 to 1-ish; higher is more promising
      * @param reason player-readable justification, e.g. "forest to the north-east"
      */
-    public record Heading(float yaw, float score, String reason) {}
+    public record Heading(float yaw, float score, StatusText reason) {}
 
     /**
      * Picks the most promising heading for a set of block targets.
@@ -63,7 +71,18 @@ public final class BiomeScout {
      */
     public static Optional<Heading> choose(BotContext ctx, Set<Block> targets,
                                            Float momentumYaw, Float cameFromYaw) {
-        Set<Need> needs = Need.of(targets);
+        return chooseForNeeds(ctx, Need.of(targets), momentumYaw, cameFromYaw);
+    }
+
+    /**
+     * The same choice, for a caller that knows its need directly rather than through a block set.
+     *
+     * <p>A hunt wants somewhere animals live, and it has an {@code EntityType} rather than blocks to
+     * derive that from. Sharing the direction-picking is the point of this class - it is knowledge
+     * about the world, not the hunting job leaking into the searching job.</p>
+     */
+    public static Optional<Heading> chooseForNeeds(BotContext ctx, Set<Need> needs,
+                                                   Float momentumYaw, Float cameFromYaw) {
         if (needs.contains(Need.ANY)) {
             // No biome opinion applies; let the caller sweep however it likes.
             return Optional.empty();
@@ -135,7 +154,7 @@ public final class BiomeScout {
 
             if (availability > bestSample) {
                 bestSample = availability;
-                bestBiome = BiomeKnowledge.name(biome);
+                bestBiome = BiomeKnowledge.displayName(biome);
                 bestNote = profile.notes();
             }
         }
@@ -157,9 +176,9 @@ public final class BiomeScout {
             score *= BACKTRACK_PENALTY;
         }
 
-        String reason = bestSample <= 0.1F
-                ? "nothing but " + bestBiome + " to the " + compass(yaw) + " - " + bestNote
-                : bestBiome + " to the " + compass(yaw);
+        StatusText reason = bestSample <= 0.1F
+                ? new StatusText().set("lune.scout.nothing_but", bestBiome, compass(yaw), bestNote)
+                : new StatusText().set("lune.scout.biome_toward", bestBiome, compass(yaw));
         return new Heading(yaw, score, reason);
     }
 
@@ -179,6 +198,11 @@ public final class BiomeScout {
 
     /** Compass word for a yaw, for status lines the player can actually read. */
     public static String compass(float yaw) {
+        return Lang.get(compassKey(yaw));
+    }
+
+    /** The unresolved key, for a status line that wants to stay keyed until it is drawn. */
+    public static String compassKey(float yaw) {
         return COMPASS[Math.floorMod(Math.round(Mth.wrapDegrees(yaw) / 45.0F), 8)];
     }
 

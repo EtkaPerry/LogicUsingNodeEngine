@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -45,7 +47,7 @@ public final class StayNearTask implements WhileMonitor {
 
     private BlockPos anchor;
     private Task recovery;
-    private String status = "watching";
+    private final StatusText status = new StatusText().set("lune.status.stay_near.watching");
 
     public StayNearTask(String anchorMode, String waypointName, int radius) {
         this.anchorMode = anchorMode == null ? FROM_RUN_START : anchorMode;
@@ -55,11 +57,17 @@ public final class StayNearTask implements WhileMonitor {
 
     @Override
     public String name() {
-        return "Stay Near";
+        return Lang.get("lune.task.stay_near.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Stay Near");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -67,14 +75,16 @@ public final class StayNearTask implements WhileMonitor {
     public void onStart(BotContext ctx) {
         anchor = resolveAnchor(ctx);
         if (anchor == null) {
-            status = anchorMode.equals(FROM_WAYPOINT)
-                    ? "no waypoint named " + waypointName + " in this dimension"
-                    : "no run anchor yet";
+            if (anchorMode.equals(FROM_WAYPOINT)) {
+                status.set("lune.status.stay_near.no_waypoint_named_dimension", waypointName);
+            } else {
+                status.set("lune.status.stay_near.no_run_anchor_yet");
+            }
             Leash.get().release();
             return;
         }
         Leash.get().hold(anchor, radius);
-        status = "holding " + radius + " blocks of " + anchor.toShortString();
+        status.set("lune.status.stay_near.holding_blocks", radius, anchor.toShortString());
     }
 
     @Override
@@ -91,7 +101,7 @@ public final class StayNearTask implements WhileMonitor {
         double out = Leash.get().distanceFrom(ctx.player.getX(), ctx.player.getZ());
         if (!LeashPolicy.outside(out, radius)) {
             stopRecovery(ctx);
-            status = String.format("inside the area - %.0f of %d blocks out", out, radius);
+            status.set("lune.status.stay_near.inside_area_blocks_out", out, radius);
             return false;
         }
         return true;
@@ -105,7 +115,7 @@ public final class StayNearTask implements WhileMonitor {
         double out = Leash.get().distanceFrom(ctx.player.getX(), ctx.player.getZ());
         if (out <= returnRadius()) {
             stopRecovery(ctx);
-            status = "back inside the area";
+            status.set("lune.status.stay_near.back_inside_area");
             return TaskStatus.SUCCESS;
         }
         if (recovery == null) {
@@ -113,7 +123,7 @@ public final class StayNearTask implements WhileMonitor {
             recovery.start(ctx);
         }
         TaskStatus result = recovery.tick(ctx);
-        status = String.format("%.0f blocks outside the area - heading back", out - radius);
+        status.set("lune.status.stay_near.blocks_outside_area_heading_back", out - radius);
         if (result == TaskStatus.RUNNING) {
             return TaskStatus.RUNNING;
         }
@@ -123,7 +133,7 @@ public final class StayNearTask implements WhileMonitor {
             // status and journal carry the reason rather than the bot silently giving up on the
             // leash or standing still until something else moves it.
             ctx.debug.recordFailure(name(), "no route back to " + anchor.toShortString());
-            status = "cannot get back to the area";
+            status.set("lune.status.stay_near.cannot_get_back_area");
             return TaskStatus.FAILED;
         }
         return TaskStatus.RUNNING;
@@ -165,7 +175,7 @@ public final class StayNearTask implements WhileMonitor {
     public void onStop(BotContext ctx) {
         stopRecovery(ctx);
         Leash.get().release();
-        status = "watching";
+        status.set("lune.status.stay_near.watching");
     }
 
     private void stopRecovery(BotContext ctx) {

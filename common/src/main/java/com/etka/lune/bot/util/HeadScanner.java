@@ -1,6 +1,8 @@
 package com.etka.lune.bot.util;
 
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.bot.StatusText;
+import com.etka.lune.util.Lang;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
@@ -67,6 +69,8 @@ public final class HeadScanner {
     private int verticalIndex;
     private int turnTicks;
     private boolean turning;
+    /** Rebuilt on every ask rather than allocated per tick; a scanner has one owner asking. */
+    private final StatusText scratch = new StatusText();
     private boolean verticalGlance;
     private int microJitterTicks;
     private float microJitterYaw;
@@ -225,18 +229,27 @@ public final class HeadScanner {
 
     /** A human-readable account of what the bot is doing with its head right now. */
     public String status() {
+        return statusLine().text();
+    }
+
+    /**
+     * The same account, still keyed, so a task can fold it into its own status without the meaning
+     * being flattened into words first.
+     */
+    public StatusText statusLine() {
         String where = describeView();
         if (turning) {
-            return "looking " + where;
+            return scratch.set("lune.status.scan.looking", Lang.get(where));
         }
         if (verticalGlance) {
-            String dir = verticalIndex == 1 ? "up" : verticalIndex == 2 ? "down" : "level";
-            return "glancing " + dir + ", " + where;
+            String dir = verticalIndex == 1 ? "lune.status.scan.up"
+                    : verticalIndex == 2 ? "lune.status.scan.down" : "lune.status.scan.level";
+            return scratch.set("lune.status.scan.glancing", Lang.get(dir), Lang.get(where));
         }
         if (microJitterTicks > 0) {
-            return "scanning " + where;
+            return scratch.set("lune.status.scan.scanning", Lang.get(where));
         }
-        return "checked " + where;
+        return scratch.set("lune.status.scan.checked", Lang.get(where));
     }
 
     private void restart(LocalPlayer player) {
@@ -262,20 +275,28 @@ public final class HeadScanner {
     }
 
     /** "ahead", "left", "over my right shoulder" - how a person would describe where they looked. */
+    /**
+     * Where the head is pointing, as a whole key rather than a side glued into a sentence.
+     *
+     * <p>"to the " + side reads like two pieces of one phrase and is not: languages disagree about
+     * where a direction word goes, and one that inflects it cannot be handed "left" and asked to
+     * cope. Six keys, six complete phrases.</p>
+     */
     private String describeView() {
         float offset = Mth.wrapDegrees(yawOffsets[horizontalIndex]);
         float magnitude = Math.abs(offset);
         if (magnitude < 20.0F) {
-            return "ahead";
+            return "lune.status.scan.ahead";
         }
-        String side = offset < 0 ? "left" : "right";
+        boolean left = offset < 0;
         if (magnitude < 100.0F) {
-            return "to the " + side;
+            return left ? "lune.status.scan.to_the_left" : "lune.status.scan.to_the_right";
         }
         if (magnitude < 160.0F) {
-            return "over my " + side + " shoulder";
+            return left ? "lune.status.scan.over_left_shoulder"
+                    : "lune.status.scan.over_right_shoulder";
         }
-        return "behind me";
+        return "lune.status.scan.behind_me";
     }
 
     private float desiredYaw() {

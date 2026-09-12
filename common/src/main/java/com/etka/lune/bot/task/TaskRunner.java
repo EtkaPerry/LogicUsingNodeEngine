@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.LoopWatch;
 import com.etka.lune.bot.Task;
@@ -56,8 +58,6 @@ public final class TaskRunner implements Task {
     private WhileMonitor monitor;
     private TaskNode monitorNode;
     private boolean monitorRunning;
-    /** The explicit edge that delivered the signal to {@link #node}, for the canvas to light up. */
-    private String incomingWire;
     /** Independent circuits powered by Always (or the legacy task-level While source). */
     private final List<ParallelCircuit> parallelCircuits = new ArrayList<>();
     /** Signals emitted while a circuit is being ticked; applied after the iterator finishes. */
@@ -69,27 +69,17 @@ public final class TaskRunner implements Task {
     private final Map<String, Integer> counterCounts = new HashMap<>();
     private static final Set<TaskNode> PRESSED_BUTTONS = ConcurrentHashMap.newKeySet();
     private int iteration;
-    private String status = "";
-    private String startupError = "";
+    private final StatusText status = new StatusText();
+    private final StatusText startupError = new StatusText();
     /** Delay state for a Timer used by the primary START circuit. */
     private boolean timerStarted;
     private int timerWaitTicks;
     private int timerPulseCount;
     /** Ticks to wait before restarting a forever step that produced no progress. */
     private int cooldown;
-    /**
-     * How long START and its outgoing edge stay lit after a run begins.
-     *
-     * <p>START emits one signal and is then finished with. Holding it lit for the lifetime of the
-     * lane drew a permanent supply out of a card whose whole meaning is that it fires once - the
-     * canvas showed current leaving START forever while nothing was leaving it at all. Long enough
-     * to see the pulse depart, then dark.</p>
-     */
-    private static final int ENTRY_PULSE_TICKS = 10;
-    /** Counts the entry pulse down. See {@link #ENTRY_PULSE_TICKS}. */
-    private int entryPulseTicks;
-    /** The START edge, so it can go dark on its own while later edges light normally. */
-    private String entryWire;
+    /** Recent emissions expire independently of the receiving task's lifetime. */
+    private final Map<String, TaskPower.Pulse> wirePulses = new HashMap<>();
+    private final Map<String, Long> sourcePulses = new HashMap<>();
     /** This tick's power picture, sampled once so every Observer reads the same frame. */
     private TaskPower powerSample = TaskPower.NONE;
     /** Last completed values from each node, used by downstream exposed parameters. */
@@ -101,11 +91,25 @@ public final class TaskRunner implements Task {
 
     @Override
     public String name() {
-        return "Task: " + graph.name;
+        return Lang.get("lune.task.runner.name", graph.displayName());
+    }
+
+    /**
+     * English on purpose: this is the learner's row key.
+     *
+     * <p>Derived from {@link Task#name()} by default, which now reads the graph's title - and a
+     * starter job's title is translated. A table keyed on that would start empty for every player
+     * who changed language, and would gain a second set of rows for the same six jobs. The graph's
+     * stored name is the same string whatever the language, so it is the one to key on. The wording
+     * matches the English line above so rows learned before this still answer to their old key.</p>
+     */
+    @Override
+    public String learningId() {
+        return Task.learningName("Task: " + (graph == null ? "" : graph.name));
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -146,26 +150,14 @@ public final class TaskRunner implements Task {
      */
     public TaskPower livePower() {
         Set<String> nodes = new LinkedHashSet<>();
+        long now = System.nanoTime();
+        wirePulses.values().removeIf(pulse -> now - pulse.latest() >= TaskPower.PULSE_NANOS);
+        sourcePulses.values().removeIf(start -> now - start >= TaskPower.PULSE_NANOS);
+        nodes.addAll(sourcePulses.keySet());
         Set<String> wires = new LinkedHashSet<>();
         if (node != null && node.id != null) {
             nodes.add(node.id);
-            if (entryPulseTicks > 0) {
-                TaskNode start = TaskWiring.explicitStart(graph);
-                if (start != null && start.id != null) {
-                    // Only while the entry pulse is in flight. START is a one-shot, and a card that
-                    // has already fired is not a card that is supplying anything.
-                    nodes.add(start.id);
-                }
-            }
             addMonitorPower(nodes, wires, node, monitorNode, monitorRunning);
-            // Kept inside the guard: a lane that has run out leaves its last edge behind, and a
-            // wire still glowing into a card nothing is doing would be a lie. The START edge is
-            // held to the pulse window for the same reason - the first card of a 'forever' lane
-            // never advances, so its incoming edge would otherwise glow for the whole run.
-            if (incomingWire != null
-                    && (entryPulseTicks > 0 || !incomingWire.equals(entryWire))) {
-                wires.add(incomingWire);
-            }
         }
         for (ParallelCircuit circuit : parallelCircuits) {
             circuit.collectPower(nodes, wires);
@@ -173,7 +165,7 @@ public final class TaskRunner implements Task {
         for (ParallelCircuit circuit : pendingParallelCircuits) {
             circuit.collectPower(nodes, wires);
         }
-        return new TaskPower(nodes, wires);
+        return new TaskPower(nodes, wires, wirePulses);
     }
 
     private void addMonitorPower(Set<String> nodes, Set<String> wires, TaskNode guarded,
@@ -188,14 +180,28 @@ public final class TaskRunner implements Task {
 
     /** Names the edge just followed. Fall-through draws no wire, so it lights none either. */
     private String wireFrom(TaskNode from, String targetId, int kind, TaskNode to) {
-        return targetId == null || from == null || from.id == null || to == null || to.id == null
+        String wire = targetId == null || from == null || from.id == null || to == null || to.id == null
                 ? null : TaskPower.wire(from.id, kind, 0, to.id);
+        recordPulse(from, wire);
+        return wire;
+    }
+
+    private void recordPulse(TaskNode source, String wire) {
+        if (wire == null) return;
+        long now = System.nanoTime();
+        wirePulses.compute(wire, (key, pulse) -> pulse == null
+                ? new TaskPower.Pulse(now, now) : pulse.refresh(now));
+        // Work and processing cards light only while they are executing. Emitting a pulse
+        // must not keep a completed Timer, Counter or Relay powered for its child's lifetime.
+        if (source != null && source.isSourceNode() && source.id != null) {
+            sourcePulses.put(source.id, now);
+        }
     }
 
     /** A short "prev -> [current] -> next" line for the status panel. */
     public String describeFlow() {
         if (graph == null || node == null) {
-            return "no active task";
+            return Lang.get("lune.task.runner.no_active_task");
         }
         int index = graph.indexOf(node);
         if (index < 0) {
@@ -214,7 +220,9 @@ public final class TaskRunner implements Task {
 
     @Override
     public void onStart(BotContext ctx) {
-        startupError = "";
+        startupError.clear();
+        wirePulses.clear();
+        sourcePulses.clear();
         // A verdict about the previous run says nothing about this one, and carrying one over
         // would let a task be blamed for a stall it inherited.
         LoopWatch.get().clear();
@@ -226,22 +234,17 @@ public final class TaskRunner implements Task {
             TaskNode target = explicitStart.onSuccess == null
                     ? null : graph.nodeById(explicitStart.onSuccess);
             if (startCount > 1) {
-                startupError = "task has more than one START node";
+                startupError.set("lune.status.task_runner.multiple_start");
             } else if (target == null) {
-                startupError = "START has no action connected";
+                startupError.set("lune.status.task_runner.start_not_connected");
             } else if (target.isSourceNode()) {
-                startupError = "START must connect directly to a runnable action";
+                startupError.set("lune.status.task_runner.start_needs_action");
             }
             node = startupError.isBlank() ? target : explicitStart;
-            incomingWire = wireFrom(explicitStart, explicitStart.onSuccess,
+            wireFrom(explicitStart, explicitStart.onSuccess,
                     TaskPower.SUCCESS, node);
-            entryWire = incomingWire;
-            entryPulseTicks = ENTRY_PULSE_TICKS;
         } else {
             node = nextSequentialNode(-1);
-            incomingWire = null;
-            entryWire = null;
-            entryPulseTicks = 0;
         }
         iteration = 0;
         timerStarted = false;
@@ -257,26 +260,25 @@ public final class TaskRunner implements Task {
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (!startupError.isBlank()) {
-            status = startupError;
+            status.set(startupError);
             markFailed();
             return TaskStatus.FAILED;
         }
         // Sampled before anything moves, so an Observer compares like with like: this is the
         // picture as the previous tick left it, and a change in it is a real transition.
         powerSample = livePower();
-        // Counted down after sampling, so the tick that starts the run is one the entry pulse is
-        // visible on rather than one it has already been spent by.
-        if (entryPulseTicks > 0) {
-            entryPulseTicks--;
-        }
         tickAlwaysSources(ctx);
         if (node == null) {
             TaskStatus parallelResult = tickParallelCircuits(ctx);
             if (parallelResult == TaskStatus.FAILED) {
                 return TaskStatus.FAILED;
             }
-            status = parallelCircuits.isEmpty() ? "finished" : "running independent circuits";
-            return parallelCircuits.isEmpty() ? TaskStatus.SUCCESS : TaskStatus.RUNNING;
+            if (completionStatus() == TaskStatus.SUCCESS) {
+                status.set("lune.status.task_runner.finished");
+            } else {
+                status.set("lune.status.task_runner.running_independent_circuits");
+            }
+            return completionStatus();
         }
 
         if (node.isTimerNode()) {
@@ -287,20 +289,20 @@ public final class TaskRunner implements Task {
             }
             if (timerWaitTicks > 0) {
                 timerWaitTicks--;
-                status = "Timer waiting (" + timerSeconds(node) + "s)";
+                status.set("lune.status.task_runner.timer_waiting_s", timerSeconds(node));
                 return tickParallelOrRunning(ctx);
             }
             emitRelay(node, null, ctx);
             timerPulseCount++;
             if (node.repeat == 0 || timerPulseCount < node.repeat) {
                 timerWaitTicks = timerTicks(node);
-                status = "Timer forwarded pulse; waiting for the next one";
+                status.set("lune.status.task_runner.timer_forwarded_pulse_waiting_next_one");
                 return tickParallelOrRunning(ctx);
             }
             node = null;
             iteration = 0;
             timerStarted = false;
-            status = "Timer forwarded pulse";
+            status.set("lune.status.task_runner.timer_forwarded_pulse");
             return tickParallelOrFinished(ctx);
         }
 
@@ -308,9 +310,9 @@ public final class TaskRunner implements Task {
             boolean output = countPulse(node);
             if (output) {
                 emitRelay(node, null, ctx);
-                status = "Counter forwarded a pulse";
+                status.set("lune.status.task_runner.counter_forwarded_pulse");
             } else {
-                status = "Counter waiting for " + counterTarget(node) + " pulses";
+                status.set("lune.status.task_runner.counter_waiting_pulses", counterTarget(node));
             }
             node = null;
             return tickParallelOrFinished(ctx);
@@ -319,7 +321,7 @@ public final class TaskRunner implements Task {
         if (node.isEndNode()) {
             node = null;
             iteration = 0;
-            status = "End consumed pulse";
+            status.set("lune.status.task_runner.end_consumed_pulse");
             return tickParallelOrFinished(ctx);
         }
 
@@ -327,32 +329,33 @@ public final class TaskRunner implements Task {
             emitRelay(node, null, ctx);
             node = null;
             iteration = 0;
-            status = "relay sent pulse";
+            status.set("lune.status.task_runner.relay_sent_pulse");
             TaskStatus parallelResult = tickParallelCircuits(ctx);
             if (parallelResult == TaskStatus.FAILED) {
                 return TaskStatus.FAILED;
             }
-            return parallelCircuits.isEmpty() ? TaskStatus.SUCCESS : TaskStatus.RUNNING;
+            return completionStatus();
         }
 
         if (cooldown > 0) {
             cooldown--;
             TaskStatus monitorResult = tickLocalMonitor(ctx);
             if (monitorResult == TaskStatus.FAILED) {
-                return failOrBranch(ctx, "While action failed: " + monitor.status());
+                return failOrBranch(ctx, "lune.status.task_runner.while_failed",
+                        monitor.statusLine());
             }
             TaskStatus parallelResult = tickParallelCircuits(ctx);
             if (parallelResult == TaskStatus.FAILED) {
                 return TaskStatus.FAILED;
             }
-            status = describeStep() + " - pausing";
+            status.set("lune.status.task_runner.pausing_2", describeStep());
             return TaskStatus.RUNNING;
         }
 
         if (task == null) {
             task = buildTask(node);
             if (task == null) {
-                status = "unknown command '" + node.commandId + "'";
+                status.set("lune.status.task_runner.unknown_command", node.commandId);
                 markFailed();
                 return TaskStatus.FAILED;
             }
@@ -364,15 +367,16 @@ public final class TaskRunner implements Task {
             if (!prepareMonitor(ctx)) {
                 task.stop(ctx);
                 task = null;
-                return failOrBranch(ctx, "While action could not be created");
+                return failOrBranch(ctx, "lune.status.task_runner.while_not_created");
             }
         }
 
         TaskStatus result = timedTick(ctx);
-        status = describeStep();
+        status.set(describeStep());
         TaskStatus monitorResult = tickLocalMonitor(ctx);
         if (monitorResult == TaskStatus.FAILED) {
-            return failOrBranch(ctx, "While action failed: " + monitor.status());
+            return failOrBranch(ctx, "lune.status.task_runner.while_failed",
+                    monitor.statusLine());
         }
 
         if (result == TaskStatus.RUNNING) {
@@ -385,25 +389,30 @@ public final class TaskRunner implements Task {
 
         Task finished = task;
         recordNodeOutputs(node);
-        String childStatus = task.status();
+        StatusText childStatus = new StatusText().set(task.statusLine());
         task.stop(ctx);
         task = null;
 
         if (result == TaskStatus.SUCCESS) {
             iteration++;
             if (node.repeat == 0) {
-                return handleForeverSuccess(ctx, finished);
+                handleForeverSuccess(ctx, finished);
+                return tickParallelOrFinished(ctx);
             }
             if (iteration < node.repeat) {
-                return TaskStatus.RUNNING;
+                return tickParallelOrRunning(ctx);
             }
             stopMonitor(ctx);
             advance(node.onSuccess, TaskPower.SUCCESS);
         } else {
             if (node.onFailure == null) {
                 stopMonitor(ctx);
-                status = "step '" + node.commandId + "' failed"
-                        + (childStatus == null || childStatus.isBlank() ? "" : ": " + childStatus);
+                if (childStatus.isBlank()) {
+                    status.set("lune.status.task_runner.step_failed", node.commandId);
+                } else {
+                    status.set("lune.status.task_runner.step_failed_because",
+                            node.commandId, childStatus);
+                }
                 markFailed();
                 return TaskStatus.FAILED;
             }
@@ -415,10 +424,7 @@ public final class TaskRunner implements Task {
         if (parallelResult == TaskStatus.FAILED) {
             return TaskStatus.FAILED;
         }
-        if (node == null && !parallelCircuits.isEmpty()) {
-            return TaskStatus.RUNNING;
-        }
-        return node == null ? TaskStatus.SUCCESS : TaskStatus.RUNNING;
+        return completionStatus();
     }
 
     private TaskStatus handleForeverSuccess(BotContext ctx, Task finished) {
@@ -478,7 +484,22 @@ public final class TaskRunner implements Task {
         if (parallelResult == TaskStatus.FAILED) {
             return TaskStatus.FAILED;
         }
-        return parallelCircuits.isEmpty() ? TaskStatus.SUCCESS : TaskStatus.RUNNING;
+        return completionStatus();
+    }
+
+    /** Sources remain armed between emissions, even when no child is running. */
+    private TaskStatus completionStatus() {
+        return node != null || !parallelCircuits.isEmpty() || !pendingParallelCircuits.isEmpty()
+                || !alwaysPulseSources.isEmpty() || !observerPulseSources.isEmpty()
+                || !buttonPulseSources.isEmpty() ? TaskStatus.RUNNING : TaskStatus.SUCCESS;
+    }
+
+    private boolean hasSignalTarget(TaskNode source) {
+        return source.signalLinks != null && source.signalLinks.stream().anyMatch(link -> {
+            if (link == null || link.outputPort < 0 || link.outputPort >= source.signalOutputCount) return false;
+            TaskNode target = graph.nodeById(link.targetNodeId);
+            return target != null && !target.isSourceNode();
+        });
     }
 
     private boolean isLastNode() {
@@ -493,6 +514,9 @@ public final class TaskRunner implements Task {
         }
         stopMonitor(ctx);
         stopParallelCircuits(ctx);
+        node = null;
+        wirePulses.clear();
+        sourcePulses.clear();
     }
 
     /** Follows an explicit edge, or falls through to the next node in the list when there is none. */
@@ -505,7 +529,7 @@ public final class TaskRunner implements Task {
             int index = graph.indexOf(node);
             node = index < 0 ? null : nextSequentialNode(index);
         }
-        incomingWire = wireFrom(from, targetId, kind, node);
+        wireFrom(from, targetId, kind, node);
     }
 
     private TaskNode nextSequentialNode(int afterIndex) {
@@ -550,10 +574,11 @@ public final class TaskRunner implements Task {
                     addAlwaysPulseSource(source, graph.nodeById(targetId));
                 }
             }
-            if (source.isObserverNode()) {
+            if (source.isObserverNode() && graph.nodeById(source.observedNodeId) != null
+                    && hasSignalTarget(source)) {
                 observerPulseSources.add(new ObserverPulseSource(source));
             }
-            if (source.isButtonNode()) {
+            if (source.isButtonNode() && hasSignalTarget(source)) {
                 buttonPulseSources.add(new ButtonPulseSource(source));
             }
         }
@@ -591,10 +616,13 @@ public final class TaskRunner implements Task {
         if (linked == null || linked.isSourceNode()) {
             return;
         }
-        // The source keeps pulsing - that is what Always is for, and its wire stays lit to show it -
-        // but a branch already carrying that source's signal absorbs the next pulse instead of
-        // forking. A power source held on energises one wire; it does not create a new independent
-        // wire twenty times a second.
+        // An absorbed pulse is still a real emission. Refresh its indicator without
+        // allocating another worker or restarting a spark that is already travelling.
+        recordPulse(origin, originWire);
+        // A clock card keeps pulsing - that is what Always/Pulse is for - but a branch already
+        // carrying that clock's direct signal absorbs the next pulse instead of forking. A power
+        // source held on energises one wire; it does not create a new independent wire twenty times
+        // a second.
         //
         // This is load-bearing, not tidiness. A branch that ends on a card set to x∞ never
         // finishes, so without absorbing, every pulse would leave another live circuit and another
@@ -602,8 +630,14 @@ public final class TaskRunner implements Task {
         //
         // Two different sources aimed at the same card still get a circuit each: what is compared
         // is the pair of source and entry card, so independent sources stay independent.
-        if (hasCircuit(linked, origin, parallelCircuits)
-                || hasCircuit(linked, origin, pendingParallelCircuits)) {
+        // A Timer output is different: it is a one-shot pulse emitted after the Timer receives its
+        // input. A Timer commonly points back through a few command cards to itself; coalescing that
+        // pulse with the circuit that just emitted it makes the first cycle work and silently
+        // discards every later cycle. Keep the existing coalescing for other pulse origins so a
+        // long-running Always or relay branch does not fork another circuit on every tick.
+        if ((origin == null || !origin.isTimerNode())
+                && (hasCircuit(linked, origin, parallelCircuits)
+                || hasCircuit(linked, origin, pendingParallelCircuits))) {
             return;
         }
         pendingParallelCircuits.add(new ParallelCircuit(linked, source, origin, originWire));
@@ -711,8 +745,7 @@ public final class TaskRunner implements Task {
             ParallelCircuit circuit = iterator.next();
             TaskStatus result = circuit.onTick(ctx);
             if (result == TaskStatus.FAILED) {
-                status = "circuit '" + nodeName(circuit.node) + "' failed"
-                        + (circuit.status.isBlank() ? "" : ": " + circuit.status);
+                status.set("lune.status.task_runner.circuit_failed", nodeName(circuit.node), (circuit.status.isBlank() ? "" : ": " + circuit.status));
                 markFailed();
                 return TaskStatus.FAILED;
             }
@@ -723,7 +756,7 @@ public final class TaskRunner implements Task {
             }
         }
         if (node == null && !lastStatus.isBlank()) {
-            status = "circuit: " + lastStatus;
+            status.set("lune.status.task_runner.circuit", lastStatus);
         }
         if (!pendingParallelCircuits.isEmpty()) {
             parallelCircuits.addAll(pendingParallelCircuits);
@@ -732,20 +765,20 @@ public final class TaskRunner implements Task {
         return null;
     }
 
-    private TaskStatus failOrBranch(BotContext ctx, String reason) {
+    private TaskStatus failOrBranch(BotContext ctx, String key, Object... args) {
         if (task != null) {
             task.stop(ctx);
             task = null;
         }
         stopMonitor(ctx);
         if (node.onFailure == null) {
-            status = reason;
+            status.set(key, args);
             markFailed();
             return TaskStatus.FAILED;
         }
         advance(node.onFailure, TaskPower.FAILURE);
-        status = reason;
-        return node == null ? TaskStatus.SUCCESS : TaskStatus.RUNNING;
+        status.set(key, args);
+        return tickParallelOrFinished(ctx);
     }
 
     private void stopMonitor(BotContext ctx) {
@@ -783,7 +816,7 @@ public final class TaskRunner implements Task {
         private final TaskNode source;
         /** The card that emitted the pulse: where this branch's electricity started. */
         private final TaskNode origin;
-        /** The wire that pulse arrived on, kept lit for as long as the branch is alive. */
+        /** Original edge, retained only for a periodic circuit restarting. */
         private final String originWire;
         private TaskNode node;
         private Task task;
@@ -797,8 +830,7 @@ public final class TaskRunner implements Task {
         private int timerWaitTicks;
         private int timerPulseCount;
         private boolean finished;
-        private String status = "";
-        private String incomingWire;
+        private final StatusText status = new StatusText();
 
         private ParallelCircuit(TaskNode start, TaskNode source, TaskNode origin,
                                 String originWire) {
@@ -807,7 +839,6 @@ public final class TaskRunner implements Task {
             this.origin = origin;
             this.originWire = originWire;
             this.node = start;
-            this.incomingWire = originWire;
         }
 
         private boolean periodic() {
@@ -819,19 +850,10 @@ public final class TaskRunner implements Task {
             if (finished) {
                 return;
             }
-            if (origin != null && origin.id != null) {
-                nodes.add(origin.id);
-            }
-            if (originWire != null) {
-                wires.add(originWire);
-            }
             if (node == null || node.id == null) {
                 return;
             }
             nodes.add(node.id);
-            if (incomingWire != null) {
-                wires.add(incomingWire);
-            }
             addMonitorPower(nodes, wires, node, monitorNode, monitorRunning);
         }
 
@@ -842,18 +864,18 @@ public final class TaskRunner implements Task {
             if (periodic() && node == null) {
                 if (pulseWaitTicks > 0) {
                     pulseWaitTicks--;
-                    status = "waiting for next signal (" + source.describeAlwaysInterval() + ")";
+                    status.set("lune.status.task_runner.waiting_next_signal", source.describeAlwaysInterval());
                     return TaskStatus.RUNNING;
                 }
                 node = entryNode;
                 iteration = 0;
-                incomingWire = originWire;
-                status = "new signal";
+                recordPulse(origin, originWire);
+                status.set("lune.status.task_runner.new_signal");
             }
             if (cooldown > 0) {
                 cooldown--;
                 tickOwnMonitor(ctx);
-                status = "pausing";
+                status.set("lune.status.stop_game.pausing");
                 return TaskStatus.RUNNING;
             }
             if (node == null) {
@@ -869,9 +891,9 @@ public final class TaskRunner implements Task {
                 boolean output = countPulse(node);
                 if (output) {
                     emitRelay(node, source, ctx);
-                    status = "forwarded pulse";
+                    status.set("lune.status.task_runner.forwarded_pulse");
                 } else {
-                    status = "counting incoming pulse";
+                    status.set("lune.status.task_runner.counting_incoming_pulse");
                 }
                 node = null;
                 finishCycle();
@@ -885,14 +907,14 @@ public final class TaskRunner implements Task {
                 }
                 if (timerWaitTicks > 0) {
                     timerWaitTicks--;
-                    status = "waiting " + timerSeconds(node) + "s before forwarding";
+                    status.set("lune.status.task_runner.waiting_s_before_forwarding", timerSeconds(node));
                     return TaskStatus.RUNNING;
                 }
                 emitRelay(node, source, ctx);
                 timerPulseCount++;
                 if (node.repeat == 0 || timerPulseCount < node.repeat) {
                     timerWaitTicks = timerTicks(node);
-                    status = "forwarded pulse; waiting for the next one";
+                    status.set("lune.status.task_runner.forwarded_pulse_waiting_next_one");
                     return TaskStatus.RUNNING;
                 }
                 node = null;
@@ -909,7 +931,7 @@ public final class TaskRunner implements Task {
             if (task == null) {
                 task = buildTask(node);
                 if (task == null) {
-                    status = "unknown command '" + node.commandId + "'";
+                    status.set("lune.status.task_runner.unknown_command", node.commandId);
                     finished = true;
                     return TaskStatus.FAILED;
                 }
@@ -917,7 +939,7 @@ public final class TaskRunner implements Task {
                 if (!prepareOwnMonitor(ctx)) {
                     task.stop(ctx);
                     task = null;
-                    status = "While action could not be created";
+                    status.set("lune.status.task_runner.while_not_created");
                     finished = true;
                     return TaskStatus.FAILED;
                 }
@@ -932,12 +954,12 @@ public final class TaskRunner implements Task {
                         guarded.onControlReleased(ctx);
                         monitorRunning = false;
                     }
-                    status = "watching";
+                    status.set("lune.status.stay_near.watching");
                     return finishMonitorCheck(ctx, guarded);
                 }
                 monitorRunning = true;
                 TaskStatus result = guarded.tick(ctx);
-                status = guarded.status();
+                status.set(guarded.statusLine());
                 if (result == TaskStatus.FAILED) {
                     return failMonitor(ctx, guarded);
                 }
@@ -952,10 +974,14 @@ public final class TaskRunner implements Task {
             }
 
             TaskStatus result = task.tick(ctx);
-            status = task.status();
+            status.set(task.statusLine());
             TaskStatus monitorResult = tickOwnMonitor(ctx);
             if (monitorResult == TaskStatus.FAILED) {
-                status = monitor == null ? "While action failed" : monitor.status();
+                if (monitor == null) {
+                    status.set("lune.status.task_runner.while_action_failed");
+                } else {
+                    status.set(monitor.statusLine());
+                }
                 return TaskStatus.FAILED;
             }
             if (result == TaskStatus.RUNNING) {
@@ -964,7 +990,7 @@ public final class TaskRunner implements Task {
 
             Task finishedTask = task;
             recordNodeOutputs(node);
-            String childStatus = task.status();
+            StatusText childStatus = new StatusText().set(task.statusLine());
             task.stop(ctx);
             task = null;
 
@@ -990,8 +1016,11 @@ public final class TaskRunner implements Task {
             } else {
                 if (node.onFailure == null) {
                     stopOwnMonitor(ctx);
-                    status = childStatus == null || childStatus.isBlank()
-                            ? "failed" : childStatus;
+                    if (childStatus.isBlank()) {
+                        status.set("lune.status.task_runner.failed");
+                    } else {
+                        status.set(childStatus);
+                    }
                     finished = true;
                     return TaskStatus.FAILED;
                 }
@@ -1009,7 +1038,7 @@ public final class TaskRunner implements Task {
                 // The completion tick is the pulse that just ran. Subtract it from the next
                 // delay so "every tick" really means the next scheduler tick, not every other.
                 pulseWaitTicks = Math.max(0, source.alwaysIntervalTicks() - 1);
-                status = "waiting for next signal (" + source.describeAlwaysInterval() + ")";
+                status.set("lune.status.task_runner.waiting_next_signal", source.describeAlwaysInterval());
                 return;
             }
             finished = true;
@@ -1037,7 +1066,7 @@ public final class TaskRunner implements Task {
 
         /** A failed monitor follows its Fail edge when one exists, just like every other node. */
         private TaskStatus failMonitor(BotContext ctx, WhileMonitor guarded) {
-            String failure = guarded.status();
+            StatusText failure = new StatusText().set(guarded.statusLine());
             guarded.onControlReleased(ctx);
             guarded.stop(ctx);
             task = null;
@@ -1046,7 +1075,11 @@ public final class TaskRunner implements Task {
                 advance(node.onFailure, TaskPower.FAILURE);
                 return TaskStatus.RUNNING;
             }
-            status = failure == null || failure.isBlank() ? "failed" : failure;
+            if (failure.isBlank()) {
+                status.set("lune.status.task_runner.failed");
+            } else {
+                status.set(failure);
+            }
             finished = true;
             return TaskStatus.FAILED;
         }
@@ -1117,7 +1150,7 @@ public final class TaskRunner implements Task {
                 int index = graph.indexOf(node);
                 node = index < 0 ? null : nextSequentialNode(index);
             }
-            incomingWire = wireFrom(from, targetId, kind, node);
+            wireFrom(from, targetId, kind, node);
         }
 
         private void onStop(BotContext ctx) {
@@ -1324,11 +1357,14 @@ public final class TaskRunner implements Task {
         nodeOutputs.put(current.id, outputs);
     }
 
-    private String describeStep() {
+    private StatusText describeStep() {
         int step = graph.indexOf(node) + 1;
-        String detail = task == null ? "" : task.status();
-        return "step " + step + "/" + graph.nodes.size() + " " + nodeName(node)
-                + (detail.isEmpty() ? "" : " - " + detail);
+        StatusText detail = task == null ? null : task.statusLine();
+        return detail == null || detail.isBlank()
+                ? new StatusText().set("lune.status.task_runner.step", step,
+                        graph.nodes.size(), nodeName(node))
+                : new StatusText().set("lune.status.task_runner.step_detail", step,
+                        graph.nodes.size(), nodeName(node), detail);
     }
 
     private static String nodeName(TaskNode node) {

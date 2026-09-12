@@ -1,5 +1,7 @@
 package com.etka.lune.bot.learning;
 
+import com.etka.lune.util.Lang;
+
 /**
  * Pure decision rule for the engine's automatic mission verdict.
  *
@@ -31,7 +33,8 @@ public final class AutomaticApproval {
 
     public record Decision(boolean approved, long elapsedTicks, long usualTicks, String reason) {
         public String label() {
-            return approved ? "approved" : "disapproved";
+            return Lang.get(approved ? "lune.engine.auto_approved"
+                : "lune.engine.auto_disapproved");
         }
     }
 }

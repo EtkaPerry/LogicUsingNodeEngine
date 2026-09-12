@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -64,7 +66,27 @@ public final class QuickStoneTask implements Task {
     private boolean diggerDone;
     /** Why it ended, so a failure here reports the cause and not just a cobblestone count. */
     private String diggerFailure = "";
-    private String status = "";
+    /**
+     * The key behind {@link #diggerFailure}, which is the half that means the same in every
+     * language. The text is for the player; decisions are made on this.
+     */
+    private String diggerFailureKey = "";
+    private final StatusText status = new StatusText();
+
+    /**
+     * The staircase stopping because it met water or lava, rather than for any other reason.
+     *
+     * <p>Matched on the key rather than on the words. This used to read
+     * {@code diggerFailure.contains("water")}, which is true of the English sentence and false of
+     * every translation of it - so in Turkish the staircase's deliberate stop at a flooded pocket
+     * was not recognised, and the bot mined out the walls it had just decided not to open.</p>
+     */
+    private static final Set<String> FLUID_REFUSALS = Set.of(
+            "lune.status.staircase_prospect.water_ahead_sealing_retreating",
+            "lune.status.break.refusing_water_breach",
+            "lune.status.break.refusing_lava_flow",
+            "lune.status.break.not_enough_air_for_breach",
+            "lune.status.break.water_has_no_exit");
 
     private enum Phase { DIG, SWEEP, MINE }
 
@@ -86,17 +108,23 @@ public final class QuickStoneTask implements Task {
 
     @Override
     public String name() {
-        return "Mine " + needed + " stone";
+        return Lang.get("lune.task.quick_stone.name", needed);
+    }
+
+    /** English on purpose: this is the learner's row key, and is never shown. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Mine " + needed + " stone");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
     @Override
     public TaskProgress learningProgress() {
-        return new TaskProgress(gathered, needed, "stone");
+        return new TaskProgress(gathered, needed, Lang.get("lune.unit.stone"));
     }
 
     @Override
@@ -139,14 +167,15 @@ public final class QuickStoneTask implements Task {
                 excludedStarts.add(stagingPosition.asLong());
             }
             stagingTask.start(ctx);
-            status = "leaving an unstable start for solid ground";
+            status.set("lune.status.quick_stone.leaving_unstable_start_solid_ground");
         } else {
-            status = "no stable ground nearby for the stone stair";
+            status.set("lune.status.quick_stone.no_stable_ground_nearby_stone_stair");
         }
         gathered = 0;
         progressed = false;
         diggerDone = false;
         diggerFailure = "";
+        diggerFailureKey = "";
         sweeper = null;
         miner = null;
         phase = Phase.DIG;
@@ -157,7 +186,7 @@ public final class QuickStoneTask implements Task {
         // happened to pass, came back up, and started again - in the same hole.
         if (stagingTask == null && exposedStoneNearby(ctx)) {
             phase = Phase.MINE;
-            status = "stone is already exposed here; mining it before digging further";
+            status.set("lune.status.quick_stone.stone_already_exposed_here_mining_before");
         }
     }
 
@@ -190,63 +219,62 @@ public final class QuickStoneTask implements Task {
     public TaskStatus onTick(BotContext ctx) {
         if (stagingTask != null) {
             TaskStatus result = stagingTask.tick(ctx);
-            status = "moving to a stable stone start - " + stagingTask.status();
+            status.set("lune.status.quick_stone.moving_stable_stone_start", stagingTask.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
             stagingTask.stop(ctx);
             stagingTask = null;
             if (result == TaskStatus.FAILED) {
-                status = "could not reach stable ground for the stone stair";
+                status.set("lune.status.quick_stone.could_not_reach_stable_ground_stone");
                 return TaskStatus.FAILED;
             }
             returnPosition = ctx.player.blockPosition();
             attemptedStarts.add(returnPosition.asLong());
             beginDig(ctx);
-            status = "starting the stone stair from solid ground";
+            status.set("lune.status.quick_stone.starting_stone_stair_from_solid_ground");
             return TaskStatus.RUNNING;
         }
         if (relocationTask != null) {
             TaskStatus result = relocationTask.tick(ctx);
-            status = "moving to another stone start - " + relocationTask.status();
+            status.set("lune.status.quick_stone.moving_another_stone_start", relocationTask.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
             relocationTask.stop(ctx);
             relocationTask = null;
             if (result == TaskStatus.FAILED) {
-                status = "could not reach another stone start";
+                status.set("lune.status.quick_stone.could_not_reach_another_stone_start");
                 return checkDone(ctx);
             }
             returnPosition = ctx.player.blockPosition();
             attemptedStarts.add(returnPosition.asLong());
             diggerDone = false;
             diggerFailure = "";
+            diggerFailureKey = "";
             phase = Phase.DIG;
             beginDig(ctx);
-            status = "trying a fresh stone stair from solid ground";
+            status.set("lune.status.quick_stone.trying_fresh_stone_stair_from_solid");
             return TaskStatus.RUNNING;
         }
         if (returnTask != null) {
             TaskStatus result = returnTask.tick(ctx);
-            status = "returning to the stone start - " + returnTask.status();
+            status.set("lune.status.quick_stone.returning_stone_start_2", returnTask.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
             returnTask.stop(ctx);
             returnTask = null;
             if (result == TaskStatus.FAILED) {
-                status = "could not return to the stone start";
+                status.set("lune.status.quick_stone.could_not_return_stone_start");
                 return TaskStatus.FAILED;
             }
             if (hasEnough(ctx)) {
-                status = "returned to the stone start";
+                status.set("lune.status.quick_stone.returned_stone_start");
                 progressed = true;
                 return TaskStatus.SUCCESS;
             }
-            status = "returned to the stone start with only "
-                    + InventoryHelper.count(ctx.player, Items.COBBLESTONE) + "/" + needed
-                    + " cobblestone";
+            status.set("lune.status.quick_stone.returned_stone_start_with_only", InventoryHelper.count(ctx.player, Items.COBBLESTONE), needed);
             return TaskStatus.FAILED;
         }
         return switch (phase) {
@@ -258,12 +286,12 @@ public final class QuickStoneTask implements Task {
 
     private TaskStatus tickDig(BotContext ctx) {
         if (digger == null) {
-            status = "no stable ground nearby for the stone stair";
+            status.set("lune.status.quick_stone.no_stable_ground_nearby_stone_stair");
             return TaskStatus.FAILED;
         }
 
         TaskStatus result = digger.tick(ctx);
-        status = digger.status();
+        status.set(digger.statusLine());
         int newlyBroken = digger.drainMatchingBlocksBroken();
         gathered += newlyBroken;
 
@@ -275,6 +303,7 @@ public final class QuickStoneTask implements Task {
             diggerDone = true;
             if (result == TaskStatus.FAILED) {
                 diggerFailure = digger.status();
+                diggerFailureKey = digger.statusLine().key();
             }
         }
 
@@ -297,7 +326,7 @@ public final class QuickStoneTask implements Task {
 
         TaskStatus result = sweeper.tick(ctx);
         if (result == TaskStatus.RUNNING) {
-            status = sweeper.status();
+            status.set(sweeper.statusLine());
             return TaskStatus.RUNNING;
         }
 
@@ -317,7 +346,7 @@ public final class QuickStoneTask implements Task {
                 // Water and lava are the exception: the staircase deliberately stopped before the
                 // player entered the hazard. Mining the surrounding walls would discard that safety
                 // decision and can strand the player in the same flooded pocket.
-                if (diggerFailure.contains("water") || diggerFailure.contains("lava")) {
+                if (FLUID_REFUSALS.contains(diggerFailureKey)) {
                     return checkDone(ctx);
                 }
                 startMining(ctx);
@@ -329,7 +358,7 @@ public final class QuickStoneTask implements Task {
 
         // More stone still needed and the digger can keep going.
         phase = Phase.DIG;
-        status = digger.status();
+        status.set(digger.statusLine());
         return TaskStatus.RUNNING;
     }
 
@@ -350,7 +379,7 @@ public final class QuickStoneTask implements Task {
             return checkDone(ctx);
         }
         TaskStatus result = miner.tick(ctx);
-        status = "mining out the shaft - " + miner.status();
+        status.set("lune.status.quick_stone.mining_out_shaft", miner.statusLine());
         if (result == TaskStatus.RUNNING) {
             return TaskStatus.RUNNING;
         }
@@ -379,7 +408,7 @@ public final class QuickStoneTask implements Task {
         relocationAttempts++;
         relocationTask = new GotoTask(new Goals.Block(next), true, false);
         relocationTask.start(ctx);
-        status = "local stone pocket exhausted; relocating to another solid start";
+        status.set("lune.status.quick_stone.local_stone_pocket_exhausted_relocating");
         return true;
     }
 
@@ -394,15 +423,14 @@ public final class QuickStoneTask implements Task {
                     && !new Goals.Near(returnPosition, 2).isReached(ctx.player.blockPosition())) {
                 returnTask = new GotoTask(new Goals.Near(returnPosition, 2), true, false);
                 returnTask.start(ctx);
-                status = "returning to the stone start";
+                status.set("lune.status.quick_stone.returning_stone_start");
                 return TaskStatus.RUNNING;
             }
-            status = "mined " + cobble + " cobblestone";
+            status.set("lune.status.quick_stone.mined_cobblestone", cobble);
             progressed = true;
             return TaskStatus.SUCCESS;
         }
-        status = "only collected " + cobble + "/" + needed + " cobblestone"
-                + (diggerFailure.isEmpty() ? "" : " - " + diggerFailure);
+        status.set("lune.status.quick_stone.only_collected_cobblestone", cobble, needed, (diggerFailure.isEmpty() ? "" : " - " + diggerFailure));
         // A failed gathering attempt must hand the caller back a safe, reusable position. Without
         // this, a retry starts at the bottom of the old shaft, rotates its direction from there,
         // and digs a second hole before it has ever had a chance to try another surface route.
@@ -410,7 +438,7 @@ public final class QuickStoneTask implements Task {
                 && !new Goals.Near(returnPosition, 2).isReached(ctx.player.blockPosition())) {
             returnTask = new GotoTask(new Goals.Near(returnPosition, 2), true, false);
             returnTask.start(ctx);
-            status = "returning to the stone start before retrying - " + cobble + "/" + needed;
+            status.set("lune.status.quick_stone.returning_stone_start_before_retrying", cobble, needed);
             return TaskStatus.RUNNING;
         }
         return TaskStatus.FAILED;

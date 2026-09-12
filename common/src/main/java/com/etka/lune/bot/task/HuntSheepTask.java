@@ -9,4 +9,10 @@ public final class HuntSheepTask extends HuntMobTask {
     public HuntSheepTask(int wanted, KillOptions options) {
         super(EntityType.SHEEP, stack -> stack.is(ItemTags.WOOL), "wool", "Sheep", wanted, options);
     }
+
+    /** Sheep graze; grassland is where they are. */
+    @Override
+    protected com.etka.lune.bot.knowledge.Need roamNeed() {
+        return com.etka.lune.bot.knowledge.Need.FOOD;
+    }
 }

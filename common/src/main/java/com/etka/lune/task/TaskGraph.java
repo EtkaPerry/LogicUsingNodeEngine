@@ -1,5 +1,7 @@
 package com.etka.lune.task;
 
+import com.etka.lune.util.Lang;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,6 +18,18 @@ import java.util.Map;
 public final class TaskGraph {
 
     public String name = "New Task";
+    /**
+     * Which starter job this is, for the six the mod ships with. Null for anything the player made.
+     *
+     * <p>The name cannot do this job. It is the task's identity on disk, what other tasks point at
+     * from a Run Task card, and what {@code uniqueName} keeps distinct - so it has to stay the same
+     * string in every language. A seeded job still needs a title a Turkish player can read, and
+     * those are two different requirements wearing one field.</p>
+     *
+     * <p>So the id identifies and {@link #displayName()} reads. Rename a seeded job and this clears:
+     * it is your task then, and your name for it is the right one to show.</p>
+     */
+    public String seededId;
     public List<TaskNode> nodes = new ArrayList<>();
     /** Optional monitor node id active for every step in the task. */
     public String onWhile;
@@ -55,7 +69,21 @@ public final class TaskGraph {
         nodes.add(to, node);
     }
 
+    /**
+     * The title to put on screen - translated for a starter job, the player's own words otherwise.
+     *
+     * <p>Falls back to {@link #name} when there is no line for the id, so a job seeded by a version
+     * that knew about it still reads correctly after a downgrade.</p>
+     */
+    public String displayName() {
+        if (seededId == null || seededId.isBlank()) {
+            return name;
+        }
+        return Lang.getOr("lune.task.seeded." + seededId, name);
+    }
+
     public String describe() {
-        return name + "  (" + nodes.size() + (nodes.size() == 1 ? " step)" : " steps)");
+        return Lang.get(nodes.size() == 1 ? "lune.task.describe_step" : "lune.task.describe_steps",
+                displayName(), nodes.size());
     }
 }

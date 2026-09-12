@@ -1,5 +1,6 @@
 package com.etka.lune.bot.util;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.path.MovementHelper;
 import net.minecraft.core.BlockPos;
@@ -44,6 +45,21 @@ public final class BlockPlacer {
         NO_SUPPORT,
         BLOCKED,
         OUT_OF_REACH;
+
+        /** Human-readable result; name() remains the diagnostic identifier. */
+        public String displayName() {
+            return switch (this) {
+                case PLACED -> Lang.get("lune.placement.placed");
+                case ALREADY_PRESENT -> Lang.get("lune.placement.already_present");
+                case WAITING_FOR_AIM -> Lang.get("lune.placement.waiting_for_aim");
+                case WAITING_FOR_JUMP -> Lang.get("lune.placement.waiting_for_jump");
+                case CLICK_NOT_CONFIRMED -> Lang.get("lune.placement.click_not_confirmed");
+                case NO_MATERIAL -> Lang.get("lune.placement.no_material");
+                case NO_SUPPORT -> Lang.get("lune.placement.no_support");
+                case BLOCKED -> Lang.get("lune.placement.blocked");
+                case OUT_OF_REACH -> Lang.get("lune.placement.out_of_reach");
+            };
+        }
 
         public boolean isTransient() {
             return this == WAITING_FOR_AIM

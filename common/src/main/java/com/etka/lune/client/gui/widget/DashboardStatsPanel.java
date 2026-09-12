@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.widget;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.client.gui.LuneScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -114,7 +115,7 @@ public final class DashboardStatsPanel extends AbstractWidget {
     @Override
     protected void updateWidgetNarration(NarrationElementOutput output) {
         output.add(net.minecraft.client.gui.narration.NarratedElementType.TITLE,
-                Component.literal("Statistics"));
+                Component.literal(Lang.get("lune.gui.dashboard_stats.statistics")));
     }
 
     private static String fit(String value, int maxWidth) {

@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -50,7 +52,7 @@ public final class PillarUpTask implements Task {
     private BlockPos pendingTarget;
     private Block pendingMaterial;
     private String placementStrategy = PillarPolicy.DEFAULT;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public PillarUpTask(int maxHeight) {
         this.maxHeight = Math.max(1, maxHeight);
@@ -58,11 +60,17 @@ public final class PillarUpTask implements Task {
 
     @Override
     public String name() {
-        return "Pillar up";
+        return Lang.get("lune.task.pillar_up.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Pillar up");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -78,7 +86,7 @@ public final class PillarUpTask implements Task {
 
     @Override
     public TaskProgress progress() {
-        return new TaskProgress(gained(), maxHeight, "height blocks");
+        return new TaskProgress(gained(), maxHeight, Lang.get("lune.unit.height_blocks"));
     }
 
     @Override
@@ -132,27 +140,35 @@ public final class PillarUpTask implements Task {
                 // yet. Keep jumping and wait for the world/player state to agree before placing
                 // another step.
                 ctx.input.jump = true;
-                status = "waiting to rise onto the placed pillar block";
+                status.set("lune.status.pillar_up.waiting_rise_onto_placed_pillar_block");
                 return TaskStatus.RUNNING;
             }
         }
 
         int gained = gained();
         if (gained >= maxHeight) {
-            status = "climbed " + gained + " blocks";
+            status.set("lune.status.pillar_up.climbed_blocks", gained);
             return TaskStatus.SUCCESS;
         }
 
         // Jumping needs somewhere to jump into. Under a ceiling this can never work, so stop rather
         // than bounce against the rock until the timeout.
         if (!MovementHelper.isPassable(ctx.level, feet.above(2))) {
-            status = gained > 0 ? "climbed " + gained + " blocks, ceiling above" : "no room above to climb";
+            if (gained > 0) {
+                status.set("lune.status.pillar_up.climbed_blocks_ceiling_above", gained);
+            } else {
+                status.set("lune.status.pillar_up.no_room_above_climb");
+            }
             return gained > 0 ? TaskStatus.SUCCESS : TaskStatus.FAILED;
         }
 
         Block material = buildingMaterial(ctx);
         if (material == null) {
-            status = gained > 0 ? "climbed " + gained + " blocks, out of blocks" : "nothing to build with";
+            if (gained > 0) {
+                status.set("lune.status.pillar_up.climbed_blocks_out_blocks", gained);
+            } else {
+                status.set("lune.status.pillar_up.nothing_build_with");
+            }
             return gained > 0 ? TaskStatus.SUCCESS : TaskStatus.FAILED;
         }
 
@@ -175,7 +191,7 @@ public final class PillarUpTask implements Task {
         ctx.look.lookAt(ctx.player, Vec3.atCenterOf(pillarFrom.below()));
         double risen = ctx.player.getY() - pillarFrom.getY();
         if (ctx.player.onGround() || risen < PillarPolicy.clearance(placementStrategy)) {
-            status = "jumping to make room for the next pillar block";
+            status.set("lune.status.pillar_up.jumping_make_room_next_pillar_block");
             return TaskStatus.RUNNING;
         }
         feet = pillarFrom;
@@ -183,7 +199,11 @@ public final class PillarUpTask implements Task {
         // Counting the hop against it meant a slow jump could exhaust the budget before a single
         // placement had been tried.
         if (++placeTicks > PLACE_TIMEOUT_TICKS) {
-            status = gained > 0 ? "climbed " + gained + " blocks" : "could not place a block underfoot";
+            if (gained > 0) {
+                status.set("lune.status.pillar_up.climbed_blocks", gained);
+            } else {
+                status.set("lune.status.pillar_up.could_not_place_block_underfoot");
+            }
             return gained > 0 ? TaskStatus.SUCCESS : TaskStatus.FAILED;
         }
         BlockPlacer.PlacementResult placement = BlockPlacer.tryPlace(ctx, material, feet);
@@ -191,8 +211,11 @@ public final class PillarUpTask implements Task {
                 || placement == BlockPlacer.PlacementResult.NO_MATERIAL
                 || placement == BlockPlacer.PlacementResult.NO_SUPPORT
                 || placement == BlockPlacer.PlacementResult.OUT_OF_REACH) {
-            status = gained > 0 ? "climbed " + gained + " blocks; " + placement.name().toLowerCase()
-                    : "cannot place pillar block: " + placement.name().toLowerCase();
+            if (gained > 0) {
+                status.set("lune.status.pillar_up.climbed_blocks_3", gained, placement.displayName());
+            } else {
+                status.set("lune.status.pillar_up.cannot_place_pillar_block", placement.displayName());
+            }
             ctx.debug.decide("stop pillar: placement is not possible at " + feet.toShortString());
             return gained > 0 ? TaskStatus.SUCCESS : TaskStatus.FAILED;
         }
@@ -201,13 +224,16 @@ public final class PillarUpTask implements Task {
         pendingTarget = feet.immutable();
         pendingMaterial = material;
         if (placement.isTransient() && ++failedPlacementTicks > PLACE_TIMEOUT_TICKS) {
-            status = gained > 0 ? "climbed " + gained + " blocks; placement timed out"
-                    : "could not place a block underfoot";
+            if (gained > 0) {
+                status.set("lune.status.pillar_up.climbed_blocks_placement_timed_out", gained);
+            } else {
+                status.set("lune.status.pillar_up.could_not_place_block_underfoot");
+            }
             ctx.debug.decide("give up pillar: placement did not change after "
                     + PLACE_TIMEOUT_TICKS + " ticks");
             return gained > 0 ? TaskStatus.SUCCESS : TaskStatus.FAILED;
         }
-        status = "building a way out - " + gained + "/" + maxHeight;
+        status.set("lune.status.pillar_up.building_way_out", gained, maxHeight);
         return TaskStatus.RUNNING;
     }
 

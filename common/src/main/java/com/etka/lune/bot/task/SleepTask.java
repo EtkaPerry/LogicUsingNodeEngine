@@ -1,6 +1,8 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.catalog.FlowerCatalog;
@@ -86,7 +88,7 @@ public final class SleepTask implements Task {
     /** Wool held when the round counter last advanced, so productive rounds cost nothing. */
     private int woolAtLastRound;
     private final Set<Long> badBedSpots = new HashSet<>();
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public SleepTask(boolean waitForNight, boolean reclaim) {
         this(waitForNight, reclaim, DEFAULT_RADIUS);
@@ -100,11 +102,17 @@ public final class SleepTask implements Task {
 
     @Override
     public String name() {
-        return "Sleep";
+        return Lang.get("lune.task.sleep.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Sleep");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -124,7 +132,7 @@ public final class SleepTask implements Task {
         woolRounds = 0;
         woolAtLastRound = 0;
         badBedSpots.clear();
-        status = "checking for a bed";
+        status.set("lune.status.sleep.checking_bed");
     }
 
     @Override
@@ -140,7 +148,7 @@ public final class SleepTask implements Task {
 
         if (current != null) {
             TaskStatus result = current.tick(ctx);
-            status = currentLabel + " - " + current.status();
+            status.set("lune.status.detail", currentLabel, current.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
@@ -148,7 +156,7 @@ public final class SleepTask implements Task {
             current.stop(ctx);
             current = null;
             if (result == TaskStatus.FAILED && ++stepFailures >= MAX_STEP_FAILURES) {
-                status = "gave up making a bed: " + failedStatus;
+                status.set("lune.status.sleep.gave_up_making_bed", failedStatus);
                 ctx.debug.decide("bed steps kept failing; continuing without sleeping");
                 return TaskStatus.FAILED;
             }
@@ -161,14 +169,14 @@ public final class SleepTask implements Task {
 
         if (!canSleepNow(ctx)) {
             if (!waitForNight) {
-                status = "bed ready; it is not dark enough to sleep";
+                status.set("lune.status.sleep.bed_ready_not_dark_enough_sleep");
                 return TaskStatus.SUCCESS;
             }
             if (++waitTicks > MAX_WAIT_FOR_NIGHT_TICKS) {
-                status = "bed ready, but nightfall never came";
+                status.set("lune.status.sleep.bed_ready_but_nightfall_never_came");
                 return TaskStatus.SUCCESS;
             }
-            status = "bed ready, waiting for nightfall";
+            status.set("lune.status.sleep.bed_ready_waiting_nightfall");
             ctx.debug.intent = "waiting for it to get dark before using the bed";
             return TaskStatus.RUNNING;
         }
@@ -210,14 +218,14 @@ public final class SleepTask implements Task {
     private TaskStatus tickAsleep(BotContext ctx) {
         slept = true;
         ctx.input.reset();
-        status = "asleep (" + ctx.player.getSleepTimer() + " ticks)";
+        status.set("lune.status.sleep.asleep_ticks", ctx.player.getSleepTimer());
         ctx.debug.intent = "sleeping through the night";
         if (++sleepTicks > MAX_SLEEP_TICKS) {
             // Somebody else is keeping the night going. Standing up is better than lying in a bed
             // until the mission's own deadline runs out.
             ctx.player.connection.send(new ServerboundPlayerCommandPacket(
                     ctx.player, ServerboundPlayerCommandPacket.Action.STOP_SLEEPING));
-            status = "the night did not pass; leaving the bed";
+            status.set("lune.status.sleep.night_did_not_pass_leaving_bed");
             ctx.debug.decide("night is not passing; get up and carry on");
         }
         return TaskStatus.RUNNING;
@@ -234,17 +242,17 @@ public final class SleepTask implements Task {
         if (bedPos == null) {
             BlockPos spot = findBedSpot(ctx);
             if (spot == null) {
-                status = "nowhere flat enough to put a bed";
+                status.set("lune.status.sleep.nowhere_flat_enough_put_bed");
                 ctx.debug.decide("no two-block clearing for the bed; continuing without sleeping");
                 return TaskStatus.FAILED;
             }
             Block block = carriedBedBlock(ctx);
             if (block == null) {
-                status = "the bed is no longer in the inventory";
+                status.set("lune.status.sleep.bed_no_longer_inventory");
                 return TaskStatus.FAILED;
             }
             BlockPlacer.PlacementResult placement = BlockPlacer.tryPlace(ctx, block, spot);
-            status = "placing the bed - " + placement.name().toLowerCase();
+            status.set("lune.status.sleep.placing_bed", placement.displayName());
             ctx.debug.intent = "placing a bed to sleep in";
             if (placement == BlockPlacer.PlacementResult.PLACED
                     || placement == BlockPlacer.PlacementResult.ALREADY_PRESENT) {
@@ -264,12 +272,12 @@ public final class SleepTask implements Task {
 
         if (clickCooldown > 0) {
             clickCooldown--;
-            status = "waiting for the bed to accept";
+            status.set("lune.status.sleep.waiting_bed_accept");
             return TaskStatus.RUNNING;
         }
 
         if (sleepAttempts >= MAX_SLEEP_ATTEMPTS) {
-            status = "the bed refused (" + describeSleepRefusal(ctx) + ")";
+            status.set("lune.status.sleep.bed_refused", describeSleepRefusal(ctx));
             ctx.debug.decide("bed refused repeatedly; continuing without sleeping");
             return TaskStatus.FAILED;
         }
@@ -278,9 +286,9 @@ public final class SleepTask implements Task {
         if (BlockPlacer.use(ctx, bedPos)) {
             sleepAttempts++;
             clickCooldown = SLEEP_CLICK_INTERVAL;
-            status = "getting into the bed (attempt " + sleepAttempts + ")";
+            status.set("lune.status.sleep.getting_into_bed_attempt", sleepAttempts);
         } else {
-            status = "walking into reach of the bed";
+            status.set("lune.status.sleep.walking_into_reach_bed");
             approachBed(ctx);
         }
         return TaskStatus.RUNNING;
@@ -291,34 +299,34 @@ public final class SleepTask implements Task {
         AABB area = new AABB(bedPos).inflate(8.0, 5.0, 8.0);
         for (Entity entity : ctx.level.getEntities(ctx.player, area,
                 entity -> entity instanceof net.minecraft.world.entity.monster.Enemy && entity.isAlive())) {
-            return "monsters nearby: " + entity.getType().getDescription().getString();
+            return Lang.get("lune.status.sleep.monsters_nearby", entity.getType().getDescription().getString());
         }
-        return "obstructed or too far away";
+        return Lang.get("lune.status.sleep.obstructed_or_too_far_away");
     }
 
     private void approachBed(BotContext ctx) {
         if (current == null) {
             current = new GotoTask(new com.etka.lune.bot.path.Goals.Near(bedPos, 2), false, false);
-            currentLabel = "walking to the bed";
+            currentLabel = Lang.get("lune.status.sleep.walking_to_bed");
             current.start(ctx);
         }
     }
 
     private TaskStatus finish(BotContext ctx) {
         if (!reclaim || bedPos == null || !isOurBed(ctx, bedPos)) {
-            status = describeNightOutcome(ctx);
+            status.set(describeNightOutcomeKey(ctx));
             return TaskStatus.SUCCESS;
         }
         if (current == null) {
             // Taking the bed with it is what makes this worth doing once rather than every night.
             current = new MineTask(Set.of(bedBlock), 8, ctx.level.getMinY(), ctx.level.getMaxY(),
                     1, false, false);
-            currentLabel = "picking the bed back up";
+            currentLabel = Lang.get("lune.status.sleep.picking_bed_up");
             current.start(ctx);
             return TaskStatus.RUNNING;
         }
         TaskStatus result = current.tick(ctx);
-        status = currentLabel + " - " + current.status();
+        status.set("lune.status.detail", currentLabel, current.statusLine());
         if (result == TaskStatus.RUNNING) {
             return TaskStatus.RUNNING;
         }
@@ -326,7 +334,7 @@ public final class SleepTask implements Task {
         current = null;
         bedPos = null;
         // Whether or not the bed came back, the night is what this was about.
-        status = describeNightOutcome(ctx);
+        status.set(describeNightOutcomeKey(ctx));
         return TaskStatus.SUCCESS;
     }
 
@@ -337,8 +345,9 @@ public final class SleepTask implements Task {
      * bot lies there, gives up, and stands in exactly the darkness it went to bed to avoid - and a
      * journal that reports that as "slept through the night" is worse than no journal.
      */
-    private String describeNightOutcome(BotContext ctx) {
-        return canSleepNow(ctx) ? "left the bed; the night did not pass" : "slept through the night";
+    private String describeNightOutcomeKey(BotContext ctx) {
+        return canSleepNow(ctx) ? "lune.status.sleep.night_did_not_pass"
+                : "lune.status.sleep.slept_through";
     }
 
     // --- getting a bed ----------------------------------------------------------------------
@@ -364,18 +373,18 @@ public final class SleepTask implements Task {
                     woolRounds = 0;
                 }
                 if (++woolRounds > MAX_WOOL_ROUNDS) {
-                    status = "the flock did not yield three wool";
+                    status.set("lune.status.sleep.flock_did_not_yield_three_wool");
                     return TaskStatus.FAILED;
                 }
                 // Drops first, and deliberately before looking for more sheep: a sheep that has
                 // just been killed is no longer a visible sheep, so checking the flock first would
                 // walk away from the wool it just dropped.
                 if (LootTask.hasDropsNearby(ctx, LOOT_RADIUS)) {
-                    return start(ctx, new LootTask(LOOT_RADIUS), "collecting wool");
+                    return start(ctx, new LootTask(LOOT_RADIUS), "lune.status.sleep.collecting_wool");
                 }
                 int sheep = visibleSheep(ctx);
                 if (sheep <= 0) {
-                    status = "no sheep in sight for a bed";
+                    status.set("lune.status.sleep.no_sheep_sight_bed");
                     ctx.debug.decide("no visible sheep; a bed is not available here");
                     return TaskStatus.FAILED;
                 }
@@ -384,7 +393,7 @@ public final class SleepTask implements Task {
                 // Kill rather than roam: the whole point of this diversion is that the animals are
                 // already in front of the bot, and a roaming hunt would walk eighty blocks first.
                 return start(ctx, new KillTask(Set.of(EntityType.SHEEP), SHEEP_VIEW_RADIUS,
-                        KillOptions.basic()), "taking wool from the flock");
+                        KillOptions.basic()), Lang.get("lune.status.sleep.taking_wool_from_flock"));
             }
             case NO_MATCHING_DYE -> {
                 // Three wool of three colours with no flowers is not a dead end while there are
@@ -394,16 +403,16 @@ public final class SleepTask implements Task {
                     woolRounds++;
                     ctx.debug.decide("colours do not match and nothing to dye with; take another fleece");
                     return start(ctx, new KillTask(Set.of(EntityType.SHEEP), SHEEP_VIEW_RADIUS,
-                            KillOptions.basic()), "taking another fleece to find a matching colour");
+                            KillOptions.basic()), Lang.get("lune.status.sleep.taking_another_fleece_find_matching"));
                 }
-                status = "wool colours do not match and no usable flower is in reach";
+                status.set("lune.status.sleep.wool_colours_do_not_match_no_usable");
                 ctx.debug.decide("mismatched wool with no dye source; continuing without a bed");
                 return TaskStatus.FAILED;
             }
             case DYE -> {
                 DyeColor colour = FlowerCatalog.colourByName(plan.colour());
                 if (colour == null) {
-                    status = "unknown wool colour " + plan.colour();
+                    status.set("lune.status.sleep.unknown_wool_colour", plan.colour());
                     return TaskStatus.FAILED;
                 }
                 return startDyeStep(ctx, colour, plan.woolToDye());
@@ -420,7 +429,7 @@ public final class SleepTask implements Task {
             ctx.debug.decide("dye " + woolToDye + " wool " + colour.getSerializedName());
             return start(ctx, CraftTask.matching(stack -> FlowerCatalog.isWool(stack, colour),
                             colour.getSerializedName() + " wool", BedPolicy.WOOL_PER_BED, false),
-                    "dyeing wool " + colour.getSerializedName());
+                    Lang.get("lune.status.sleep.dyeing_wool", colour.getSerializedName()));
         }
 
         Set<Block> flowers = FlowerCatalog.flowersFor(colour);
@@ -437,7 +446,7 @@ public final class SleepTask implements Task {
         int wanted = BedPolicy.flowersNeeded(woolToDye - carriedDye, 1);
         ctx.debug.decide("pick " + wanted + " flowers for " + colour.getSerializedName() + " dye");
         return start(ctx, new MineTask(flowers, radius, ctx.level.getMinY(), ctx.level.getMaxY(),
-                wanted, false, false), "picking flowers");
+                wanted, false, false), Lang.get("lune.status.sleep.picking_flowers"));
     }
 
     private TaskStatus startCraftStep(BotContext ctx) {
@@ -447,22 +456,24 @@ public final class SleepTask implements Task {
         if (planks < BedPolicy.PLANKS_PER_BED) {
             ctx.debug.decide("make planks for the bed");
             return start(ctx, CraftTask.ofTag(ItemTags.PLANKS, "planks", planksWanted, false),
-                    "making planks");
+                    Lang.get("lune.status.sleep.making_planks"));
         }
         if (!carriesTable && planks >= BedPolicy.PLANKS_PER_BED + PLANKS_PER_TABLE
                 && !CraftTask.tableInReach(ctx, 6)) {
             ctx.debug.decide("make a crafting table for the bed");
-            return start(ctx, CraftTask.of(Items.CRAFTING_TABLE, 1, false), "making a crafting table");
+            return start(ctx, CraftTask.of(Items.CRAFTING_TABLE, 1, false),
+                    "lune.status.sleep.making_crafting_table");
         }
         ctx.debug.decide("craft the bed");
-        return start(ctx, CraftTask.ofTag(ItemTags.BEDS, "bed", 1, true), "crafting the bed");
+        return start(ctx, CraftTask.ofTag(ItemTags.BEDS, "bed", 1, true),
+                "lune.status.sleep.crafting_bed");
     }
 
-    private TaskStatus start(BotContext ctx, Task task, String label) {
+    private TaskStatus start(BotContext ctx, Task task, String key, Object... args) {
         current = task;
-        currentLabel = label;
+        currentLabel = Lang.get(key, args);
         current.start(ctx);
-        status = label;
+        status.set(key, args);
         return TaskStatus.RUNNING;
     }
 

@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -35,7 +37,7 @@ public final class BridgeTask implements Task {
     private int placed;
     private int placementWaitTicks;
     private GotoTask stepForward;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public BridgeTask(String directionChoice, int length, Set<Block> materials) {
         this.directionChoice = directionChoice;
@@ -45,17 +47,23 @@ public final class BridgeTask implements Task {
 
     @Override
     public String name() {
-        return "Bridge";
+        return Lang.get("lune.task.bridge.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Bridge");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
     @Override
     public TaskProgress progress() {
-        return new TaskProgress(placed, length, "blocks");
+        return new TaskProgress(placed, length, Lang.get("lune.card.blocks_unit"));
     }
 
     @Override
@@ -83,12 +91,12 @@ public final class BridgeTask implements Task {
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (materials.isEmpty()) {
-            status = "no bridge blocks selected";
+            status.set("lune.status.bridge.no_bridge_blocks_selected");
             return TaskStatus.FAILED;
         }
 
         if (placed >= length) {
-            status = "bridged " + placed + " blocks";
+            status.set("lune.status.bridge.bridged_blocks", placed);
             return TaskStatus.SUCCESS;
         }
 
@@ -99,12 +107,12 @@ public final class BridgeTask implements Task {
             ctx.debug.placement(nextFloor, materials.isEmpty() ? "-"
                     : materials.iterator().next().getName().getString(), "bridge floor target");
             if (!hasMaterial(ctx)) {
-                status = "no bridge blocks in inventory";
+                status.set("lune.status.bridge.no_bridge_blocks_inventory");
                 ctx.debug.placement(nextFloor, "-", "no bridge material in inventory");
                 return TaskStatus.FAILED;
             }
             if (!BlockPlacer.canPlaceAt(ctx, nextFloor)) {
-                status = "nowhere to place the next block";
+                status.set("lune.status.bridge.nowhere_place_next_block");
                 ctx.debug.placement(nextFloor, "bridge block", "no support or placement space");
                 return TaskStatus.FAILED;
             }
@@ -112,14 +120,13 @@ public final class BridgeTask implements Task {
             if (placement == BlockPlacer.PlacementResult.PLACED
                     || placement == BlockPlacer.PlacementResult.ALREADY_PRESENT) {
                 placementWaitTicks = 0;
-                status = "placed block " + (placed + 1) + "/" + length;
+                status.set("lune.status.bridge.placed_block", (placed + 1), length);
             } else if (!placement.isTransient() || ++placementWaitTicks > 12) {
-                status = "could not place bridge block at " + nextFloor.toShortString()
-                        + " (" + placement.name().toLowerCase() + ")";
+                status.set("lune.status.bridge.could_not_place_bridge_block", nextFloor.toShortString(), placement.displayName());
                 ctx.debug.decide("stop bridge: placement failed at " + nextFloor.toShortString());
                 return TaskStatus.FAILED;
             } else {
-                status = "placing block " + (placed + 1) + "/" + length;
+                status.set("lune.status.bridge.placing_block", (placed + 1), length);
             }
             return TaskStatus.RUNNING;
         }
@@ -139,7 +146,7 @@ public final class BridgeTask implements Task {
             return TaskStatus.RUNNING;
         }
 
-        return walkTo(ctx, nextFeet, "crossing " + (placed + 1) + "/" + length);
+        return walkTo(ctx, nextFeet, "lune.status.bridge.crossing_n_of_n", placed + 1, length);
     }
 
     private boolean hasMaterial(BotContext ctx) {
@@ -166,17 +173,18 @@ public final class BridgeTask implements Task {
         return last;
     }
 
-    private TaskStatus walkTo(BotContext ctx, BlockPos target, String what) {
+    private TaskStatus walkTo(BotContext ctx, BlockPos target, String key,
+                              Object... args) {
         if (stepForward == null) {
             stepForward = new GotoTask(new Goals.Block(target), false, false);
             stepForward.start(ctx);
         }
         TaskStatus result = stepForward.tick(ctx);
         if (result == TaskStatus.FAILED) {
-            status = "couldn't step onto the bridge";
+            status.set("lune.status.bridge.couldnt_step_onto_bridge");
             return TaskStatus.FAILED;
         }
-        status = what;
+        status.set(key, args);
         return TaskStatus.RUNNING;
     }
 

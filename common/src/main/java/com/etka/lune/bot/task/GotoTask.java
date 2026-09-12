@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -109,7 +111,7 @@ public final class GotoTask implements Task {
     private int goalNoProgressTicks;
     /** Ticks since the bot was last closer to the goal than it had ever been. */
     private int ticksSinceClosest;
-    private String status = "";
+    private final StatusText status = new StatusText();
     /** Search-effort tactic learned across every movement caller. */
     private String routeStrategy = MovementPolicy.DEFAULT;
 
@@ -154,11 +156,17 @@ public final class GotoTask implements Task {
 
     @Override
     public String name() {
-        return "Go to " + goal.describe();
+        return Lang.get("lune.task.goto.name", goal.describe());
+    }
+
+    /** English on purpose: this is the learner's row key, and is never shown. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Go to " + goal.describe());
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -204,8 +212,11 @@ public final class GotoTask implements Task {
         boolean goalStalled = !goal.isReached(feet) && updateGoalProgress(feet);
         ctx.debug.goalNoProgressTicks = goalNoProgressTicks;
         if (goalStalled) {
-            status = ticksSinceClosest >= MAX_TICKS_WITHOUT_CLOSING
-                    ? "moving but never getting closer" : "goal made no progress";
+            if (ticksSinceClosest >= MAX_TICKS_WITHOUT_CLOSING) {
+                status.set("lune.status.goto.moving_but_never_getting_closer");
+            } else {
+                status.set("lune.status.goto.goal_made_no_progress");
+            }
             ctx.debug.giveUp = goalLimits();
             ctx.debug.lastEvent = "goal stalled for " + goalNoProgressTicks + " ticks";
             ctx.debug.decide("give up: goal-level movement watchdog reached");
@@ -270,7 +281,7 @@ public final class GotoTask implements Task {
                 if (tryCeilingBreak(ctx, feet) || tryClimbOut(ctx, feet)) {
                     return TaskStatus.RUNNING;
                 }
-                status = "no route found";
+                status.set("lune.status.goto.no_route_found");
                 ctx.debug.decide("give up: route search budget exhausted");
                 return TaskStatus.FAILED;
             }
@@ -283,7 +294,7 @@ public final class GotoTask implements Task {
                     return TaskStatus.RUNNING;
                 }
                 // Wait for the next attempt instead of dereferencing a route we don't have.
-                status = "looking for a route";
+                status.set("lune.status.goto.looking_route");
                 ctx.debug.decide("no movable path yet; attempting recovery if possible");
                 return TaskStatus.RUNNING;
             }
@@ -310,7 +321,7 @@ public final class GotoTask implements Task {
 
         switch (result) {
             case RUNNING -> {
-                status = executor.remainingNodes() + " blocks left";
+                status.set("lune.status.goto.blocks_left", executor.remainingNodes());
                 return TaskStatus.RUNNING;
             }
             case DONE -> {
@@ -321,28 +332,28 @@ public final class GotoTask implements Task {
                 }
                 // End of a partial path - keep going from here.
                 if (!repath(ctx, MovementHelper.feetPosition(ctx.player))) {
-                    status = "no route found";
+                    status.set("lune.status.goto.no_route_found");
                     return TaskStatus.FAILED;
                 }
                 return TaskStatus.RUNNING;
             }
             case NO_TOOL -> {
                 // No amount of re-routing fixes a missing pickaxe; say so instead of thrashing.
-                status = MineTask.NO_TOOL_PREFIX + " to break " + executor.getBlockedBy();
+                status.set("lune.status.goto.break", executor.getBlockedBy());
                 return TaskStatus.FAILED;
             }
             case REPLAN -> {
-                status = executor.getBlockedBy();
+                status.set(executor.getBlockedBy());
                 executor.stop(ctx);
                 executor = null;
                 if (!repath(ctx, MovementHelper.feetPosition(ctx.player))) {
-                    status = "fluid changed and no safe route remains";
+                    status.set("lune.status.goto.fluid_changed_no_safe_route_remains");
                     return TaskStatus.FAILED;
                 }
                 return TaskStatus.RUNNING;
             }
             case HAZARD -> {
-                status = executor.getBlockedBy();
+                status.set(executor.getBlockedBy());
                 return TaskStatus.FAILED;
             }
             case STUCK -> {
@@ -368,7 +379,7 @@ public final class GotoTask implements Task {
                     escalateToDigging = true;
                 }
                 if (consecutiveStucks >= MAX_STUCKS) {
-                    status = "stuck and can't recover";
+                    status.set("lune.status.goto.stuck_cant_recover");
                     ctx.debug.decide("give up: stall limit reached");
                     return TaskStatus.FAILED;
                 }
@@ -378,10 +389,10 @@ public final class GotoTask implements Task {
                 executor.stop(ctx);
                 executor = null;
                 if (!repath(ctx, MovementHelper.feetPosition(ctx.player))) {
-                    status = "stuck and no walking route remains";
+                    status.set("lune.status.goto.stuck_no_walking_route_remains");
                     return TaskStatus.FAILED;
                 }
-                status = "replanning after movement stalled";
+                status.set("lune.status.goto.replanning_after_movement_stalled");
                 return TaskStatus.RUNNING;
             }
         }
@@ -470,7 +481,7 @@ public final class GotoTask implements Task {
         }
         climb = new PillarUpTask(Math.min(CLIMB_STEP, MAX_CLIMB_BLOCKS - climbedBlocks));
         climb.start(ctx);
-        status = "walled in - building a way out";
+        status.set("lune.status.goto.walled_building_way_out");
         return true;
     }
 
@@ -515,7 +526,7 @@ public final class GotoTask implements Task {
         ceilingBreak = new CeilingBreakTask(Math.min(MAX_CEILING_BLOCKS,
                 MAX_CLIMB_BLOCKS - climbedBlocks));
         ceilingBreak.start(ctx);
-        status = "walled in - clearing " + blockName(ctx, target);
+        status.set("lune.status.goto.walled_clearing", blockName(ctx, target));
         return true;
     }
 
@@ -532,7 +543,7 @@ public final class GotoTask implements Task {
     /** Ticks the direct ceiling recovery, then reconnects the normal route. */
     private TaskStatus tickCeilingBreak(BotContext ctx) {
         TaskStatus result = ceilingBreak.tick(ctx);
-        status = ceilingBreak.status();
+        status.set(ceilingBreak.statusLine());
         if (result == TaskStatus.RUNNING) {
             return TaskStatus.RUNNING;
         }
@@ -545,10 +556,10 @@ public final class GotoTask implements Task {
             ctx.debug.decide("ceiling recovery failed; retry " + failedPaths + "/"
                     + MAX_FAILED_PATHS);
             if (failedPaths >= MAX_FAILED_PATHS) {
-                status = "could not clear the ceiling";
+                status.set("lune.status.goto.could_not_clear_ceiling");
                 return TaskStatus.FAILED;
             }
-            status = "ceiling recovery made no progress";
+            status.set("lune.status.goto.ceiling_recovery_made_no_progress");
             return TaskStatus.RUNNING;
         }
 
@@ -566,17 +577,17 @@ public final class GotoTask implements Task {
             if (tryCeilingBreak(ctx, feet) || tryClimbOut(ctx, feet)) {
                 return TaskStatus.RUNNING;
             }
-            status = "no route after clearing the ceiling";
+            status.set("lune.status.goto.no_route_after_clearing_ceiling");
             return TaskStatus.FAILED;
         }
-        status = "replanning after clearing the ceiling";
+        status.set("lune.status.goto.replanning_after_clearing_ceiling");
         return TaskStatus.RUNNING;
     }
 
     /** Ticks an active climb and repaths from the higher ground if it gained any. */
     private TaskStatus tickClimb(BotContext ctx) {
         TaskStatus result = climb.tick(ctx);
-        status = climb.status();
+        status.set(climb.statusLine());
         if (result == TaskStatus.RUNNING) {
             return TaskStatus.RUNNING;
         }
@@ -596,10 +607,10 @@ public final class GotoTask implements Task {
             ctx.debug.decide("climb recovery made no progress; retry " + failedPaths + "/"
                     + MAX_FAILED_PATHS);
             if (failedPaths >= MAX_FAILED_PATHS) {
-                status = "could not climb out";
+                status.set("lune.status.goto.could_not_climb_out");
                 return TaskStatus.FAILED;
             }
-            status = "climb recovery made no progress";
+            status.set("lune.status.goto.climb_recovery_made_no_progress");
             return TaskStatus.RUNNING;
         }
 
@@ -617,7 +628,7 @@ public final class GotoTask implements Task {
             if (tryCeilingBreak(ctx, feet) || tryClimbOut(ctx, feet)) {
                 return TaskStatus.RUNNING;
             }
-            status = "no route after climbing out";
+            status.set("lune.status.goto.no_route_after_climbing_out");
             return TaskStatus.FAILED;
         }
         return TaskStatus.RUNNING;
@@ -626,7 +637,7 @@ public final class GotoTask implements Task {
     /** Ticks an active one-step bridge and repaths if it succeeds. */
     private TaskStatus tickBridge(BotContext ctx) {
         TaskStatus result = bridge.tick(ctx);
-        status = "bridging - " + bridge.status();
+        status.set("lune.status.goto.bridging", bridge.statusLine());
         if (result == TaskStatus.RUNNING) {
             return TaskStatus.RUNNING;
         }
@@ -635,7 +646,7 @@ public final class GotoTask implements Task {
         bridge = null;
 
         if (result == TaskStatus.FAILED) {
-            status = "bridge failed";
+            status.set("lune.status.goto.bridge_failed");
             return TaskStatus.FAILED;
         }
 
@@ -647,7 +658,7 @@ public final class GotoTask implements Task {
             executor = null;
         }
         if (!repath(ctx, MovementHelper.feetPosition(ctx.player))) {
-            status = "no route after bridge";
+            status.set("lune.status.goto.no_route_after_bridge");
             return TaskStatus.FAILED;
         }
         return TaskStatus.RUNNING;
@@ -672,15 +683,15 @@ public final class GotoTask implements Task {
                 executor = null;
             }
             if (!repath(ctx, MovementHelper.feetPosition(ctx.player))) {
-                status = "reached air but no route remains";
+                status.set("lune.status.goto.reached_air_but_no_route_remains");
                 return TaskStatus.FAILED;
             }
-            status = "replanning after reaching air";
+            status.set("lune.status.goto.replanning_after_reaching_air");
             return TaskStatus.RUNNING;
         }
 
         if (waterRecoveryTicks++ >= WATER_RECOVERY_TIMEOUT_TICKS) {
-            status = "couldn't reach breathable air";
+            status.set("lune.status.goto.couldnt_reach_breathable_air");
             ctx.debug.lastEvent = "water escape timed out";
             ctx.debug.decide("give up: water escape timed out");
             return TaskStatus.FAILED;
@@ -694,7 +705,7 @@ public final class GotoTask implements Task {
         // fight the current and remain underwater even when an upward path exists.
         ctx.input.reset();
         WaterEscape.tickToAir(ctx);
-        status = "swimming to breathable air";
+        status.set("lune.status.goto.swimming_breathable_air");
         return TaskStatus.RUNNING;
     }
 

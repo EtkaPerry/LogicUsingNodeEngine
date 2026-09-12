@@ -1,5 +1,6 @@
 package com.etka.lune.bot.knowledge;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotContext;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -202,46 +203,46 @@ public final class OreKnowledge {
         // Diamond / redstone - peak right above bedrock.
         put("Diamond", Set.of(Blocks.DIAMOND_ORE, Blocks.DEEPSLATE_DIAMOND_ORE), -59, -64, 16,
                 Optional.empty(), Optional.empty(), false,
-                "Concentration rises towards bedrock; strip mine at -59.");
+                "lune.ore.concentration_rises_towards_bedrock");
 
         put("Redstone", Set.of(Blocks.REDSTONE_ORE, Blocks.DEEPSLATE_REDSTONE_ORE), -59, -64, 16,
                 Optional.empty(), Optional.empty(), false,
-                "Same distribution curve as diamond.");
+                "lune.ore.same_distribution_curve_as_diamond");
 
         // Iron - two bands: underground and exposed mountain tops.
         put("Iron", Set.of(Blocks.IRON_ORE, Blocks.DEEPSLATE_IRON_ORE), 16, -64, 64,
                 Optional.empty(), Optional.empty(), false,
-                "Best underground strip-mining level is Y=16. Massive mountains also expose it near Y=232.");
+                "lune.ore.best_underground_strip_mining_level_y_16");
 
         // Gold - underground peak; badlands are handled via a separate high-altitude profile.
         put("Gold", Set.of(Blocks.GOLD_ORE, Blocks.DEEPSLATE_GOLD_ORE), -16, -64, 32,
                 Optional.empty(), Optional.empty(), false,
-                "Peak concentration underground.");
+                "lune.ore.peak_concentration_underground");
 
         // Lapis - strictly strip-mined, best not exposed.
         put("Lapis", Set.of(Blocks.LAPIS_ORE, Blocks.DEEPSLATE_LAPIS_ORE), 0, -64, 64,
                 Optional.empty(), Optional.empty(), false,
-                "Generates best when not exposed to air.");
+                "lune.ore.generates_best_when_exposed_air");
 
         // Copper - best at Y=48 and larger in Dripstone Caves.
         put("Copper", Set.of(Blocks.COPPER_ORE, Blocks.DEEPSLATE_COPPER_ORE), 48, -16, 112,
                 Optional.empty(), Optional.empty(), false,
-                "Y=48 is the main band; veins are larger in Dripstone Caves.");
+                "lune.ore.y_48_main_band_veins_larger_dripstone");
 
         // Coal - peaks in hills.
         put("Coal", Set.of(Blocks.COAL_ORE, Blocks.DEEPSLATE_COAL_ORE), 96, 0, 136,
                 Optional.empty(), Optional.empty(), false,
-                "Does not spawn below Y=0; best in hills and mountains.");
+                "lune.ore.does_spawn_below_y_0_best_hills");
 
         // Emerald - only mountain/windswept biomes.
         put("Emerald", Set.of(Blocks.EMERALD_ORE, Blocks.DEEPSLATE_EMERALD_ORE), 232, 200, 320,
                 Optional.empty(), Optional.empty(), false,
-                "Only found in mountain or windswept hills biomes.");
+                "lune.ore.only_found_mountain_or_windswept_hills");
 
         // Ancient Debris / Netherite - only the Nether.
         put("Netherite", Set.of(Blocks.ANCIENT_DEBRIS), 15, 8, 119,
                 Optional.empty(), Optional.of("minecraft:the_nether"), false,
-                "Found only in the Nether; beds or TNT help expose it.");
+                "lune.ore.found_only_nether_beds_or_tnt_help");
     }
 
     private static void put(String name, Set<Block> blocks, int bestY, int yMin, int yMax,

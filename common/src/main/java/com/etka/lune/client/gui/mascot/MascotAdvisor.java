@@ -1,6 +1,7 @@
 package com.etka.lune.client.gui.mascot;
 
 import com.etka.lune.bot.BotEngine;
+import com.etka.lune.bot.StatusSignal;
 import com.etka.lune.bot.LoopWatch;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.catalog.ToolCatalog;
@@ -8,6 +9,7 @@ import com.etka.lune.bot.knowledge.BiomeKnowledge;
 import com.etka.lune.bot.knowledge.Need;
 import com.etka.lune.bot.task.TaskRunner;
 import com.etka.lune.bot.util.InventoryHelper;
+import com.etka.lune.bot.util.WorldClock;
 import com.etka.lune.task.TaskGraph;
 import com.etka.lune.task.TaskWiring;
 import com.etka.lune.task.TaskNode;
@@ -15,7 +17,11 @@ import com.etka.lune.task.TaskSafety;
 import com.etka.lune.task.TaskSuggestion;
 import com.etka.lune.task.TaskStore;
 import com.etka.lune.config.BotConfig;
+import com.etka.lune.util.Lang;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.effect.MobEffectCategory;
+import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -42,29 +48,65 @@ public final class MascotAdvisor {
     private static final int NEXT_SUGGESTION_COOLDOWN_TICKS = 240;
     private static final int BLOCKED_CONFIRM_TICKS = 20;
     private static final int WAITING_CONFIRM_TICKS = 8;
+    /** Below this she cannot sprint, which is the point it starts costing the run something. */
+    private static final int HUNGRY_FOOD_LEVEL = 6;
+    /** Blocks per tick before a swim counts as going somewhere rather than treading water. */
+    private static final double WATER_CLIMB_SPEED = 0.02;
     private static final Set<String> DISMISSED_THIS_SESSION = new HashSet<>();
     private static int MEMORY_GENERATION;
 
+    /**
+     * Every face Lune has. One row of the soul atlas each, in the order {@link SoulAnimation}
+     * fixes.
+     *
+     * <p>{@link #QUIET} is Lune muted - the speech setting, or a dismissal she has taken to heart.
+     * {@link #RESTING} is the bot actually asleep in a bed. They look alike on purpose and mean
+     * entirely different things, so they are never merged.</p>
+     */
     public enum Mood {
         IDLE,
         WORKING,
-        WAITING,
-        BLOCKED,
-        DANGER,
-        SUCCESS,
-        INVENTORY_FULL,
-        MISSING_MATERIALS,
-        PAUSED,
         THINKING,
         ASKING,
-        SLEEPING
+        QUIET,
+        RESTING,
+        PAUSED,
+        WAITING,
+        LOADING,
+        SEARCH,
+        TRAVEL,
+        BRIDGING,
+        PILLARING,
+        STAIRS,
+        FRAMING,
+        DIVING,
+        SWIMMING,
+        ASCENDING,
+        LEARNING,
+        STALLED,
+        BLOCKED,
+        DANGER,
+        FIGHT,
+        FLEE,
+        HURT,
+        RECOVERING,
+        EFFECT,
+        HUNGRY,
+        DEAD,
+        SUCCESS,
+        INVENTORY_FULL,
+        MISSING_MATERIALS
     }
 
     public enum Surface {
         MAIN,
         TASKS,
         WAYPOINTS,
-        CONFIG
+        CONFIG,
+        /** The terms, the license and the credits. Nothing here is hers to advise on. */
+        ABOUT,
+        /** A training puzzle is open. Lune watches and offers, but never answers. */
+        TRAINING
     }
 
     private Pending candidate;
@@ -92,6 +134,8 @@ public final class MascotAdvisor {
     private String liveDetail = "";
     private int blockedTicks;
     private int waitingTicks;
+    /** What Lune says while a puzzle is open; the Task tab owns the timing behind it. */
+    private String trainingLine = "";
 
     private record Pending(String key, TaskGraph task, TaskSuggestion taskSuggestion) {
         boolean isSafety() {
@@ -102,33 +146,39 @@ public final class MascotAdvisor {
     private record UndoRecord(TaskGraph task, TaskGraph snapshot, String changedFingerprint) {}
 
     public enum Dismissal {
-        NOT_NOW("Not now", "Naps and retries shortly."),
-        NEXT_TIME("Remind me next time I see you",
-                "Appears after closing and reopening the interface."),
-        NEVER_TYPE("Don't ask again", "Permanently mutes that suggestion type."),
-        THIS_TASK("Not for this task", "Mutes it only for the selected task."),
-        LATER("Remind me later", "Retries after three minutes.");
+        NOT_NOW,
+        NEXT_TIME,
+        NEVER_TYPE,
+        THIS_TASK,
+        LATER;
 
-        private final String label;
-        private final String description;
-
-        Dismissal(String label, String description) {
-            this.label = label;
-            this.description = description;
+        private String key() {
+            return "lune.mascot.dismissal." + name().toLowerCase(Locale.ROOT);
         }
 
         public String label() {
-            return label;
+            return Lang.get(key() + ".label");
         }
 
         public String description() {
-            return description;
+            return Lang.get(key() + ".desc");
         }
     }
 
     /** Task ideas belong in Task; the other tabs use calm, contextual ambient dialogue. */
     public void setSurface(Surface surface) {
         this.surface = surface == null ? Surface.MAIN : surface;
+    }
+
+    /**
+     * The line to speak while a training puzzle is open.
+     *
+     * <p>Pushed in rather than worked out here, because the thing that decides it - how long the
+     * player has been stuck on which lesson - is the Task tab's, and Lune has no business owning a
+     * second copy of it.</p>
+     */
+    public void setTrainingLine(String line) {
+        this.trainingLine = line == null ? "" : line;
     }
 
     public void tick(BotEngine engine) {
@@ -157,6 +207,17 @@ public final class MascotAdvisor {
         }
         captureMilestone(engine);
         updateActivityState(engine);
+
+        if (surface == Surface.TRAINING) {
+            // A puzzle is a question the player is being asked, and every task suggestion Lune has
+            // is an answer to it - "this task has no START, shall I add one?" is step one, solved
+            // for them and dismissed in a click. She stays out of the graph until they leave.
+            prompting = false;
+            dismissalMenu = false;
+            stableTaskTicks = 0;
+            clearCandidate();
+            return;
+        }
 
         if (suppressesSuggestions()) {
             // Live state and recent outcomes are more useful than an unrelated task prompt.
@@ -271,33 +332,33 @@ public final class MascotAdvisor {
         ensurePreferenceCollections(config);
         switch (choice) {
             case NOT_NOW -> {
-                reply = "Okay. I'll take a little nap and try again soon.";
-                replyMood = Mood.SLEEPING;
+                reply = Lang.get("lune.mascot.reply.not_now");
+                replyMood = Mood.QUIET;
                 napTicks = NEXT_SUGGESTION_COOLDOWN_TICKS;
             }
             case NEXT_TIME -> {
                 hiddenUntilReopen.add(key);
-                reply = "Okay. I'll bring this up next time you open me.";
+                reply = Lang.get("lune.mascot.reply.next_time");
                 replyMood = Mood.SUCCESS;
             }
             case NEVER_TYPE -> {
                 config.luneDismissedSuggestionTypes.add(type);
                 config.save();
-                reply = "Got it. I won't ask about this kind again.";
+                reply = Lang.get("lune.mascot.reply.never_type");
                 replyMood = Mood.SUCCESS;
             }
             case THIS_TASK -> {
                 config.luneDismissedTaskSuggestions.add(taskKindKey(
                         candidate.task(), type));
                 config.save();
-                reply = "Understood. I'll leave this task alone.";
+                reply = Lang.get("lune.mascot.reply.this_task");
                 replyMood = Mood.SUCCESS;
             }
             case LATER -> {
                 config.luneSuggestionReminders.put(key,
                         System.currentTimeMillis() + 3L * 60L * 1000L);
                 config.save();
-                reply = "I'll circle back in a few minutes, promise.";
+                reply = Lang.get("lune.mascot.reply.later");
                 replyMood = Mood.THINKING;
             }
         }
@@ -323,7 +384,8 @@ public final class MascotAdvisor {
         if (!hasAmountChoice()) {
             return "";
         }
-        return chosenAmount + " " + candidate.taskSuggestion().unit();
+        return Lang.get("lune.mascot.amount", chosenAmount,
+                candidate.taskSuggestion().unit());
     }
 
     public void decreaseAmount() {
@@ -343,18 +405,19 @@ public final class MascotAdvisor {
 
     public String promptTitle() {
         if (candidate != null && candidate.isSafety()) {
-            return "LUNE HAS A THOUGHT";
+            return Lang.get("lune.mascot.prompt.title.thought");
         }
         if (candidate != null && candidate.taskSuggestion() != null
                 && !candidate.taskSuggestion().changesTask()) {
-            return "LUNE NOTICED SOMETHING";
+            return Lang.get("lune.mascot.prompt.title.noticed");
         }
-        return "LUNE HAS AN IDEA";
+        return Lang.get("lune.mascot.prompt.title.idea");
     }
 
     public String acceptLabel() {
         return candidate == null || candidate.isSafety()
-                ? "Add it" : candidate.taskSuggestion().acceptLabel();
+                ? Lang.get("lune.mascot.prompt.accept_default")
+                : candidate.taskSuggestion().acceptLabel();
     }
 
     public boolean hasPreview() {
@@ -366,7 +429,7 @@ public final class MascotAdvisor {
         if (!hasPreview()) {
             return "";
         }
-        return candidate.isSafety() ? "No Always protection"
+        return candidate.isSafety() ? Lang.get("lune.mascot.preview.no_protection")
                 : candidate.taskSuggestion().previewBefore();
     }
 
@@ -374,7 +437,7 @@ public final class MascotAdvisor {
         if (!hasPreview()) {
             return "";
         }
-        return candidate.isSafety() ? "Always  →  Self Preservation"
+        return candidate.isSafety() ? Lang.get("lune.mascot.preview.with_protection")
                 : candidate.taskSuggestion().previewAfter(chosenAmount);
     }
 
@@ -401,7 +464,7 @@ public final class MascotAdvisor {
             observedTask = restored;
             observedFingerprint = TaskSuggestion.fingerprint(restored);
             stableTaskTicks = 0;
-            reply = "Undone. The task is back the way it was.";
+            reply = Lang.get("lune.mascot.reply.undone");
             replyMood = Mood.IDLE;
             replyTicks = REPLY_TICKS;
         }
@@ -416,8 +479,7 @@ public final class MascotAdvisor {
             return false;
         }
         Mood mood = mood(engine);
-        boolean actionable = mood == Mood.DANGER || mood == Mood.INVENTORY_FULL
-                || mood == Mood.MISSING_MATERIALS || mood == Mood.BLOCKED;
+        boolean actionable = isAttentionMood(mood) && mood != Mood.PAUSED;
         if (BotConfig.LUNE_SPEECH_QUIET.equalsIgnoreCase(config.luneSpeech)) {
             return actionable || prompting || replyTicks > 0;
         }
@@ -435,13 +497,17 @@ public final class MascotAdvisor {
         BotConfig config = BotConfig.get();
         if (config.showLune
                 && BotConfig.LUNE_SPEECH_SILENT.equalsIgnoreCase(config.luneSpeech)) {
-            return Mood.SLEEPING;
+            return Mood.QUIET;
         }
         if (isAttentionMood(liveMood)) {
             return liveMood;
         }
         if (prompting) {
             return Mood.ASKING;
+        }
+        if (surface == Surface.TRAINING) {
+            // She is watching the player work a puzzle out, not working one out herself.
+            return Mood.LEARNING;
         }
         if (replyTicks > 0) {
             return replyMood;
@@ -450,7 +516,7 @@ public final class MascotAdvisor {
             return milestoneMood;
         }
         if (napTicks > 0) {
-            return Mood.SLEEPING;
+            return Mood.QUIET;
         }
         if (liveMood == Mood.WAITING || liveMood == Mood.SUCCESS) {
             return liveMood;
@@ -467,7 +533,7 @@ public final class MascotAdvisor {
         }
         if (prompting) {
             if (candidate == null || candidate.isSafety()) {
-                return "No Self Preservation here. Shall I add it for the next run?";
+                return Lang.get("lune.mascot.prompt.safety");
             }
             return candidate.taskSuggestion().prompt();
         }
@@ -480,14 +546,18 @@ public final class MascotAdvisor {
         if (liveMood == Mood.WAITING || liveMood == Mood.SUCCESS) {
             return stateSpeech(liveMood, liveDetail);
         }
+        if (surface == Surface.TRAINING && !trainingLine.isBlank()) {
+            return trainingLine;
+        }
         Task current = engine.getCurrent();
         if (current == null) {
             return surface == Surface.TASKS
-                    ? "Nothing running. I'll stay right here."
+                    ? Lang.get("lune.mascot.nothing_running")
                     : idleSpeech(surface);
         }
         String status = current.status();
-        return status == null || status.isBlank() ? "I'm working on it." : sentence(status);
+        return status == null || status.isBlank()
+                ? Lang.get("lune.mascot.fallback.working") : sentence(status);
     }
 
     /**
@@ -520,31 +590,44 @@ public final class MascotAdvisor {
             return;
         }
         lastMilestoneSeen = message;
-        milestoneMood = moodFor(MascotSignals.classifyMilestone(message));
+        milestoneMood = moodFor(engine.getLastMessageSignal());
         milestone = milestoneMood == Mood.IDLE
-                ? "Milestone: " + sentence(message)
+                ? Lang.get("lune.mascot.milestone", sentence(message))
                 : stateSpeech(milestoneMood, message);
         milestoneTicks = 100;
     }
 
+    /**
+     * What Lune is, right now, in the order a player would want to be told it.
+     *
+     * <p>Trouble first - dead, then the world, then whatever the running task is shouting about.
+     * Then her body: asleep, under water, poisoned, starving. Only when none of that applies does
+     * she show which job is in hand.</p>
+     */
     private void updateActivityState(BotEngine engine) {
         Task current = engine.getCurrent();
         String status = current == null ? "" : current.status();
         liveDetail = status;
 
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft != null && minecraft.player != null) {
-            var player = minecraft.player;
+        var player = minecraft == null ? null : minecraft.player;
+        if (player != null) {
+            if (player.isDeadOrDying()) {
+                liveMood = Mood.DEAD;
+                liveDetail = status.isBlank() ? Lang.get("lune.mascot.fallback.dead") : status;
+                resetConfirmationTicks();
+                return;
+            }
             if (player.isInLava()) {
                 liveMood = Mood.DANGER;
-                liveDetail = status.isBlank() ? "I'm in lava." : status;
+                liveDetail = status.isBlank() ? Lang.get("lune.mascot.in_lava") : status;
                 resetConfirmationTicks();
                 return;
             }
             if (player.isUnderWater()
                     && player.getAirSupply() <= player.getMaxAirSupply() / 3) {
                 liveMood = Mood.DANGER;
-                liveDetail = status.isBlank() ? "My air is running low." : status;
+                liveDetail = status.isBlank() ? Lang.get("lune.mascot.low_air") : status;
                 resetConfirmationTicks();
                 return;
             }
@@ -557,49 +640,131 @@ public final class MascotAdvisor {
             return;
         }
 
-        MascotSignals.Signal signal = MascotSignals.classify(status);
-        if (signal == MascotSignals.Signal.BLOCKED) {
+        StatusSignal signal = current == null ? StatusSignal.NONE : current.statusSignal();
+        if (signal == StatusSignal.BLOCKED) {
             waitingTicks = 0;
             blockedTicks = Math.min(BLOCKED_CONFIRM_TICKS, blockedTicks + 1);
             liveMood = blockedTicks >= BLOCKED_CONFIRM_TICKS ? Mood.BLOCKED
                     : current == null ? Mood.IDLE : Mood.WORKING;
             return;
         }
-        if (signal == MascotSignals.Signal.WAITING) {
+        if (signal == StatusSignal.WAITING) {
             blockedTicks = 0;
             waitingTicks = Math.min(WAITING_CONFIRM_TICKS, waitingTicks + 1);
             liveMood = waitingTicks >= WAITING_CONFIRM_TICKS ? Mood.WAITING
                     : current == null ? Mood.IDLE : Mood.WORKING;
             return;
         }
-
         resetConfirmationTicks();
+
+        // Trouble the running task is already reporting outranks anything read off the player.
+        if (signal.priority() >= StatusSignal.MISSING_MATERIALS.priority()) {
+            liveMood = moodFor(signal);
+            return;
+        }
+
+        Mood body = bodyMood(player);
+        if (body != null) {
+            liveMood = body;
+            if (status.isBlank()) {
+                liveDetail = "";
+            }
+            return;
+        }
+
+        if (BotConfig.get().warnAboutSlowSteps && current instanceof TaskRunner
+                && LoopWatch.get().worst() != null) {
+            liveMood = Mood.STALLED;
+            return;
+        }
+
         liveMood = current == null ? Mood.IDLE : moodFor(signal);
         if (liveMood == Mood.IDLE && current != null) {
             liveMood = Mood.WORKING;
         }
     }
 
+    /**
+     * What the player's own body says, or {@code null} when it has nothing to add.
+     *
+     * <p>Read from the client rather than from a status line, because none of it belongs to a task:
+     * she is in a bed, or under water, or poisoned, whatever she happens to be doing.</p>
+     */
+    private static Mood bodyMood(LocalPlayer player) {
+        if (player == null) {
+            return null;
+        }
+        if (player.isSleeping()) {
+            return Mood.RESTING;
+        }
+        if (player.isInWater()) {
+            double rise = player.getDeltaMovement().y;
+            if (rise > WATER_CLIMB_SPEED) {
+                return Mood.ASCENDING;
+            }
+            if (rise < -WATER_CLIMB_SPEED) {
+                return Mood.DIVING;
+            }
+            return Mood.SWIMMING;
+        }
+        for (MobEffectInstance effect : player.getActiveEffects()) {
+            if (effect.getEffect().value().getCategory() == MobEffectCategory.HARMFUL) {
+                return Mood.EFFECT;
+            }
+        }
+        if (player.getFoodData().getFoodLevel() <= HUNGRY_FOOD_LEVEL) {
+            return Mood.HUNGRY;
+        }
+        return null;
+    }
+
     private boolean suppressesSuggestions() {
-        return liveMood != Mood.IDLE && liveMood != Mood.WORKING
+        return !ordinaryWork(liveMood)
                 || milestoneTicks > 0 && milestoneMood != Mood.IDLE;
     }
 
+    /** Moods that interrupt: they describe something happening to the player's game right now. */
     private static boolean isAttentionMood(Mood mood) {
-        return mood == Mood.DANGER || mood == Mood.INVENTORY_FULL
-                || mood == Mood.MISSING_MATERIALS || mood == Mood.BLOCKED
-                || mood == Mood.PAUSED;
+        return switch (mood) {
+            case DANGER, FIGHT, FLEE, HURT, DEAD, EFFECT, HUNGRY, STALLED, BLOCKED,
+                    INVENTORY_FULL, MISSING_MATERIALS, PAUSED -> true;
+            default -> false;
+        };
     }
 
-    private static Mood moodFor(MascotSignals.Signal signal) {
+    private static Mood moodFor(StatusSignal signal) {
         return switch (signal) {
             case WAITING -> Mood.WAITING;
+            case LOADING -> Mood.LOADING;
+            case SEARCH -> Mood.SEARCH;
+            case TRAVEL -> Mood.TRAVEL;
+            case BRIDGING -> Mood.BRIDGING;
+            case PILLARING -> Mood.PILLARING;
+            case STAIRS -> Mood.STAIRS;
+            case FRAMING -> Mood.FRAMING;
             case BLOCKED -> Mood.BLOCKED;
             case DANGER -> Mood.DANGER;
+            case FIGHT -> Mood.FIGHT;
+            case FLEE -> Mood.FLEE;
+            case HURT -> Mood.HURT;
+            case RECOVERING -> Mood.RECOVERING;
+            case DEAD -> Mood.DEAD;
             case SUCCESS -> Mood.SUCCESS;
             case INVENTORY_FULL -> Mood.INVENTORY_FULL;
             case MISSING_MATERIALS -> Mood.MISSING_MATERIALS;
             case NONE -> Mood.IDLE;
+        };
+    }
+
+    /**
+     * Moods that are simply a job in hand. Lune keeps offering ideas through these; everything else
+     * means she has something more useful to say than an unrelated suggestion.
+     */
+    private static boolean ordinaryWork(Mood mood) {
+        return switch (mood) {
+            case IDLE, WORKING, TRAVEL, BRIDGING, PILLARING, STAIRS, FRAMING, SEARCH, LOADING,
+                    SWIMMING, DIVING, ASCENDING -> true;
+            default -> false;
         };
     }
 
@@ -608,138 +773,96 @@ public final class MascotAdvisor {
         waitingTicks = 0;
     }
 
+    /**
+     * One of several ways of saying the same thing, plus the detail behind it.
+     *
+     * <p>The opening is picked from a bank in the language file rather than chosen at random: the
+     * same situation should say the same thing while it lasts, or Lune reads as a slot machine.
+     * The rotation is derived from what she is talking about, so the line changes when the
+     * circumstances do and not on a timer.</p>
+     */
     private static String stateSpeech(Mood mood, String status) {
         if (mood == Mood.PAUSED) {
-            String[] paused = {
-                    "You paused me. I'll stay right here.",
-                    "Taking a little break? I won't touch anything.",
-                    "I'm holding still until you say go.",
-                    "Paused. I'll keep our place warm for you."
-            };
-            int minutes = LocalTime.now().getHour() * 60 + LocalTime.now().getMinute();
-            return paused[minutes / 3 % paused.length];
+            LocalTime now = LocalTime.now();
+            int minutes = now.getHour() * 60 + now.getMinute();
+            return Lang.pick("lune.mascot.paused", minutes / 3);
         }
         String detail = status == null || status.isBlank()
                 ? fallbackDetail(mood)
                 : sentence(status);
-        String[] openings = switch (mood) {
-            case WAITING -> new String[] {
-                    "I'll wait right here.",
-                    "Just a little patience, lovely.",
-                    "Nothing to do but give it a moment.",
-                    "I'm keeping watch while we wait."
-            };
-            case BLOCKED -> new String[] {
-                    "Hmm... I've run into an obstacle.",
-                    "That path is being stubborn.",
-                    "I'm a little stuck here.",
-                    "Something is in my way, lovely."
-            };
-            case DANGER -> new String[] {
-                    "Careful—something is wrong.",
-                    "This is getting dangerous. I'm handling it.",
-                    "Stay close, lovely. I need to get us safe.",
-                    "Danger first. Everything else can wait."
-            };
-            case SUCCESS -> new String[] {
-                    "Done, lovely!",
-                    "There we are—I knew we could do it.",
-                    "All finished. That went rather nicely.",
-                    "A little victory for us."
-            };
-            case INVENTORY_FULL -> new String[] {
-                    "My pockets are completely full.",
-                    "I can't carry another thing, lovely.",
-                    "We've gathered so much that there is nowhere to put it.",
-                    "A tiny storage problem: every slot is occupied."
-            };
-            case MISSING_MATERIALS -> new String[] {
-                    "I'm missing something I need.",
-                    "I can't finish this without the right supplies.",
-                    "We're a few materials short, lovely.",
-                    "I checked twice—one of the ingredients is missing."
-            };
-            default -> new String[] {"I'm working on it."};
+        String bank = switch (mood) {
+            case WAITING -> "lune.mascot.opening.waiting";
+            case BLOCKED -> "lune.mascot.opening.blocked";
+            case DANGER -> "lune.mascot.opening.danger";
+            case FIGHT -> "lune.mascot.opening.fight";
+            case FLEE -> "lune.mascot.opening.flee";
+            case HURT -> "lune.mascot.opening.hurt";
+            case RECOVERING -> "lune.mascot.opening.recovering";
+            case DEAD -> "lune.mascot.opening.dead";
+            case EFFECT -> "lune.mascot.opening.effect";
+            case HUNGRY -> "lune.mascot.opening.hungry";
+            case STALLED -> "lune.mascot.opening.stalled";
+            case SUCCESS -> "lune.mascot.opening.success";
+            case INVENTORY_FULL -> "lune.mascot.opening.inventory_full";
+            case MISSING_MATERIALS -> "lune.mascot.opening.missing_materials";
+            default -> "lune.mascot.opening.working";
         };
-        int index = Math.floorMod(detail.toLowerCase(Locale.ROOT).hashCode(), openings.length);
-        return openings[index] + " " + detail;
+        String opening = Lang.pick(bank, detail.toLowerCase(Locale.ROOT).hashCode());
+        return Lang.get("lune.mascot.amount", opening, detail);
     }
 
     private static String fallbackDetail(Mood mood) {
-        return switch (mood) {
-            case WAITING -> "We need to wait a moment.";
-            case BLOCKED -> "I can't find a way forward yet.";
-            case DANGER -> "I'm trying to make things safe.";
-            case SUCCESS -> "The work is complete.";
-            case INVENTORY_FULL -> "The inventory has no free slot.";
-            case MISSING_MATERIALS -> "The required supplies are unavailable.";
-            default -> "I'm working on it.";
-        };
+        return Lang.get(switch (mood) {
+            case WAITING -> "lune.mascot.fallback.waiting";
+            case BLOCKED -> "lune.mascot.fallback.blocked";
+            case DANGER -> "lune.mascot.fallback.danger";
+            case FIGHT -> "lune.mascot.fallback.fight";
+            case FLEE -> "lune.mascot.fallback.flee";
+            case HURT -> "lune.mascot.fallback.hurt";
+            case RECOVERING -> "lune.mascot.fallback.recovering";
+            case DEAD -> "lune.mascot.fallback.dead";
+            case EFFECT -> "lune.mascot.fallback.effect";
+            case HUNGRY -> "lune.mascot.fallback.hungry";
+            case STALLED -> "lune.mascot.fallback.stalled";
+            case SUCCESS -> "lune.mascot.fallback.success";
+            case INVENTORY_FULL -> "lune.mascot.fallback.inventory_full";
+            case MISSING_MATERIALS -> "lune.mascot.fallback.missing_materials";
+            default -> "lune.mascot.fallback.working";
+        });
     }
 
+    /**
+     * Ambient chatter, chosen by where the player is and what time it is where they are.
+     *
+     * <p>Every bank is discovered from the language file, so how many ways Lune has of greeting a
+     * morning is a question about that file and not about this method.</p>
+     */
     private static String idleSpeech(Surface surface) {
         LocalTime now = LocalTime.now();
         int minutes = now.getHour() * 60 + now.getMinute();
-        String[] lines;
-        if (surface == Surface.CONFIG) {
-            lines = new String[] {
-                    "A little tuning? I’ll keep the complicated bits tidy.",
-                    "Take your time. Good settings make calm tasks.",
-                    "I’m watching the details so you don’t have to.",
-                    "If something feels too sharp, we can soften it together.",
-                    "This is where I learn how you like to play."
-            };
-            return lines[minutes / 5 % lines.length];
+        String bank = switch (surface) {
+            case CONFIG -> "lune.mascot.idle.config";
+            case ABOUT -> "lune.mascot.idle.about";
+            case WAYPOINTS -> "lune.mascot.idle.waypoints";
+            default -> timeOfDayBank(now.getHour());
+        };
+        return Lang.pick(bank, minutes / 5);
+    }
+
+    private static String timeOfDayBank(int hour) {
+        if (hour < 5) {
+            return "lune.mascot.idle.small_hours";
         }
-        if (surface == Surface.WAYPOINTS) {
-            lines = new String[] {
-                    "Where shall we go next? I can keep the important places close.",
-                    "A good waypoint is a promise to come back.",
-                    "I’ll remember the path, even when you wander.",
-                    "Pick a destination and I’ll help you make a route.",
-                    "Some places deserve names. This one looks like a good start."
-            };
-            return lines[minutes / 5 % lines.length];
+        if (hour < 10) {
+            return "lune.mascot.idle.morning";
         }
-        if (now.getHour() < 5) {
-            lines = new String[] {
-                    "Isn't it a little late to play? Let me handle the quiet work for you.",
-                    "You should rest soon, lovely. I can keep an eye on things.",
-                    "Even Lune needs a quiet hour. Shall we leave the busy work to me?",
-                    "Close the world for tonight? I’ll be here when you return."
-            };
-        } else if (now.getHour() < 10) {
-            lines = new String[] {
-                    "Good morning. What are we going to do now?",
-                    "I'm here with you. Shall we make a little plan?",
-                    "New day, new little adventure. I’m ready when you are.",
-                    "Take your time waking up. I’ll keep the plans warm."
-            };
-        } else if (now.getHour() < 18) {
-            lines = new String[] {
-                    "What are we going to do now?",
-                    "How can I help you today?",
-                    "Give me a direction and I’ll help turn it into a task.",
-                    "Perhaps we gather a little, build a little, and see what happens?"
-            };
-        } else if (now.getHour() < 23) {
-            lines = new String[] {
-                    "How can I help you tonight?",
-                    "Tell me what you feel like doing, and I'll help with the rest.",
-                    "Let’s make tonight’s work gentle and worthwhile.",
-                    "The world is quieting down. We can still make progress.",
-                    "Point me toward a task and I’ll stay by your side."
-            };
-        } else {
-            lines = new String[] {
-                    "It is getting late. Shall I take care of a little work for you?",
-                    "If you're tired, I can keep watch while you rest.",
-                    "Your eyes must be tired by now. I can keep watch for a while.",
-                    "Perhaps you rest, and I handle the quiet parts?",
-                    "The moon is up; maybe we should choose something simple."
-            };
+        if (hour < 18) {
+            return "lune.mascot.idle.day";
         }
-        return lines[(minutes / 5) % lines.length];
+        if (hour < 23) {
+            return "lune.mascot.idle.evening";
+        }
+        return "lune.mascot.idle.late";
     }
 
     public void accept() {
@@ -762,19 +885,19 @@ public final class MascotAdvisor {
                         TaskSuggestion.fingerprint(candidate.task()));
             }
             if (candidate.isSafety()) {
-                reply = "All set. I'll keep a closer eye on its next run.";
+                reply = Lang.get("lune.mascot.reply.safety_added");
             } else if (candidate.taskSuggestion().kind() == TaskSuggestion.Kind.QUANTITY) {
-                reply = "Lovely. I'll stop at " + chosenAmount + " "
-                        + candidate.taskSuggestion().unit() + " next time.";
+                reply = Lang.get("lune.mascot.reply.quantity", chosenAmount,
+                        candidate.taskSuggestion().unit());
             } else if (candidate.taskSuggestion().kind() == TaskSuggestion.Kind.AUTO_TOOL) {
-                reply = "Done. I'll prepare a proper tool before mining.";
+                reply = Lang.get("lune.mascot.reply.auto_tool");
             } else {
                 reply = candidate.taskSuggestion().acceptedReply();
             }
             replyMood = Mood.SUCCESS;
         } else {
             undo = null;
-            reply = "That task changed while I was asking, so I left it alone.";
+            reply = Lang.get("lune.mascot.reply.task_changed");
             replyMood = Mood.IDLE;
         }
         finishPrompt();
@@ -996,7 +1119,7 @@ public final class MascotAdvisor {
                 axeDurability = Math.max(axeDurability, durability);
             }
         }
-        long dayTime = Math.floorMod(minecraft.level.getOverworldClockTime(), 24_000L);
+        long dayTime = WorldClock.dayTime(minecraft.level);
         String dimension = minecraft.level.dimension().identifier().toString();
         var biome = minecraft.level.getBiome(minecraft.player.blockPosition());
         return new TaskSuggestion.Context(
@@ -1005,9 +1128,9 @@ public final class MascotAdvisor {
                 torches,
                 pickaxeDurability,
                 axeDurability,
-                dayTime >= 12_542L && dayTime <= 23_460L,
+                WorldClock.isNight(dayTime),
                 dimension,
-                BiomeKnowledge.name(biome),
+                BiomeKnowledge.displayName(biome),
                 BiomeKnowledge.isBarrenFor(biome, Set.of(Need.WOOD)));
     }
 
@@ -1034,7 +1157,7 @@ public final class MascotAdvisor {
     private static String sentence(String value) {
         String trimmed = value.trim();
         if (trimmed.isEmpty()) {
-            return "I'm working on it.";
+            return Lang.get("lune.mascot.fallback.working");
         }
         String capitalised = Character.toUpperCase(trimmed.charAt(0)) + trimmed.substring(1);
         char last = capitalised.charAt(capitalised.length() - 1);

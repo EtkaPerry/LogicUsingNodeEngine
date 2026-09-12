@@ -50,6 +50,15 @@ neoForge {
             if (project.hasProperty('luneQuit')) {
                 jvmArguments.add("-Dlune.autorun.quit=${project.property('luneQuit')}".toString())
             }
+            // Journal a human playing, with no task started. Pair with -PluneCreateWorld/-PluneSeed
+            // to record a person on the same terrain a bot run used.
+            // Freeze the learner so a benchmark measures the code, not the bandit drifting.
+            if (project.hasProperty('luneFreezeLearning')) {
+                jvmArguments.add("-Dlune.autorun.freezeLearning=${project.property('luneFreezeLearning')}".toString())
+            }
+            if (project.hasProperty('luneRecord')) {
+                jvmArguments.add("-Dlune.autorun.record=${project.property('luneRecord')}".toString())
+            }
         }
     }
     mods {

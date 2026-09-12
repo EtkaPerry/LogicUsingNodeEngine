@@ -21,7 +21,7 @@ public class VerticalSplitter extends AbstractWidget {
     public static final int WIDTH = 5;
     private static final int LINE = 0xFF5A5A64;
     private static final int LINE_HOVER = 0xFF8E8E9A;
-    private static final int HIT_GLOW = 0x184C9EFF;
+    private static final int HIT_GLOW = LuneScreen.ACCENT_GLOW;
 
     private final int direction;
     private final Consumer<Integer> onDrag;

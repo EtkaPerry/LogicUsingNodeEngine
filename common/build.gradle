@@ -20,6 +20,11 @@ tasks.named('processResources') {
 
 neoForge {
     neoFormVersion = neo_form_version
+    // Minecraft on the unit-test classpath, so the movement code can be tested against real block
+    // states in a hand-built scene rather than against a restatement of its own rules. See
+    // common/src/test/java/com/etka/lune/bot/path/TestLevel.java. Registries need a one-off
+    // Bootstrap.bootStrap() of about five seconds, paid only by suites that build a scene.
+    addModdingDependenciesTo(sourceSets.test)
     // Auto-enable AccessTransformers if present.
     def at = file('src/main/resources/META-INF/accesstransformer.cfg')
     if (at.exists()) {
@@ -32,8 +37,9 @@ dependencies {
     compileOnly('net.fabricmc:sponge-mixin:0.17.3+mixin.0.8.7')
     compileOnly(annotationProcessor('io.github.llamalad7:mixinextras-common:0.5.3'))
 
-    // The pathfinder and task-queue cores are plain data structures over BlockPos-like ints, so the
-    // interesting algorithms are unit-testable without a Minecraft runtime.
+    // Most of the interesting logic is deliberately kept in pure policy classes that need no
+    // Minecraft runtime, and the great majority of the suite tests those. The search itself takes a
+    // BlockGetter, so it is tested against a fake one; see the neoForge block above.
     testImplementation platform("org.junit:junit-bom:${junit_version}")
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'com.google.code.gson:gson:2.11.0'

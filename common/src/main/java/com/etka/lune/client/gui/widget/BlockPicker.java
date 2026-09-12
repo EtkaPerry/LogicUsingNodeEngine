@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.widget;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.catalog.BlockCatalog;
 import com.etka.lune.bot.catalog.BlockCategories;
 import com.etka.lune.bot.catalog.BlockTarget;
@@ -59,11 +60,11 @@ public class BlockPicker extends AbstractWidget {
     private static final int SCROLLBAR_W = 3;
     private static final String ELLIPSIS = "…";
 
-    private static final int POPUP_BORDER = 0xFF4C9EFF;
+    private static final int POPUP_BORDER = LuneScreen.ACCENT;
     private static final int DIM = 0xB0000000;
     private static final int TAB_ACTIVE = 0xFF3A3A42;
     private static final int ROW_HOVER = 0x28FFFFFF;
-    private static final int ROW_SELECTED = 0x284C9EFF;
+    private static final int ROW_SELECTED = LuneScreen.ACCENT_SELECTION;
     private static final int SCROLL_TRACK = 0xFF15151A;
 
     /** The synthetic groups Lune adds either side of the game's own categories. */
@@ -111,7 +112,7 @@ public class BlockPicker extends AbstractWidget {
                           int buttonY, int declineX, int acceptX) {}
 
     public BlockPicker() {
-        super(-1000, -1000, 10, 10, Component.literal("Select blocks"));
+        super(-1000, -1000, 10, 10, Component.literal(Lang.get("lune.gui.block.select_blocks")));
         this.visible = false;
         this.active = false;
     }
@@ -179,7 +180,7 @@ public class BlockPicker extends AbstractWidget {
 
         var text = extractor.textRenderer();
         text.accept(layout.popupX() + PADDING, layout.popupY() + PADDING,
-                Component.literal("Select blocks or tags").withColor(LuneScreen.TEXT));
+                Component.literal(Lang.get("lune.gui.block.select_blocks_or_tags")).withColor(LuneScreen.TEXT));
         String summary = summary();
         text.accept(layout.popupX() + layout.popupW() - PADDING - font.width(summary), layout.popupY() + PADDING,
                 Component.literal(summary).withColor(LuneScreen.TEXT_DIM));
@@ -189,8 +190,8 @@ public class BlockPicker extends AbstractWidget {
         renderSidebar(extractor, text, font, layout, mouseX, mouseY);
         renderGrid(extractor, text, font, layout, mouseX, mouseY);
 
-        drawButton(extractor, text, font, layout.declineX(), layout.buttonY(), "Decline", mouseX, mouseY);
-        drawButton(extractor, text, font, layout.acceptX(), layout.buttonY(), "Accept", mouseX, mouseY);
+        drawButton(extractor, text, font, layout.declineX(), layout.buttonY(), Lang.get("lune.gui.block.decline"), mouseX, mouseY);
+        drawButton(extractor, text, font, layout.acceptX(), layout.buttonY(), Lang.get("lune.gui.block.accept"), mouseX, mouseY);
     }
 
     private void renderTabs(GuiGraphicsExtractor extractor, net.minecraft.client.gui.ActiveTextCollector text, Layout layout) {
@@ -199,9 +200,9 @@ public class BlockPicker extends AbstractWidget {
         extractor.fill(layout.rightTabX(), layout.tabY(), layout.rightTabX() + layout.tabW(), layout.tabY() + TAB_H,
                 tagsTab ? TAB_ACTIVE : LuneScreen.PANEL_BG);
         text.accept(layout.leftTabX() + 6, layout.tabY() + 3,
-                Component.literal("Blocks").withColor(!tagsTab ? LuneScreen.ACCENT : LuneScreen.TEXT_DIM));
+                Component.literal(Lang.get("lune.gui.block.blocks")).withColor(!tagsTab ? LuneScreen.ACCENT : LuneScreen.TEXT_DIM));
         text.accept(layout.rightTabX() + 6, layout.tabY() + 3,
-                Component.literal("Tags").withColor(tagsTab ? LuneScreen.ACCENT : LuneScreen.TEXT_DIM));
+                Component.literal(Lang.get("lune.gui.block.tags")).withColor(tagsTab ? LuneScreen.ACCENT : LuneScreen.TEXT_DIM));
     }
 
     private void renderSearch(GuiGraphicsExtractor extractor, net.minecraft.client.gui.ActiveTextCollector text,
@@ -212,7 +213,7 @@ public class BlockPicker extends AbstractWidget {
                 layout.searchY() + SEARCH_H, LuneScreen.ACCENT);
 
         String prompt = filter.isEmpty()
-                ? "Search every " + (tagsTab ? "tag" : "block") + " by name or id..."
+                ? Lang.get("lune.gui.block.search_every_by_name_or_id", (tagsTab ? "tag" : "block"))
                 : filter;
         text.accept(layout.searchX() + 5, layout.searchY() + 4,
                 Component.literal(prompt).withColor(filter.isEmpty() ? LuneScreen.TEXT_DIM : LuneScreen.TEXT));
@@ -274,9 +275,8 @@ public class BlockPicker extends AbstractWidget {
         scrollRow = Math.clamp(scrollRow, 0, Math.max(0, rowCount(cols) - rows));
 
         if (entries.isEmpty()) {
-            text.accept(x + 6, y + 6, Component.literal(filter.isEmpty()
-                    ? "This category has no blocks."
-                    : "Nothing matches \"" + filter + "\".").withColor(LuneScreen.TEXT_DIM));
+            text.accept(x + 6, y + 6, filter.isEmpty() ? Component.literal(Lang.get("lune.gui.block.category_empty"))
+                : Component.literal(Lang.get("lune.gui.block.no_matches", filter)).withColor(LuneScreen.TEXT_DIM));
             return;
         }
 
@@ -365,8 +365,8 @@ public class BlockPicker extends AbstractWidget {
         int chosen = working.blocks().size() + working.tags().size();
         String where = filter.isEmpty()
                 ? (categoryIndex < groups.size() ? groups.get(categoryIndex).name() : "")
-                : "Search results";
-        return where + " (" + entries.size() + ")  ·  " + chosen + " chosen";
+                : Lang.get("lune.gui.block.search_results");
+        return where + " (" + entries.size() + ")  ·  " + chosen + Lang.get("lune.gui.block.chosen");
     }
 
     private Layout layout() {
@@ -592,9 +592,9 @@ public class BlockPicker extends AbstractWidget {
         // picker that already offers everything they would otherwise be lost in the pile.
         List<Entry> suggested = resolve(target.candidates(), byBlock);
         if (!suggested.isEmpty() && suggested.size() < searchPool.size()) {
-            groups.add(new Group(SUGGESTED_ID, "Suggested", suggested.get(0).icon(), suggested));
+            groups.add(new Group(SUGGESTED_ID, Lang.get("lune.gui.block.suggested"), suggested.get(0).icon(), suggested));
         }
-        groups.add(new Group(EVERYTHING_ID, "All blocks", new ItemStack(Blocks.BEDROCK.asItem()), searchPool));
+        groups.add(new Group(EVERYTHING_ID, Lang.get("lune.gui.block.all_blocks"), new ItemStack(Blocks.BEDROCK.asItem()), searchPool));
         for (BlockCategories.Category category : BlockCategories.categories()) {
             List<Entry> resolved = resolve(category.blocks(), byBlock);
             if (!resolved.isEmpty()) {
@@ -613,7 +613,7 @@ public class BlockPicker extends AbstractWidget {
         }
         searchPool = List.copyOf(all);
 
-        groups.add(new Group(EVERYTHING_ID, "All tags",
+        groups.add(new Group(EVERYTHING_ID, Lang.get("lune.gui.block.all_tags"),
                 all.isEmpty() ? ItemStack.EMPTY : all.get(0).icon(), searchPool));
         List<String> namespaces = new ArrayList<>(byNamespace.keySet());
         namespaces.sort(Comparator.comparing(namespace -> namespace.equals("minecraft") ? "" : namespace));

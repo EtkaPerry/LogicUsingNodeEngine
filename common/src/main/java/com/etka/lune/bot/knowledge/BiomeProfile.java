@@ -1,5 +1,7 @@
 package com.etka.lune.bot.knowledge;
 
+import com.etka.lune.util.Lang;
+
 /**
  * What a biome is worth to the bot, per {@link Need}.
  * <p>
@@ -7,15 +9,29 @@ package com.etka.lune.bot.knowledge;
  * it). {@code travelCost} is a multiplier on how expensive the ground is to cross - 1 is open
  * walkable land, an ocean is around 3 because swimming it is slow and dangerous.
  *
- * @param notes why the numbers are what they are; shown in the debug overlay when the bot explains
- *              a direction choice.
+ * @param notes why the numbers are what they are; read out when Lune explains a direction choice.
+ *              A key for the built-in table, plain text for a profile out of the config file.
  */
 public record BiomeProfile(String name, float wood, float food, float stone, float sand, float water,
                            float travelCost, String notes) {
 
     /** Neutral profile for a biome nothing is known about - never excludes it, never favours it. */
     public static final BiomeProfile UNKNOWN =
-            new BiomeProfile("unknown", 0.5F, 0.5F, 0.4F, 0.2F, 0.2F, 1.0F, "unfamiliar biome");
+            new BiomeProfile("unknown", 0.5F, 0.5F, 0.4F, 0.2F, 0.2F, 1.0F, "lune.biome.unfamiliar");
+
+    /**
+     * The note in the player's language.
+     *
+     * <p>Resolved here rather than where the table is built, because the table is built in a
+     * static initialiser: doing it there fixes every note in whatever language happened to be
+     * loaded at class-load and leaves them there for the rest of the session, however many
+     * times the player changes language afterwards.</p>
+     *
+     * <p>A note out of the config file is the player's own wording and is passed through.</p>
+     */
+    public String notes() {
+        return notes.startsWith("lune.") ? Lang.get(notes) : notes;
+    }
 
     public float availability(Need need) {
         return switch (need) {

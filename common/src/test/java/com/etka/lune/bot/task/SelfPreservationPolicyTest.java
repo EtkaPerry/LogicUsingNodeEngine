@@ -36,4 +36,23 @@ class SelfPreservationPolicyTest {
         List<String> actions = SelfPreservationPolicy.fallActions(false, true, true, false);
         assertEquals(List.of(SelfPreservationPolicy.CUSHION_CLUTCH), actions);
     }
+
+    @Test
+    void aFireballCanBeBattedBackOrSteppedOutOf() {
+        assertEquals(List.of(SelfPreservationPolicy.DEFLECT_FIRST, SelfPreservationPolicy.DODGE_FIRST),
+                SelfPreservationPolicy.fireballActions(true, true));
+        // Batting is offered first, because it is the one that ends the Ghast rather than the shot.
+        assertEquals(SelfPreservationPolicy.DEFLECT_FIRST,
+                SelfPreservationPolicy.fireballActions(true, true).get(0));
+    }
+
+    @Test
+    void walledInWithNothingToSwingWithStillLeavesSomethingToDo() {
+        // No hand that the attack packet survives and nowhere safe to step. The episode must still
+        // get a vocabulary: an empty action list would leave the learner nothing to rank.
+        assertEquals(List.of(SelfPreservationPolicy.DIRECT),
+                SelfPreservationPolicy.fireballActions(false, false));
+        assertEquals(List.of(SelfPreservationPolicy.DODGE_FIRST),
+                SelfPreservationPolicy.fireballActions(false, true));
+    }
 }

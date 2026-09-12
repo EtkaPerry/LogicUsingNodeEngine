@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.widget;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.command.Param;
 import com.etka.lune.bot.util.InventoryHelper;
 import com.etka.lune.client.gui.LuneScreen;
@@ -48,7 +49,7 @@ public class InventoryPicker extends AbstractWidget {
     private static final int PANEL_BG = 0xF01A1B20;
     private static final int SLOT_BG = 0xFF2A2B33;
     private static final int SLOT_HOVER = 0xFF3E5F86;
-    private static final int SLOT_SELECTED = 0xFF4C9EFF;
+    private static final int SLOT_SELECTED = LuneScreen.ACCENT;
 
     /** One offered item, and where it was found. */
     private record Entry(ItemStack stack, String origin) {}
@@ -63,7 +64,7 @@ public class InventoryPicker extends AbstractWidget {
     private int pointerY;
 
     public InventoryPicker(int x, int y, int width, int height) {
-        super(x, y, width, height, Component.literal("Inventory picker"));
+        super(x, y, width, height, Component.literal(Lang.get("lune.gui.inventory.inventory_picker")));
         visible = false;
         active = false;
     }
@@ -109,7 +110,7 @@ public class InventoryPicker extends AbstractWidget {
                 continue;
             }
             if (seen.add(stack.getItem())) {
-                entries.add(new Entry(stack, "Carried"));
+                entries.add(new Entry(stack, Lang.get("lune.gui.recipe.carried")));
             }
             collectContainer(stack, seen, nested, 0);
         }
@@ -130,7 +131,7 @@ public class InventoryPicker extends AbstractWidget {
         if (contents == null) {
             return;
         }
-        String origin = "In " + InventoryHelper.itemName(stack.getItem());
+        String origin = Lang.get("lune.gui.inventory.label") + InventoryHelper.itemName(stack.getItem());
         contents.nonEmptyItemCopyStream().forEach(inner -> {
             if (!inner.isEmpty() && seen.add(inner.getItem())) {
                 out.add(new Entry(inner, origin));
@@ -162,6 +163,11 @@ public class InventoryPicker extends AbstractWidget {
     @Override
     protected void extractWidgetRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY,
                                             float partialTick) {
+        // The picker is a modal overlay. LuneScreen renders it after the tab widgets so the
+        // selection stays in front of blueprint nodes and other tab content.
+    }
+
+    public void render(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float partialTick) {
         if (!open) {
             return;
         }
@@ -172,13 +178,13 @@ public class InventoryPicker extends AbstractWidget {
 
         var text = extractor.textRenderer();
         text.accept(getX() + PADDING, getY() + 7,
-                Component.literal("Choose from your inventory").withColor(LuneScreen.TEXT));
+                Component.literal(Lang.get("lune.gui.inventory.choose_from_inventory")).withColor(LuneScreen.TEXT));
         text.accept(getX() + getWidth() - 20, getY() + 7,
-                Component.literal("X").withColor(LuneScreen.TEXT_DIM));
+                Component.literal(Lang.get("lune.gui.inventory.x")).withColor(LuneScreen.TEXT_DIM));
 
         if (entries.isEmpty()) {
             text.accept(getX() + PADDING, gridTop(),
-                    Component.literal("You are not carrying anything.").withColor(LuneScreen.TEXT_DIM));
+                    Component.literal(Lang.get("lune.gui.inventory.not_carrying_anything")).withColor(LuneScreen.TEXT_DIM));
             drawFooter(extractor);
             return;
         }
@@ -228,7 +234,7 @@ public class InventoryPicker extends AbstractWidget {
         var text = extractor.textRenderer();
         int footerY = getY() + getHeight() - FOOTER_H + 6;
         text.accept(getX() + PADDING, footerY,
-                Component.literal("Search every item instead").withColor(LuneScreen.ACCENT));
+                Component.literal(Lang.get("lune.gui.inventory.search_every_item_instead")).withColor(LuneScreen.ACCENT));
     }
 
     private boolean footerHit(double x, double y) {

@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.bot.LuneProfiler;
 import com.etka.lune.bot.DebugInfo;
@@ -28,7 +29,7 @@ public final class DebugOverlay {
     private static final int LINE_HEIGHT = 10;
     private static final int BACKGROUND = 0xB0000000;
 
-    private static final int HEADING = 0xFF4C9EFF;
+    private static final int HEADING = LuneScreen.ACCENT;
     private static final int LABEL = 0xFF9A9AA4;
     private static final int VALUE = 0xFFE0E0E0;
     private static final int GOOD = 0xFF69E08A;
@@ -86,9 +87,7 @@ public final class DebugOverlay {
         }
         List<LuneProfiler.Row> rows = LuneProfiler.rows();
         long worst = LuneProfiler.worstTickMicros();
-        lines.add(new Line("profile worst tick " + worst / 1000 + "." + worst / 100 % 10 + " ms"
-                + (LuneProfiler.worstTickLabel().isEmpty() ? ""
-                : "  in " + LuneProfiler.worstTickLabel()),
+        lines.add(new Line(Lang.get("lune.gui.debug.profile_worst_tick_ms", worst / 1000, worst / 100 % 10, (LuneProfiler.worstTickLabel().isEmpty() ? "" : " in " + LuneProfiler.worstTickLabel())),
                 worst > 40_000 ? BAD : worst > 15_000 ? HEADING : LABEL));
         if (rows.isEmpty()) {
             lines.add(new Line("        measuring...", LABEL));
@@ -97,7 +96,7 @@ public final class DebugOverlay {
         int ticks = LuneProfiler.ticksInWindow();
         for (LuneProfiler.Row row : rows) {
             long perTick = row.selfMicros() / ticks;
-            lines.add(new Line(String.format("  %-16s %5d us/tick  %4d us/call  x%d",
+            lines.add(new Line(String.format(Lang.get("lune.gui.debug.16s_5d_us_tick_4d_us_call_x_d"),
                             trim(row.label()), perTick, row.averageMicros(), row.calls()),
                     perTick > 2000 ? BAD : VALUE));
         }

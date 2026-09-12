@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -62,7 +64,7 @@ public final class StopGameTask implements Task {
     private final Ending ending;
 
     private boolean leaving;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public StopGameTask(Ending ending) {
         this.ending = ending == null ? Ending.PAUSE : ending;
@@ -70,11 +72,12 @@ public final class StopGameTask implements Task {
 
     @Override
     public String name() {
-        return ending == Ending.PAUSE ? "Pause the Game" : "Stop the Game";
+        return Lang.get(ending == Ending.PAUSE
+                ? "lune.task.stop_game.pause" : "lune.task.stop_game.stop");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -89,17 +92,20 @@ public final class StopGameTask implements Task {
             return pause(ctx);
         }
         if (ctx.mc.level == null) {
-            status = !leaving ? "already out of the world"
-                    : ending == Ending.QUIT ? "closing the game" : "left the world";
+            status.set(!leaving ? "lune.status.stop_game.already_out"
+                    : ending == Ending.QUIT ? "lune.status.stop_game.closing_game"
+                    : "lune.status.stop_game.left_world");
             return TaskStatus.SUCCESS;
         }
         if (!leaving) {
             leaving = true;
             boolean single = ctx.mc.hasSingleplayerServer();
             boolean quit = ending == Ending.QUIT;
-            status = quit
-                    ? (single ? "saving the world and closing the game" : "disconnecting and closing the game")
-                    : (single ? "saving and leaving the world" : "disconnecting from the server");
+            status.set(quit
+                    ? (single ? "lune.status.stop_game.saving_and_closing"
+                            : "lune.status.stop_game.disconnecting_and_closing")
+                    : (single ? "lune.status.stop_game.saving_and_leaving"
+                            : "lune.status.stop_game.disconnecting"));
             ctx.debug.decide("task asked to stop; "
                     + (single ? "saving the world first" : "disconnecting"));
             // Scheduled rather than called straight from the tick: this tears down the very level
@@ -129,18 +135,21 @@ public final class StopGameTask implements Task {
             });
             return TaskStatus.RUNNING;
         }
-        status = ending == Ending.QUIT ? "closing the game" : "leaving the world";
+        if (ending == Ending.QUIT) {
+            status.set("lune.status.stop_game.closing_game");
+        } else {
+            status.set("lune.status.stop_game.leaving_world");
+        }
         return TaskStatus.RUNNING;
     }
 
     private TaskStatus pause(BotContext ctx) {
         if (!ctx.mc.hasSingleplayerServer()) {
-            status = "on a server the world keeps running; "
-                    + "choose Return to main menu or Quit the game instead";
+            status.set("lune.status.stop_game.server_world_keeps_running_choose_return");
             return TaskStatus.FAILED;
         }
         if (ctx.mc.screen instanceof PauseScreen) {
-            status = "paused";
+            status.set("lune.status.stop_game.paused");
             return TaskStatus.SUCCESS;
         }
         // Scheduled rather than opened inline: this runs from the client tick, and swapping the
@@ -148,7 +157,7 @@ public final class StopGameTask implements Task {
         // `true` is the pause-the-world form; the cosmetic one does not stop the clock.
         ctx.mc.schedule(() -> ctx.mc.setScreen(new PauseScreen(true)));
         ctx.debug.decide("task asked to pause; opening the menu and stopping the world clock");
-        status = "pausing";
+        status.set("lune.status.stop_game.pausing");
         return TaskStatus.RUNNING;
     }
 }

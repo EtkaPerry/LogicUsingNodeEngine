@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -46,7 +48,7 @@ public final class DepositTask implements Task {
     private GotoTask approach;
     private int cooldown;
     private int openAttempts;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public DepositTask(String filter, int radius) {
         this(filter, radius, false);
@@ -60,11 +62,17 @@ public final class DepositTask implements Task {
 
     @Override
     public String name() {
-        return "Deposit";
+        return Lang.get("lune.task.deposit.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Deposit");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -84,7 +92,7 @@ public final class DepositTask implements Task {
             target = BlockScanner.findNearest(ctx.level, ctx.player.blockPosition(),
                     CONTAINERS, radius, ctx.level.getMinY(), ctx.level.getMaxY());
             if (target == null) {
-                return unavailable("no chest or barrel within " + radius + " blocks");
+                return unavailable("lune.status.deposit.no_container_within", radius);
             }
         }
 
@@ -95,7 +103,7 @@ public final class DepositTask implements Task {
 
         if (!isContainerOpen(ctx)) {
             if (openAttempts >= MAX_OPEN_ATTEMPTS) {
-                return unavailable("can't open the container");
+                return unavailable("lune.status.deposit.cannot_open_container");
             }
             return openContainer(ctx);
         }
@@ -112,12 +120,12 @@ public final class DepositTask implements Task {
             }
             ctx.gameMode.handleContainerInput(menu.containerId, slot.index, 0, ContainerInput.QUICK_MOVE, ctx.player);
             cooldown = ACTION_COOLDOWN;
-            status = "depositing " + stack.getCount() + " " + stack.getHoverName().getString();
+            status.set("lune.status.deposit.depositing", stack.getCount(), stack.getHoverName().getString());
             return TaskStatus.RUNNING;
         }
 
         closeMenu(ctx);
-        status = "deposited " + filter;
+        status.set("lune.status.deposit.deposited", filter);
         return TaskStatus.SUCCESS;
     }
 
@@ -125,11 +133,11 @@ public final class DepositTask implements Task {
         if (inReach(ctx, target)) {
             if (BlockPlacer.use(ctx, target)) {
                 openAttempts++;
-                status = "opening the container";
+                status.set("lune.status.deposit.opening_container");
                 cooldown = ACTION_COOLDOWN + 2;
                 return TaskStatus.RUNNING;
             }
-            status = "aiming at the container";
+            status.set("lune.status.deposit.aiming_container");
             return TaskStatus.RUNNING;
         }
 
@@ -146,15 +154,20 @@ public final class DepositTask implements Task {
         if (walk == TaskStatus.FAILED) {
             approach.stop(ctx);
             approach = null;
-            return unavailable("can't reach the container");
+            return unavailable("lune.status.deposit.cannot_reach_container");
         }
-        status = "walking to the container";
+        status.set("lune.status.deposit.walking_container");
         return TaskStatus.RUNNING;
     }
 
-    private TaskStatus unavailable(String reason) {
-        status = optional ? reason + "; skipping optional deposit" : reason;
-        return optional ? TaskStatus.SUCCESS : TaskStatus.FAILED;
+    private TaskStatus unavailable(String key, Object... args) {
+        if (optional) {
+            status.set("lune.status.deposit.skipping_optional",
+                    new StatusText().set(key, args));
+            return TaskStatus.SUCCESS;
+        }
+        status.set(key, args);
+        return TaskStatus.FAILED;
     }
 
     private boolean isContainerOpen(BotContext ctx) {

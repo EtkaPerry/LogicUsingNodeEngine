@@ -1,5 +1,6 @@
 package com.etka.lune.bot;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.input.BotInput;
 import com.etka.lune.bot.input.LookController;
 import com.etka.lune.bot.learning.LearningSession;
@@ -69,7 +70,7 @@ public final class BotContext {
 
     /** Prints to chat, for things worth keeping: task finished, task failed. */
     public void chat(String message) {
-        player.sendSystemMessage(Component.literal("[Lune] " + message));
+        player.sendSystemMessage(Component.literal(Lang.get("lune.gui.bot_context.lune", message)));
     }
 
     /** Effective omniscient mining setting, including the current world's authority boundary. */

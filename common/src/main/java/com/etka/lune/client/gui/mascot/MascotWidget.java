@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.mascot;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -13,9 +14,7 @@ import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.gui.narration.NarratedElementType;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
 import net.minecraft.client.input.MouseButtonEvent;
-import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 import net.minecraft.util.Util;
 
 import java.util.ArrayList;
@@ -24,14 +23,6 @@ import java.util.List;
 /** Screen-level Lune assistant with contextual speech bubbles. */
 public final class MascotWidget extends AbstractWidget {
 
-    private static final Identifier BACK = Identifier.parse("lune:textures/gui/mascot/back.png");
-    private static final Identifier SOUL = Identifier.parse("lune:textures/gui/mascot/soul.png");
-    private static final Identifier FRONT = Identifier.parse("lune:textures/gui/mascot/front.png");
-
-    private static final int FRAME_SIZE = 96;
-    private static final int FRAME_COUNT = 8;
-    private static final int ATLAS_WIDTH = FRAME_SIZE * FRAME_COUNT;
-    private static final int ATLAS_HEIGHT = FRAME_SIZE * 3;
     private static final int NORMAL_ART_SIZE = 72;
     private static final long HOLD_TO_MOVE_MILLIS = 650L;
     private static final int BUBBLE_BORDER = 0xFF65758B;
@@ -43,9 +34,7 @@ public final class MascotWidget extends AbstractWidget {
     private static final int BUTTON_YES_HOVER = 0xFF3D7656;
     private static final int PROGRESS_BG = 0xFF151A22;
     private static final int PROGRESS_FILL = 0xFFF4C95D;
-    private static final int EYE_DARK = 0xFF3D2B12;
     private static final int BLOCKED_ACCENT = 0xFFE6A15C;
-    private static final int BLOCKED_ACCENT_DARK = 0xFF7A5036;
     private static final int WAITING_ACCENT = 0xFF8BB9D8;
     private static final int DANGER_ACCENT = 0xFFFF6868;
     private static final int SUCCESS_ACCENT = 0xFF7EDB92;
@@ -53,7 +42,14 @@ public final class MascotWidget extends AbstractWidget {
     private static final int MISSING_ACCENT = 0xFFC8A6F2;
     private static final int PAUSED_ACCENT = 0xFF91A4BE;
 
+    private Runnable trainingHint;
+    private Runnable trainingAnswer;
+    private String trainingSpeech = "";
+    private int trainingPage;
+    private int trainingPages = 1;
+
     private final MascotAdvisor advisor = new MascotAdvisor();
+    private final MascotRenderer mascot = new MascotRenderer();
     private boolean positionReady;
     private int positionedArtSize = NORMAL_ART_SIZE;
     private int artBaseX;
@@ -100,7 +96,7 @@ public final class MascotWidget extends AbstractWidget {
     private boolean movingMascot;
 
     public MascotWidget() {
-        super(0, 0, 1, 1, Component.literal("Lune assistant"));
+        super(0, 0, 1, 1, Component.literal(Lang.get("lune.gui.mascot.lune_assistant")));
     }
 
     /** Gives Lune the whole area below the tab bar without making transparent space clickable. */
@@ -118,6 +114,18 @@ public final class MascotWidget extends AbstractWidget {
         advisor.setSurface(surface);
     }
 
+    public void setTrainingLine(String line) {
+        String value = line == null ? "" : line;
+        if (!value.equals(trainingSpeech)) trainingPage = 0;
+        trainingSpeech = value;
+        advisor.setTrainingLine(line);
+    }
+
+    public void setTrainingHelp(Runnable hint, Runnable answer) {
+        trainingHint = hint;
+        trainingAnswer = answer;
+    }
+
     /** Rendered explicitly by {@link LuneScreen} after the active tab's foreground. */
     public void renderOverlay(GuiGraphicsExtractor extractor, int mouseX, int mouseY,
                               float partialTick) {
@@ -131,7 +139,7 @@ public final class MascotWidget extends AbstractWidget {
                                             float partialTick) {
         BotEngine engine = BotEngine.get();
         BotConfig config = BotConfig.get();
-        if (!config.showLune) {
+        if (!config.showLune && trainingHint == null) {
             bubbleVisible = false;
             closeVisible = false;
             bubbleDismissed = false;
@@ -149,14 +157,15 @@ public final class MascotWidget extends AbstractWidget {
 
         MascotAdvisor.Mood mood = advisor.mood(engine);
         int driftX = switch (mood) {
-            case SLEEPING, PAUSED -> 0;
+            case QUIET, RESTING, PAUSED, DEAD -> 0;
             case DANGER -> (int) Math.round(Math.sin(now / 75.0) * 3.0);
             case BLOCKED -> (int) Math.round(Math.sin(now / 95.0) * 2.0);
             case WAITING -> (int) Math.round(Math.sin(now / 1600.0));
             default -> (int) Math.round(Math.sin(now / 1150.0) * 2.0);
         };
         int hoverY = switch (mood) {
-            case SLEEPING -> 3 + (int) Math.round(Math.sin(now / 1350.0));
+            case QUIET, RESTING -> 2 + (int) Math.round(Math.sin(now / 1400.0) * 2.0);
+            case DEAD -> 3;
             case PAUSED -> 2;
             case DANGER -> (int) Math.round(Math.sin(now / 180.0) * 2.0);
             case BLOCKED -> 1 + (int) Math.round(Math.sin(now / 1100.0));
@@ -168,8 +177,12 @@ public final class MascotWidget extends AbstractWidget {
         };
         renderedArtX = artBaseX + driftX;
         renderedArtY = artBaseY + hoverY;
-        drawMascot(extractor, mood, renderedArtX, renderedArtY, artSize, now);
-        drawMoodAccents(extractor, font, mood, renderedArtX, renderedArtY, artSize, now);
+        mascot.draw(extractor, mood, renderedArtX, renderedArtY, artSize, now);
+
+        if (trainingHint != null) {
+            drawTrainingHelp(extractor, font, mouseX, mouseY, artSize);
+            return;
+        }
 
         hasPromptButtons = false;
         amountControlsVisible = false;
@@ -250,6 +263,50 @@ public final class MascotWidget extends AbstractWidget {
         }
     }
 
+    /** Training help stays beside Lune, including explicitly requested hints and answers. */
+    private void drawTrainingHelp(GuiGraphicsExtractor extractor, Font font, int mouseX, int mouseY,
+                                  int artSize) {
+        hasPromptButtons = false;
+        amountControlsVisible = false;
+        undoVisible = false;
+        dismissalOptionsVisible = false;
+        closeVisible = false;
+        bubbleVisible = true;
+        bubbleWidth = Math.min(320, getWidth() - 16);
+        var lines = wrap(font, trainingSpeech, bubbleWidth - 16, Integer.MAX_VALUE);
+        bubbleHeight = Math.min(getHeight() - 16, Math.max(100, 53 + lines.size() * 11));
+        bubbleX = Math.clamp(renderedArtX - bubbleWidth - 9, getX() + 4,
+                Math.max(getX() + 4, getX() + getWidth() - bubbleWidth - 4));
+        bubbleY = Math.clamp(renderedArtY + artSize / 2 - bubbleHeight / 2, getY() + 4,
+                Math.max(getY() + 4, getY() + getHeight() - bubbleHeight - 4));
+        drawBubble(extractor, bubbleX, bubbleY, bubbleWidth, bubbleHeight,
+                renderedArtX, renderedArtY, artSize, bubbleX < renderedArtX);
+        extractor.textRenderer().accept(bubbleX + 8, bubbleY + 6,
+                Component.literal(Lang.get("lune.gui.mascot.lune_training")).withColor(LuneScreen.ACCENT));
+        int capacity = Math.max(1, (bubbleHeight - 53) / 11);
+        trainingPages = Math.max(1, (lines.size() + capacity - 1) / capacity);
+        trainingPage = Math.min(trainingPage, trainingPages - 1);
+        for (int i = 0; i < capacity && trainingPage * capacity + i < lines.size(); i++) {
+            extractor.textRenderer().accept(bubbleX + 8, bubbleY + 25 + i * 11,
+                    Component.literal(lines.get(trainingPage * capacity + i)).withColor(LuneScreen.TEXT));
+        }
+        yesX = bubbleX + 8;
+        yesY = bubbleY + bubbleHeight - 21;
+        yesWidth = (bubbleWidth - 24) / (trainingPages > 1 ? 3 : 2);
+        noX = yesX + yesWidth + 4;
+        noWidth = yesWidth;
+        button(extractor, font, yesX, yesY, yesWidth,
+                inside(mouseX, mouseY, yesX, yesY, yesWidth, 15) ? BUTTON_HOVER : BUTTON, Lang.get("lune.gui.mascot.hint"));
+        button(extractor, font, noX, yesY, noWidth,
+                inside(mouseX, mouseY, noX, yesY, noWidth, 15) ? BUTTON_HOVER : BUTTON, Lang.get("lune.gui.mascot.answer"));
+        if (trainingPages > 1) {
+            arrowX = noX + noWidth + 4;
+            arrowWidth = yesWidth;
+            button(extractor, font, arrowX, yesY, arrowWidth, BUTTON,
+                    Lang.get("lune.mascot.more_pages", trainingPage + 1, trainingPages));
+        }
+    }
+
     private void layoutBubble(boolean prompting, boolean amountChoice, boolean progressVisible,
                               boolean expandedState, boolean preview, boolean undo,
                               boolean dismissalMenu,
@@ -324,180 +381,36 @@ public final class MascotWidget extends AbstractWidget {
                 Component.literal(mark).withColor(LuneScreen.TEXT));
     }
 
-    private void drawMascot(GuiGraphicsExtractor extractor, MascotAdvisor.Mood mood,
-                            int x, int y, int size, long now) {
-        int row = switch (mood) {
-            case IDLE, WAITING, SUCCESS, PAUSED, SLEEPING -> 0;
-            case WORKING, INVENTORY_FULL -> 1;
-            case THINKING, ASKING, BLOCKED, DANGER, MISSING_MATERIALS -> 2;
-        };
-        int frameMillis = switch (mood) {
-            case IDLE -> 720;
-            case WORKING -> 480;
-            case WAITING -> 1050;
-            case THINKING -> 640;
-            case ASKING -> 560;
-            case BLOCKED -> 820;
-            case DANGER -> 260;
-            case SUCCESS -> 420;
-            case INVENTORY_FULL -> 900;
-            case MISSING_MATERIALS -> 760;
-            case PAUSED -> 1400;
-            case SLEEPING -> 1250;
-        };
-        int frame = (int) ((now / frameMillis) % FRAME_COUNT);
-
-        extractor.blit(RenderPipelines.GUI_TEXTURED, BACK, x, y,
-                0, 0, size, size, FRAME_SIZE, FRAME_SIZE, FRAME_SIZE, FRAME_SIZE);
-        extractor.blit(RenderPipelines.GUI_TEXTURED, SOUL, x, y,
-                frame * FRAME_SIZE, row * FRAME_SIZE, size, size,
-                FRAME_SIZE, FRAME_SIZE, ATLAS_WIDTH, ATLAS_HEIGHT);
-        extractor.blit(RenderPipelines.GUI_TEXTURED, FRONT, x, y,
-                0, 0, size, size, FRAME_SIZE, FRAME_SIZE, FRAME_SIZE, FRAME_SIZE);
-
-        if (mood == MascotAdvisor.Mood.SLEEPING) {
-            drawClosedEye(extractor, x, y, size);
-        }
-    }
-
-    private void drawMoodAccents(GuiGraphicsExtractor extractor, Font font,
-                                 MascotAdvisor.Mood mood, int x, int y, int size, long now) {
-        if (mood == MascotAdvisor.Mood.THINKING) {
-            int direction = x + size + 24 <= getX() + getWidth() ? 1 : -1;
-            int phase = (int) ((now / 360L) % 4L);
-            for (int i = 0; i < 3; i++) {
-                int centreX = direction > 0 ? x + size + 2 + i * 6 : x - 2 - i * 6;
-                int centreY = Math.max(getY() + 3, y + size / 3 - i * 6);
-                int colour = i <= phase ? PROGRESS_FILL : 0x8065758B;
-                drawDiamond(extractor, centreX, centreY, i == 2 ? 2 : 1, colour);
-            }
-        } else if (mood == MascotAdvisor.Mood.BLOCKED) {
-            drawBlockedWall(extractor, x, y, size, now);
-        } else if (mood == MascotAdvisor.Mood.DANGER) {
-            drawDangerMark(extractor, font, x, y, size, now);
-        } else if (mood == MascotAdvisor.Mood.WAITING) {
-            drawWaitingDots(extractor, x, y, size, now);
-        } else if (mood == MascotAdvisor.Mood.INVENTORY_FULL) {
-            drawFullPack(extractor, x, y, size, now);
-        } else if (mood == MascotAdvisor.Mood.MISSING_MATERIALS) {
-            drawMissingMark(extractor, font, x, y, size, now);
-        } else if (mood == MascotAdvisor.Mood.PAUSED) {
-            drawPauseMark(extractor, x, y, size);
-        } else if (mood == MascotAdvisor.Mood.SLEEPING) {
-            int direction = x + size + 20 <= getX() + getWidth() ? 1 : -1;
-            int rise = (int) ((now / 180L) % 12L);
-            int textX = direction > 0 ? x + size - 2 : x - 7;
-            int textY = Math.max(getY() + 2, y + size / 4 - rise);
-            extractor.textRenderer().accept(textX, textY,
-                    Component.literal(rise < 6 ? "z" : "Z").withColor(0xB0F4C95D));
-            int secondX = textX + direction * 7;
-            int secondY = Math.max(getY() + 2, textY - 9);
-            extractor.textRenderer().accept(secondX, secondY,
-                    Component.literal("z").withColor(0x70FFF4C7));
-        } else if (mood == MascotAdvisor.Mood.SUCCESS) {
-            int pulse = (int) ((now / 260L) % 3L);
-            drawSparkle(extractor, x + 7, y + 8, pulse == 0 ? 2 : 1, SUCCESS_ACCENT);
-            drawSparkle(extractor, x + size - 7, y + size / 3, pulse == 2 ? 2 : 1,
-                    0xFFFFF4C7);
-        }
-    }
-
-    /** A tiny uneven wall gives Blocked a physical obstruction separate from Danger's alarm. */
-    private void drawBlockedWall(GuiGraphicsExtractor extractor, int x, int y, int size,
-                                 long now) {
-        int direction = x + size + 22 <= getX() + getWidth() ? 1 : -1;
-        int pulse = (int) ((now / 420L) % 3L);
-        int wallX = direction > 0 ? x + size + 3 : x - 15;
-        int wallY = Math.max(getY() + 4, y + size / 3 - 7);
-        for (int row = 0; row < 3; row++) {
-            for (int column = 0; column < 2; column++) {
-                int stagger = row % 2 == 0 ? 0 : 3;
-                int blockX = wallX + column * 7 + stagger;
-                int blockY = wallY + row * 7;
-                int colour = row == pulse ? BLOCKED_ACCENT : 0xFFB97845;
-                extractor.fill(blockX, blockY, blockX + 6, blockY + 6, BLOCKED_ACCENT_DARK);
-                extractor.fill(blockX + 1, blockY + 1, blockX + 5, blockY + 5, colour);
-            }
-        }
-    }
-
-    private void drawDangerMark(GuiGraphicsExtractor extractor, Font font, int x, int y,
-                                int size, long now) {
-        int direction = x + size + 18 <= getX() + getWidth() ? 1 : -1;
-        int pulse = (int) ((now / 160L) % 3L);
-        int markX = direction > 0 ? x + size + 3 : x - 9;
-        int markY = Math.max(getY() + 3, y + size / 4 - pulse);
-        extractor.textRenderer().accept(markX, markY,
-                Component.literal("!").withColor(DANGER_ACCENT));
-        drawSparkle(extractor, markX + (direction > 0 ? 7 : -2), markY + 2,
-                pulse == 0 ? 2 : 1, 0xFFFFB0A8);
-    }
-
-    private void drawWaitingDots(GuiGraphicsExtractor extractor, int x, int y, int size,
-                                 long now) {
-        int direction = x + size + 24 <= getX() + getWidth() ? 1 : -1;
-        int phase = (int) ((now / 420L) % 3L);
-        for (int i = 0; i < 3; i++) {
-            int dotX = direction > 0 ? x + size + 3 + i * 6 : x - 3 - i * 6;
-            int dotY = y + size / 3 - (i == phase ? 2 : 0);
-            drawDiamond(extractor, dotX, dotY, i == phase ? 2 : 1,
-                    i == phase ? WAITING_ACCENT : 0x80758CA4);
-        }
-    }
-
-    private void drawFullPack(GuiGraphicsExtractor extractor, int x, int y, int size, long now) {
-        int direction = x + size + 22 <= getX() + getWidth() ? 1 : -1;
-        int packX = direction > 0 ? x + size + 3 : x - 18;
-        int packY = Math.max(getY() + 4, y + size / 3);
-        int pulse = (int) ((now / 500L) % 2L);
-        extractor.fill(packX + 2, packY - 3, packX + 13, packY + 1, BLOCKED_ACCENT_DARK);
-        extractor.fill(packX, packY, packX + 15, packY + 12, BLOCKED_ACCENT_DARK);
-        extractor.fill(packX + 2, packY + 2, packX + 13, packY + 10,
-                pulse == 0 ? INVENTORY_ACCENT : 0xFFBD7D42);
-        extractor.fill(packX + 6, packY + 4, packX + 9, packY + 7, 0xFFFFE3A1);
-    }
-
-    private void drawMissingMark(GuiGraphicsExtractor extractor, Font font, int x, int y,
-                                 int size, long now) {
-        int direction = x + size + 20 <= getX() + getWidth() ? 1 : -1;
-        int markX = direction > 0 ? x + size + 3 : x - 10;
-        int markY = Math.max(getY() + 3,
-                y + size / 4 - (int) ((now / 500L) % 2L));
-        extractor.fill(markX, markY + 11, markX + 7, markY + 12, MISSING_ACCENT);
-        extractor.fill(markX, markY + 5, markX + 1, markY + 12, MISSING_ACCENT);
-        extractor.fill(markX + 6, markY + 5, markX + 7, markY + 12, MISSING_ACCENT);
-        extractor.textRenderer().accept(markX + (direction > 0 ? 9 : -7), markY,
-                Component.literal("?").withColor(MISSING_ACCENT));
-    }
-
-    private void drawPauseMark(GuiGraphicsExtractor extractor, int x, int y, int size) {
-        int direction = x + size + 18 <= getX() + getWidth() ? 1 : -1;
-        int markX = direction > 0 ? x + size + 4 : x - 12;
-        int markY = Math.max(getY() + 3, y + size / 3);
-        extractor.fill(markX, markY, markX + 3, markY + 13, PAUSED_ACCENT);
-        extractor.fill(markX + 6, markY, markX + 9, markY + 13, PAUSED_ACCENT);
-    }
-
     private static boolean expandedState(MascotAdvisor.Mood mood) {
         return switch (mood) {
-            case WAITING, BLOCKED, DANGER, SUCCESS, INVENTORY_FULL, MISSING_MATERIALS, PAUSED -> true;
+            case WAITING, BLOCKED, DANGER, SUCCESS, INVENTORY_FULL, MISSING_MATERIALS, PAUSED,
+                    FIGHT, FLEE, HURT, RECOVERING, DEAD, EFFECT, HUNGRY, STALLED -> true;
             default -> false;
         };
     }
 
     private static String stateTitle(MascotAdvisor.Mood mood) {
         return switch (mood) {
-            case WORKING -> "LUNE IS WORKING";
-            case WAITING -> "LUNE IS WAITING";
-            case BLOCKED -> "LUNE IS BLOCKED";
-            case DANGER -> "DANGER";
-            case SUCCESS -> "SUCCESS";
-            case INVENTORY_FULL -> "INVENTORY FULL";
-            case MISSING_MATERIALS -> "MISSING MATERIALS";
-            case PAUSED -> "LUNE IS STOPPED";
-            case THINKING -> "LUNE IS THINKING";
-            case SLEEPING -> "LUNE IS SLEEPING";
-            default -> "LUNE";
+            case WORKING -> Lang.get("lune.mascot.banner.working");
+            case WAITING -> Lang.get("lune.mascot.banner.waiting");
+            case BLOCKED -> Lang.get("lune.mascot.banner.blocked");
+            case DANGER -> Lang.get("lune.mascot.banner.danger");
+            case SUCCESS -> Lang.get("lune.mascot.banner.success");
+            case INVENTORY_FULL -> Lang.get("lune.mascot.banner.inventory_full");
+            case MISSING_MATERIALS -> Lang.get("lune.mascot.banner.missing_materials");
+            case PAUSED -> Lang.get("lune.mascot.banner.paused");
+            case THINKING -> Lang.get("lune.mascot.banner.thinking");
+            case QUIET -> Lang.get("lune.mascot.banner.sleeping");
+            case RESTING -> Lang.get("lune.mascot.banner.resting");
+            case FIGHT -> Lang.get("lune.mascot.banner.fight");
+            case FLEE -> Lang.get("lune.mascot.banner.flee");
+            case HURT -> Lang.get("lune.mascot.banner.hurt");
+            case RECOVERING -> Lang.get("lune.mascot.banner.recovering");
+            case DEAD -> Lang.get("lune.mascot.banner.dead");
+            case EFFECT -> Lang.get("lune.mascot.banner.effect");
+            case HUNGRY -> Lang.get("lune.mascot.banner.hungry");
+            case STALLED -> Lang.get("lune.mascot.banner.stalled");
+            default -> Lang.get("lune.gui.about.lune");
         };
     }
 
@@ -505,37 +418,14 @@ public final class MascotWidget extends AbstractWidget {
         return switch (mood) {
             case WAITING -> WAITING_ACCENT;
             case BLOCKED -> BLOCKED_ACCENT;
-            case DANGER -> DANGER_ACCENT;
+            case DANGER, FIGHT, FLEE, HURT, DEAD -> DANGER_ACCENT;
+            case RECOVERING, EFFECT, HUNGRY, STALLED -> MISSING_ACCENT;
             case SUCCESS -> SUCCESS_ACCENT;
             case INVENTORY_FULL -> INVENTORY_ACCENT;
             case MISSING_MATERIALS -> MISSING_ACCENT;
             case PAUSED -> PAUSED_ACCENT;
             default -> LuneScreen.ACCENT;
         };
-    }
-
-    private static void drawClosedEye(GuiGraphicsExtractor extractor, int x, int y, int size) {
-        int centreX = x + size / 2;
-        int eyeY = y + size / 2;
-        int halfWidth = Math.max(4, size / 10);
-        int thickness = Math.max(2, size / 36);
-        extractor.fill(centreX - halfWidth, eyeY, centreX - 1, eyeY + thickness, EYE_DARK);
-        extractor.fill(centreX - 1, eyeY + 1, centreX + 2, eyeY + thickness + 1, EYE_DARK);
-        extractor.fill(centreX + 2, eyeY, centreX + halfWidth, eyeY + thickness, EYE_DARK);
-    }
-
-    private static void drawDiamond(GuiGraphicsExtractor extractor, int centreX, int centreY,
-                                    int radius, int colour) {
-        extractor.fill(centreX - radius, centreY, centreX + radius + 1, centreY + 1, colour);
-        if (radius > 1) {
-            extractor.fill(centreX - 1, centreY - 1, centreX + 2, centreY + 2, colour);
-        }
-    }
-
-    private static void drawSparkle(GuiGraphicsExtractor extractor, int centreX, int centreY,
-                                    int radius, int colour) {
-        extractor.fill(centreX, centreY - radius, centreX + 1, centreY + radius + 1, colour);
-        extractor.fill(centreX - radius, centreY, centreX + radius + 1, centreY + 1, colour);
     }
 
     private void drawPromptButtons(GuiGraphicsExtractor extractor, Font font, int mouseX, int mouseY,
@@ -557,7 +447,7 @@ public final class MascotWidget extends AbstractWidget {
         button(extractor, font, yesX, yesY, yesWidth,
                 yesHover ? BUTTON_YES_HOVER : BUTTON_YES, advisor.acceptLabel());
         button(extractor, font, noX, yesY, noWidth,
-                noHover ? BUTTON_HOVER : BUTTON, "Not now");
+                noHover ? BUTTON_HOVER : BUTTON, Lang.get("lune.gui.mascot.now"));
         extractor.fill(arrowX, yesY, arrowX + arrowWidth, yesY + 15,
                 arrowHover ? BUTTON_HOVER : BUTTON);
         extractor.textRenderer().accept(arrowX + Math.max(2, (arrowWidth - font.width("▼")) / 2),
@@ -570,7 +460,7 @@ public final class MascotWidget extends AbstractWidget {
         dismissalX = x;
         dismissalWidth = width;
         extractor.textRenderer().accept(x, y,
-                Component.literal("How should I remember this?").withColor(LuneScreen.TEXT_DIM));
+                Component.literal(Lang.get("lune.gui.mascot.how_should_i_remember")).withColor(LuneScreen.TEXT_DIM));
         int rowY = y + 14;
         int rowHeight = 31;
         for (int i = 0; i < MascotAdvisor.Dismissal.values().length; i++) {
@@ -592,17 +482,17 @@ public final class MascotWidget extends AbstractWidget {
         dismissalBackY = rowY;
         boolean backHover = inside(mouseX, mouseY, x, dismissalBackY, width, 18);
         button(extractor, font, x, dismissalBackY, width,
-                backHover ? BUTTON_HOVER : PROGRESS_BG, "Back");
+                backHover ? BUTTON_HOVER : PROGRESS_BG, Lang.get("lune.gui.mascot.back"));
     }
 
     private static void drawPreview(GuiGraphicsExtractor extractor, Font font, int x, int width,
                                     int y, String before, String after) {
         extractor.fill(x, y, x + width, y + 25, PROGRESS_BG);
         extractor.textRenderer().accept(x + 4, y + 3,
-                Component.literal(fit(font, "Before  " + before, width - 8))
+                Component.literal(fit(font, Lang.get("lune.mascot.preview_before", before), width - 8))
                         .withColor(LuneScreen.TEXT_DIM));
         extractor.textRenderer().accept(x + 4, y + 14,
-                Component.literal(fit(font, "After   " + after, width - 8))
+                Component.literal(fit(font, Lang.get("lune.mascot.preview_after", after), width - 8))
                         .withColor(PROGRESS_FILL));
     }
 
@@ -613,7 +503,7 @@ public final class MascotWidget extends AbstractWidget {
         undoWidth = width;
         undoVisible = true;
         boolean hover = inside(mouseX, mouseY, x, y, width, 15);
-        button(extractor, font, x, y, width, hover ? BUTTON_HOVER : BUTTON, "Undo");
+        button(extractor, font, x, y, width, hover ? BUTTON_HOVER : BUTTON, Lang.get("lune.gui.tasks.undo"));
     }
 
     private void drawAmountPicker(GuiGraphicsExtractor extractor, Font font, int mouseX, int mouseY,
@@ -663,7 +553,7 @@ public final class MascotWidget extends AbstractWidget {
 
     @Override
     public boolean isMouseOver(double mouseX, double mouseY) {
-        if (!visible || !BotConfig.get().showLune) {
+        if (!visible || (!BotConfig.get().showLune && trainingHint == null)) {
             return false;
         }
         int artSize = artSize(BotConfig.get());
@@ -675,6 +565,20 @@ public final class MascotWidget extends AbstractWidget {
 
     @Override
     public void onClick(MouseButtonEvent event, boolean doubleClick) {
+        if (trainingHint != null && bubbleVisible) {
+            if (inside(event.x(), event.y(), yesX, yesY, yesWidth, 15)) {
+                trainingHint.run();
+                return;
+            }
+            if (inside(event.x(), event.y(), noX, yesY, noWidth, 15)) {
+                trainingAnswer.run();
+                return;
+            }
+            if (trainingPages > 1 && inside(event.x(), event.y(), arrowX, yesY, arrowWidth, 15)) {
+                trainingPage = (trainingPage + 1) % trainingPages;
+                return;
+            }
+        }
         if (bubbleVisible && closeVisible
                 && inside(event.x(), event.y(), closeButtonX, closeButtonY,
                 closeButtonSize, closeButtonSize)) {
@@ -854,17 +758,17 @@ public final class MascotWidget extends AbstractWidget {
         BotEngine engine = BotEngine.get();
         String narration = advisor.shouldSpeak(engine)
                 ? "Lune. " + advisor.speech(engine)
-                : "Lune is quietly hovering.";
+                : Lang.get("lune.gui.mascot.lune_quietly_hovering");
         if (advisor.isPrompting()) {
             narration += advisor.hasAmountChoice()
-                    ? " Choose an amount, then " + advisor.acceptLabel() + ", or open Options."
-                    : " " + advisor.acceptLabel() + ", or open Options.";
+                    ? Lang.get("lune.gui.mascot.choose_amount_then_or_open_options", advisor.acceptLabel())
+                    : Lang.get("lune.gui.mascot.or_open_options", advisor.acceptLabel());
             if (advisor.isDismissalMenu()) {
-                narration += " Choose how Lune should remember this suggestion.";
+                narration += Lang.get("lune.gui.mascot.choose_how_lune_should_remember");
             }
         }
         if (advisor.canUndo()) {
-            narration += " Undo is available.";
+            narration += Lang.get("lune.gui.mascot.undo_available");
         }
         output.add(NarratedElementType.TITLE, Component.literal(narration));
     }

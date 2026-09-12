@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.tab;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.bot.BotStatistics;
 import com.etka.lune.bot.DebugInfo;
@@ -75,34 +76,32 @@ public class MainTab extends LuneTab {
     private int bottomSafetyWorldWidth = -1;
 
     public MainTab() {
-        super(Component.literal("Main"));
+        super(Component.literal(Lang.get("lune.gui.main.title")));
 
-        pauseButton = add(Button.builder(Component.literal("Pause"), b -> togglePause())
+        pauseButton = add(Button.builder(Component.literal(Lang.get("lune.gui.main.pause")), b -> togglePause())
                 .size(76, CONTROL_H).build());
-        clearButton = add(Button.builder(Component.literal("Clear queue"), b -> BotEngine.get().clearQueue())
+        clearButton = add(Button.builder(Component.literal(Lang.get("lune.gui.main.clear_queue")), b -> BotEngine.get().clearQueue())
                 .size(92, CONTROL_H).build());
-        stopButton = add(Button.builder(Component.literal("Stop all"), b -> BotEngine.get().stopAll())
+        stopButton = add(Button.builder(Component.literal(Lang.get("lune.gui.main.stop_all")), b -> BotEngine.get().stopAll())
                 .size(76, CONTROL_H).build());
         queueList = add(new ListPanel<>(0, 0, 10, 10, Task::name, task -> {}));
-        launchList = add(new ListPanel<>(0, 0, 10, 10, TaskGraph::describe, this::launch));
+        launchList = add(new ListPanel<>(0, 0, 10, 10, TaskGraph::describe, task -> {}));
         launchList.setActions(List.of(
-                new ListPanel.RowAction<>(GuiIcons.Icon.PLAY, "Start", this::launch,
+                new ListPanel.RowAction<>(GuiIcons.Icon.PLAY, Lang.get("lune.gui.main.start"), this::launch,
                         task -> task != null && !task.nodes.isEmpty(),
                         task -> !isRunningTask(task)),
-                new ListPanel.RowAction<>(GuiIcons.Icon.PAUSE, "Pause", this::toggleTaskPause,
+                new ListPanel.RowAction<>(GuiIcons.Icon.PAUSE, Lang.get("lune.gui.main.pause"), this::toggleTaskPause,
                         this::isRunningTask, this::isRunningTask),
-                new ListPanel.RowAction<>(GuiIcons.Icon.RENAME, "Rename",
+                new ListPanel.RowAction<>(GuiIcons.Icon.RENAME, Lang.get("lune.gui.main.rename"),
                         task -> taskEditorOpener.accept(task, true)),
-                new ListPanel.RowAction<>(GuiIcons.Icon.VIEW, "View",
-                        task -> taskEditorOpener.accept(task, false)),
-                new ListPanel.RowAction<>(GuiIcons.Icon.STOP, "Stop", this::stop,
-                        this::isRunningTask, this::isRunningTask)));
+                new ListPanel.RowAction<>(GuiIcons.Icon.VIEW, Lang.get("lune.gui.main.view"),
+                        task -> taskEditorOpener.accept(task, false))));
         statisticsPanel = add(new DashboardStatsPanel(0, 0, 10, 10));
-        statisticsCurrentButton = add(Button.builder(Component.literal("Current"),
+        statisticsCurrentButton = add(Button.builder(Component.literal(Lang.get("lune.gui.main.current")),
                 b -> selectStatistics(StatisticsScope.CURRENT)).size(62, 16).build());
-        statisticsLastButton = add(Button.builder(Component.literal("Last task"),
+        statisticsLastButton = add(Button.builder(Component.literal(Lang.get("lune.gui.main.last_task")),
                 b -> selectStatistics(StatisticsScope.LAST_RUN)).size(70, 16).build());
-        statisticsAllTimeButton = add(Button.builder(Component.literal("All time"),
+        statisticsAllTimeButton = add(Button.builder(Component.literal(Lang.get("lune.gui.main.all_time")),
                 b -> selectStatistics(StatisticsScope.ALL_TIME)).size(64, 16).build());
         topStatusSplitter = add(new VerticalSplitter(0, 0, 1, 1, this::resizeTopStatus));
         topActivitySplitter = add(new VerticalSplitter(0, 0, 1, 1, this::resizeTopActivity));
@@ -128,7 +127,7 @@ public class MainTab extends LuneTab {
     @Override
     public void tick() {
         BotEngine engine = BotEngine.get();
-        pauseButton.setMessage(Component.literal(engine.isPaused() ? "Resume" : "Pause"));
+        pauseButton.setMessage(Component.literal(Lang.get(engine.isPaused() ? "lune.gui.main.resume" : "lune.gui.main.pause")));
         pauseButton.active = engine.getCurrent() != null;
         clearButton.active = !engine.getQueue().isEmpty();
         stopButton.active = engine.getCurrent() != null || !engine.getQueue().isEmpty();
@@ -166,12 +165,6 @@ public class MainTab extends LuneTab {
     private boolean isRunningTask(TaskGraph task) {
         return task != null && BotEngine.get().getCurrent() instanceof TaskRunner running
                 && running.currentTask() == task;
-    }
-
-    private void stop(TaskGraph task) {
-        if (isRunningTask(task)) {
-            BotEngine.get().stopAll();
-        }
     }
 
     private void toggleTaskPause(TaskGraph task) {
@@ -355,7 +348,7 @@ public class MainTab extends LuneTab {
         drawSafetyWorldCard(extractor, frame.safetyWorld(), mc);
         drawStatisticsCard(extractor, frame.statistics());
         extractor.textRenderer().accept(frame.left(), frame.hintY(),
-                Component.literal(fit("K  Pause / resume     Shift+K  Stop everything", frame.width()))
+                Component.literal(fit(Lang.get("lune.gui.main.k_pause_resume_shift_k_stop_everything"), frame.width()))
                         .withColor(LuneScreen.TEXT_DIM));
         drawTaskActionTooltip(extractor, mouseX, mouseY);
     }
@@ -382,9 +375,9 @@ public class MainTab extends LuneTab {
 
     private void drawStatusCard(GuiGraphicsExtractor extractor, DashboardFrame.Card card,
                                 BotEngine engine, Task current, DebugInfo debug) {
-        drawPanelHeader(extractor, card, "BOT STATUS");
+        drawPanelHeader(extractor, card, Lang.get("lune.gui.main.bot_status"));
         int stateColour = stateColour(engine, current);
-        String state = engine.describeState().toUpperCase(Locale.ROOT);
+        String state = current == null ? Lang.get("lune.gui.main.idle") : engine.isPaused() ? Lang.get("lune.gui.overlay.paused") : Lang.get("lune.gui.overlay.working");
         int availableStateWidth = Math.max(1, card.width() - 20);
         int stateWidth = Math.min(availableStateWidth,
                 Math.max(62, Minecraft.getInstance().font.width(state) + 18));
@@ -395,70 +388,71 @@ public class MainTab extends LuneTab {
                 Component.literal(fit(state, Math.max(1, stateWidth - 18))).withColor(stateColour));
 
         drawRows(extractor, card, 62, List.of(
-                new Row(1, "Current", current == null ? "Nothing is running" : current.name(),
+                new Row(1, Lang.get("lune.gui.main.current"), current == null ? Lang.get("lune.gui.main.nothing_running") : current.name(),
                         LuneScreen.TEXT),
-                new Row(2, "", current == null ? "Ready for a task"
-                        : firstNonBlank(current.status(), debug.taskStatus, "Working"), stateColour),
+                new Row(2, "", current == null ? Lang.get("lune.gui.main.ready_task")
+                        : firstNonBlank(current.status(), debug.taskStatus, Lang.get("lune.gui.overlay.working")), stateColour),
                 current instanceof TaskRunner task
-                        ? new Row(3, "Flow", task.describeFlow(), LuneScreen.ACCENT)
-                        : new Row(3, "Queue next",
-                                debug.nextTask.isBlank() ? "Nothing queued" : debug.nextTask,
+                        ? new Row(3, Lang.get("lune.gui.main.flow"), task.describeFlow(), LuneScreen.ACCENT)
+                        : new Row(3, Lang.get("lune.gui.main.queue_next"),
+                                debug.nextTask.isBlank() ? Lang.get("lune.gui.main.nothing_queued") : debug.nextTask,
                                 LuneScreen.TEXT),
-                new Row(4, "Last", firstNonBlank(engine.getLastMessage(), "No recent activity"),
+                new Row(4, Lang.get("lune.gui.main.last"), firstNonBlank(engine.getLastMessage(), Lang.get("lune.gui.main.recent_activity")),
                         LuneScreen.TEXT_DIM)));
     }
 
     private void drawRecentActivityCard(GuiGraphicsExtractor extractor, DashboardFrame.Card card,
                                         BotEngine engine, DebugInfo debug) {
-        drawPanelHeader(extractor, card, "RECENT ACTIVITY");
-        String last = firstNonBlank(engine.getLastMessage(), "No activity yet");
+        drawPanelHeader(extractor, card, Lang.get("lune.gui.main.recent_activity_2"));
+        String last = firstNonBlank(engine.getLastMessage(), Lang.get("lune.gui.main.activity_yet"));
         String reason = stopReason(engine, debug);
-        String event = firstNonBlank(debug.lastEvent, "No event recorded");
+        String event = firstNonBlank(debug.lastEvent, Lang.get("lune.gui.main.no_event"));
         String decision = debug.decisions.peekLast();
         drawRows(extractor, card, 62, List.of(
-                new Row(1, "Last", last, LuneScreen.TEXT),
-                new Row(2, "Why stopped", reason, reason.startsWith("still")
+                new Row(1, Lang.get("lune.gui.main.last"), last, LuneScreen.TEXT),
+                new Row(2, Lang.get("lune.gui.main.why_stopped"), reason, engine.getCurrent() != null || engine.getLastMessage().isBlank()
                         ? LuneScreen.TEXT_DIM : PAUSED),
-                new Row(3, "Event", event, LuneScreen.TEXT_DIM),
-                new Row(4, "Decision", firstNonBlank(decision, "-"), LuneScreen.ACCENT)));
+                new Row(3, Lang.get("lune.gui.main.event"), event, LuneScreen.TEXT_DIM),
+                new Row(4, Lang.get("lune.gui.main.decision"), firstNonBlank(decision, "-"), LuneScreen.ACCENT)));
     }
 
     private void drawWorkingNodeCard(GuiGraphicsExtractor extractor, DashboardFrame.Card card,
                                      BotEngine engine, Task current, DebugInfo debug) {
-        drawPanelHeader(extractor, card, "CURRENT WORKING NODE");
+        drawPanelHeader(extractor, card, Lang.get("lune.gui.main.current_working_node"));
         if (current == null) {
             drawRows(extractor, card, 62, List.of(
-                    new Row(1, "Node", "No active node", LuneScreen.TEXT_DIM),
-                    new Row(2, "Queue", debug.nextTask.isBlank() ? "Nothing queued" : debug.nextTask,
+                    new Row(1, Lang.get("lune.gui.main.node"), Lang.get("lune.gui.main.active_node"), LuneScreen.TEXT_DIM),
+                    new Row(2, Lang.get("lune.gui.main.queue"), debug.nextTask.isBlank() ? Lang.get("lune.gui.main.nothing_queued") : debug.nextTask,
                             LuneScreen.TEXT)));
             return;
         }
 
-        String node = "Task-level work";
+        String node = Lang.get("lune.gui.main.task_level_work");
         if (current instanceof TaskRunner runner && runner.currentNode() != null) {
-            node = runner.currentNode().commandId;
+            var command = com.etka.lune.bot.command.CommandRegistry.byId(runner.currentNode().commandId);
+            node = command == null ? runner.currentNode().commandId : command.name();
         }
         TaskProgress progress = current.progress();
-        String progressText = progress == null ? "Open-ended" : progress.label();
+        String progressText = progress == null ? Lang.get("lune.gui.main.open_ended") : progress.label();
         drawRows(extractor, card, 62, List.of(
-                new Row(1, "Node", node, LuneScreen.ACCENT),
-                new Row(2, "Status", firstNonBlank(current.status(), debug.taskStatus, "Working"),
+                new Row(1, Lang.get("lune.gui.main.node"), node, LuneScreen.ACCENT),
+                new Row(2, Lang.get("lune.gui.main.state"), firstNonBlank(current.status(), debug.taskStatus, Lang.get("lune.gui.overlay.working")),
                         stateColour(engine, current)),
-                new Row(3, "Progress", progressText, LuneScreen.TEXT),
-                new Row(4, "Path", debug.pathLength <= 0 ? "No route" : debug.pathIndex + " / "
+                new Row(3, Lang.get("lune.gui.main.progress"), progressText, LuneScreen.TEXT),
+                new Row(4, Lang.get("lune.gui.main.path"), debug.pathLength <= 0 ? Lang.get("lune.gui.main.no_route") : debug.pathIndex + " / "
                         + debug.pathLength, LuneScreen.TEXT_DIM),
-                new Row(5, "Goal", debug.goal, LuneScreen.TEXT_DIM)));
+                new Row(5, Lang.get("lune.gui.main.goal"), debug.goal, LuneScreen.TEXT_DIM)));
     }
 
     /** Draws the heading for the persistent task list in the left bottom column. */
     private void drawSavedTasksHeader(GuiGraphicsExtractor extractor, DashboardFrame.Card card,
                                       BotEngine engine) {
-        drawPanelHeader(extractor, card, "SAVED TASKS");
+        drawPanelHeader(extractor, card, Lang.get("lune.gui.main.saved_tasks"));
         var font = Minecraft.getInstance().font;
         int count = engine.getQueue().size();
-        String subtitle = count == 0 ? "Click a task to start it."
-                : count + (count == 1 ? " task waiting" : " tasks waiting");
-        if (font.width("SAVED TASKS") + font.width(subtitle) + 28 <= card.width()) {
+        String subtitle = count == 0 ? Lang.get("lune.gui.main.press_start_run_task")
+                : count + (count == 1 ? Lang.get("lune.gui.main.task_waiting") : Lang.get("lune.gui.main.tasks_waiting"));
+        if (font.width(Lang.get("lune.gui.main.saved_tasks")) + font.width(subtitle) + 28 <= card.width()) {
             extractor.textRenderer().accept(card.x() + card.width() - 10 - font.width(subtitle),
                     card.y() + 6, Component.literal(subtitle).withColor(LuneScreen.TEXT_DIM));
         }
@@ -466,90 +460,90 @@ public class MainTab extends LuneTab {
 
     private void drawSafetyVitalsCard(GuiGraphicsExtractor extractor, DashboardFrame.Card card,
                                       Minecraft mc) {
-        drawPanelHeader(extractor, card, "SAFETY MONITOR");
+        drawPanelHeader(extractor, card, Lang.get("lune.gui.main.safety_monitor"));
         if (mc.player == null || mc.level == null) {
             drawRows(extractor, card, 64, List.of(
-                    new Row(1, "", "Not in a world", LuneScreen.TEXT_DIM),
-                    new Row(2, "", "Live player safety data will appear here", LuneScreen.TEXT_DIM)));
+                    new Row(1, "", Lang.get("lune.gui.main.world"), LuneScreen.TEXT_DIM),
+                    new Row(2, "", Lang.get("lune.gui.main.live_player_safety_data_appear_here"), LuneScreen.TEXT_DIM)));
             return;
         }
 
         BotConfig config = BotConfig.get();
         List<Row> rows = new ArrayList<>();
         int priority = 1;
-        rows.add(new Row(priority++, "Health", formatOne(mc.player.getHealth()) + " / "
+        rows.add(new Row(priority++, Lang.get("lune.gui.main.health"), formatOne(mc.player.getHealth()) + " / "
                 + formatOne(mc.player.getMaxHealth()), healthColour(mc.player.getHealth(),
                 mc.player.getMaxHealth())));
-        rows.add(new Row(priority++, "Hunger", mc.player.getFoodData().getFoodLevel() + " / 20",
+        rows.add(new Row(priority++, Lang.get("lune.gui.main.hunger"), mc.player.getFoodData().getFoodLevel() + " / 20",
                 mc.player.getFoodData().getFoodLevel() <= 8 ? PAUSED : LuneScreen.TEXT));
         if (config.dashboardShowEnemies) {
-            rows.add(new Row(priority++, "Enemies", visibleEnemies(mc) + " visible", PAUSED));
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.enemies"), visibleEnemies(mc) + Lang.get("lune.gui.main.visible"), PAUSED));
         }
-        rows.add(new Row(priority++, "Inventory", occupiedSlots(mc.player) + "/"
-                + mc.player.getInventory().getContainerSize() + " used", LuneScreen.TEXT));
-        rows.add(new Row(priority++, "Air", mc.player.getAirSupply() + " / " + mc.player.getMaxAirSupply(),
+        rows.add(new Row(priority++, Lang.get("lune.gui.main.inventory"), occupiedSlots(mc.player) + "/"
+                + mc.player.getInventory().getContainerSize() + Lang.get("lune.gui.main.used"), LuneScreen.TEXT));
+        rows.add(new Row(priority++, Lang.get("lune.gui.main.air"), mc.player.getAirSupply() + " / " + mc.player.getMaxAirSupply(),
                 mc.player.getAirSupply() < mc.player.getMaxAirSupply() / 3 ? PAUSED : LuneScreen.TEXT));
         if (config.dashboardShowSaturation) {
-            rows.add(new Row(priority++, "Saturation", formatOne(mc.player.getFoodData().getSaturationLevel()),
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.saturation"), formatOne(mc.player.getFoodData().getSaturationLevel()),
                     LuneScreen.TEXT_DIM));
         }
         if (config.dashboardShowItemConditions) {
-            rows.add(new Row(priority++, "Main hand", itemCondition(mc.player.getMainHandItem()),
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.main_hand"), itemCondition(mc.player.getMainHandItem()),
                     LuneScreen.TEXT));
-            rows.add(new Row(priority++, "Off hand", itemCondition(mc.player.getOffhandItem()),
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.off_hand"), itemCondition(mc.player.getOffhandItem()),
                     LuneScreen.TEXT));
         }
-        rows.add(new Row(priority, "Armor", mc.player.getArmorValue() + " armor", LuneScreen.TEXT));
+        rows.add(new Row(priority, Lang.get("lune.gui.main.armor"), mc.player.getArmorValue() + Lang.get("lune.gui.main.armor_2"), LuneScreen.TEXT));
         drawRows(extractor, card, 64, rows);
     }
 
     private void drawSafetyWorldCard(GuiGraphicsExtractor extractor, DashboardFrame.Card card,
                                      Minecraft mc) {
-        drawPanelHeader(extractor, card, "SAFETY / WORLD");
+        drawPanelHeader(extractor, card, Lang.get("lune.gui.main.safety_world"));
         if (mc.player == null || mc.level == null) {
             drawRows(extractor, card, 64, List.of(
-                    new Row(1, "", "Not in a world", LuneScreen.TEXT_DIM),
-                    new Row(2, "", "Live world data will appear here", LuneScreen.TEXT_DIM)));
+                    new Row(1, "", Lang.get("lune.gui.main.world"), LuneScreen.TEXT_DIM),
+                    new Row(2, "", Lang.get("lune.gui.main.live_world_data_appear_here"), LuneScreen.TEXT_DIM)));
             return;
         }
 
         BotConfig config = BotConfig.get();
-        String seed = AutoRun.worldSeed() == 0L ? "server hidden" : Long.toString(AutoRun.worldSeed());
+        String seed = AutoRun.worldSeed() == 0L ? Lang.get("lune.gui.main.server_hidden") : Long.toString(AutoRun.worldSeed());
         List<Row> rows = new ArrayList<>();
         int priority = 1;
         if (config.dashboardShowCoordinates) {
-            rows.add(new Row(priority++, "Position", mc.player.blockPosition().toShortString(),
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.position"), mc.player.blockPosition().toShortString(),
                     LuneScreen.TEXT));
         }
-        rows.add(new Row(priority++, "Dimension", mc.level.dimension().identifier().toString(),
+        rows.add(new Row(priority++, Lang.get("lune.gui.main.dimension"), mc.level.dimension().identifier().toString(),
                 LuneScreen.TEXT));
         if (config.dashboardShowSeed) {
-            rows.add(new Row(priority++, "Seed", seed, LuneScreen.TEXT_DIM));
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.seed"), seed, LuneScreen.TEXT_DIM));
         }
         if (config.dashboardShowFacing) {
-            rows.add(new Row(priority++, "Facing", Mth.floor(Mth.wrapDegrees(mc.player.getYRot())) + "°",
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.facing"), Mth.floor(Mth.wrapDegrees(mc.player.getYRot())) + "°",
                     LuneScreen.TEXT));
         }
         if (config.dashboardShowLight) {
-            rows.add(new Row(priority++, "Light", lightLevel(mc), LuneScreen.TEXT_DIM));
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.light"), lightLevel(mc), LuneScreen.TEXT_DIM));
         }
         if (config.dashboardShowEnvironment) {
-            String environment = environment(mc.player);
-            rows.add(new Row(priority++, "State", environment,
-                    environment.equals("safe") ? LuneScreen.TEXT_DIM : PAUSED));
+            String environment = environmentKey(mc.player);
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.state"), Lang.get(environment),
+                    environment.equals("lune.gui.main.safe") ? LuneScreen.TEXT_DIM : PAUSED));
         }
         if (config.dashboardShowExperience) {
-            rows.add(new Row(priority++, "XP", experience(mc.player), LuneScreen.TEXT));
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.xp"), experience(mc.player), LuneScreen.TEXT));
         }
         if (config.dashboardShowEffects) {
-            rows.add(new Row(priority++, "Effects", activeEffects(mc.player), LuneScreen.TEXT_DIM));
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.effects"), activeEffects(mc.player), LuneScreen.TEXT_DIM));
         }
-        rows.add(new Row(priority, "Input", "live player/world", LuneScreen.TEXT_DIM));
+        rows.add(new Row(priority, Lang.get("lune.gui.main.input"), Lang.get("lune.gui.main.live_player_world"), LuneScreen.TEXT_DIM));
         drawRows(extractor, card, 64, rows);
     }
 
     private void drawStatisticsCard(GuiGraphicsExtractor extractor, DashboardFrame.Card card) {
-        drawPanelHeader(extractor, card, "STATISTICS");
+        drawPanelHeader(extractor, card, Lang.get("lune.gui.main.statistics"));
         int tabY = card.y() + TITLE_H + 2;
         int tabsWidth = Math.max(1, card.width() - 12);
         int tabWidth = Math.max(20, (tabsWidth - BUTTON_GAP * 2) / 3);
@@ -591,84 +585,88 @@ public class MainTab extends LuneTab {
 
         List<DashboardStatsPanel.Line> lines = new ArrayList<>();
         lines.add(DashboardStatsPanel.Line.section(statisticsScope == StatisticsScope.CURRENT
-                ? "CURRENT RUN" : statisticsScope == StatisticsScope.LAST_RUN
-                ? "LAST TASK" : "ALL TIME"));
+                ? Lang.get("lune.gui.main.current_run") : statisticsScope == StatisticsScope.LAST_RUN
+                ? Lang.get("lune.gui.main.last_task_2") : Lang.get("lune.gui.main.all_time_2")));
 
-        lines.add(DashboardStatsPanel.Line.section("OVERVIEW"));
-        statLine(lines, "Worked time", formatDuration(statistics.workedTicks), LuneScreen.TEXT);
-        statLine(lines, "Runs", number(statistics.counter("runs")), LuneScreen.TEXT_DIM);
-        statLine(lines, "Tasks finished", number(statistics.tasksCompleted), LuneScreen.TEXT);
-        statLine(lines, "Tasks failed", number(statistics.tasksFailed),
+        lines.add(DashboardStatsPanel.Line.section(Lang.get("lune.gui.main.overview")));
+        statLine(lines, Lang.get("lune.gui.main.worked_time"), formatDuration(statistics.workedTicks), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.runs"), number(statistics.counter("runs")), LuneScreen.TEXT_DIM);
+        statLine(lines, Lang.get("lune.gui.main.tasks_finished"), number(statistics.tasksCompleted), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.tasks_failed"), number(statistics.tasksFailed),
                 statistics.tasksFailed == 0 ? LuneScreen.TEXT_DIM : PAUSED);
-        statLine(lines, "Success rate", percent(statistics.tasksCompleted, attempted),
+        statLine(lines, Lang.get("lune.gui.main.success_rate"), percent(statistics.tasksCompleted, attempted),
                 attempted == 0 ? LuneScreen.TEXT_DIM : statistics.tasksFailed == 0 ? RUNNING : PAUSED);
-        statLine(lines, "Average task", perUnit(statistics.workedTicks, attempted), LuneScreen.TEXT);
-        statLine(lines, "Longest task", formatDuration(statistics.peak("task_ticks")),
+        statLine(lines, Lang.get("lune.gui.main.average_task"), perUnit(statistics.workedTicks, attempted), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.longest_task"), formatDuration(statistics.peak("task_ticks")),
                 LuneScreen.TEXT_DIM);
 
-        lines.add(DashboardStatsPanel.Line.section("WORK"));
-        statLine(lines, "Blocks broken", number(statistics.blocksBroken), LuneScreen.ACCENT);
-        statLine(lines, "Blocks placed", number(statistics.blocksPlaced), LuneScreen.ACCENT);
-        statLine(lines, "Ores mined", number(statistics.counter("ores_mined")), LuneScreen.ACCENT);
-        statLine(lines, "Logs chopped", number(statistics.counter("logs_chopped")), LuneScreen.ACCENT);
-        statLine(lines, "Mining rate", perMinute(statistics.blocksBroken, statistics.workedTicks),
+        lines.add(DashboardStatsPanel.Line.section(Lang.get("lune.gui.main.work")));
+        statLine(lines, Lang.get("lune.gui.main.blocks_broken"), number(statistics.blocksBroken), LuneScreen.ACCENT);
+        statLine(lines, Lang.get("lune.gui.main.blocks_placed"), number(statistics.blocksPlaced), LuneScreen.ACCENT);
+        statLine(lines, Lang.get("lune.gui.main.ores_mined"), number(statistics.counter("ores_mined")), LuneScreen.ACCENT);
+        statLine(lines, Lang.get("lune.gui.main.logs_chopped"), number(statistics.counter("logs_chopped")), LuneScreen.ACCENT);
+        statLine(lines, Lang.get("lune.gui.main.mining_rate"), perMinute(statistics.blocksBroken, statistics.workedTicks),
                 LuneScreen.TEXT);
-        statLine(lines, "Items crafted", number(statistics.counter("items_crafted")), LuneScreen.TEXT);
-        statLine(lines, "Items gained", number(statistics.counter("items_gained")), LuneScreen.TEXT);
-        statLine(lines, "Drops swept", number(statistics.counter("drops_swept")), LuneScreen.TEXT);
-        statLine(lines, "XP gained", number(statistics.counter("xp_gained")), LuneScreen.TEXT);
-        statLine(lines, "Food eaten", number(statistics.foodEaten), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.items_crafted"), number(statistics.counter("items_crafted")), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.items_gained"), number(statistics.counter("items_gained")), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.drops_swept"), number(statistics.counter("drops_swept")), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.xp_gained"), number(statistics.counter("xp_gained")), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.food_eaten"), number(statistics.foodEaten), LuneScreen.TEXT);
 
-        lines.add(DashboardStatsPanel.Line.section("MOVEMENT"));
-        statLine(lines, "Distance", distance(statistics, "distance_cm"), LuneScreen.TEXT);
-        statLine(lines, "Sprinted", distance(statistics, "sprint_cm"), LuneScreen.TEXT);
-        statLine(lines, "Swum", distance(statistics, "swim_cm"), LuneScreen.TEXT);
-        statLine(lines, "Climbed", distance(statistics, "climb_cm"), LuneScreen.TEXT);
-        statLine(lines, "Descended", distance(statistics, "descend_cm"), LuneScreen.TEXT);
-        statLine(lines, "Jumps", number(statistics.counter("jumps")), LuneScreen.TEXT_DIM);
-        statLine(lines, "Travel speed", perMinute(statistics.counter("distance_cm") / 100L,
-                statistics.workedTicks, " b/m"), LuneScreen.TEXT_DIM);
-        statLine(lines, "Farthest out", blocks(statistics.peak("home_cm") / 100.0D),
+        lines.add(DashboardStatsPanel.Line.section(Lang.get("lune.gui.main.movement")));
+        statLine(lines, Lang.get("lune.gui.main.distance"), distance(statistics, "distance_cm"), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.sprinted"), distance(statistics, "sprint_cm"), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.swum"), distance(statistics, "swim_cm"), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.climbed"), distance(statistics, "climb_cm"), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.descended"), distance(statistics, "descend_cm"), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.jumps"), number(statistics.counter("jumps")), LuneScreen.TEXT_DIM);
+        statLine(lines, Lang.get("lune.gui.main.travel_speed"), perMinute(statistics.counter("distance_cm") / 100L,
+                statistics.workedTicks, Lang.get("lune.gui.main.blocks_per_minute")), LuneScreen.TEXT_DIM);
+        statLine(lines, Lang.get("lune.gui.main.farthest_out"), blocks(statistics.peak("home_cm") / 100.0D),
                 LuneScreen.TEXT_DIM);
 
-        lines.add(DashboardStatsPanel.Line.section("NAVIGATION"));
-        statLine(lines, "Route searches", number(searches), LuneScreen.TEXT);
-        statLine(lines, "Dead ends", number(failedSearches),
+        lines.add(DashboardStatsPanel.Line.section(Lang.get("lune.gui.main.navigation")));
+        statLine(lines, Lang.get("lune.gui.main.route_searches"), number(searches), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.dead_ends"), number(failedSearches),
                 failedSearches == 0 ? LuneScreen.TEXT_DIM : PAUSED);
-        statLine(lines, "Routes found", percent(searches - failedSearches, searches),
+        statLine(lines, Lang.get("lune.gui.main.routes_found"), percent(searches - failedSearches, searches),
                 searches == 0 ? LuneScreen.TEXT_DIM : failedSearches == 0 ? RUNNING : LuneScreen.TEXT);
-        statLine(lines, "Search time", millis(statistics.counter("path_micros")), LuneScreen.TEXT_DIM);
-        statLine(lines, "Average search",
+        statLine(lines, Lang.get("lune.gui.main.search_time"), millis(statistics.counter("path_micros")), LuneScreen.TEXT_DIM);
+        statLine(lines, Lang.get("lune.gui.main.average_search"),
                 millis(divide(statistics.counter("path_micros"), searches)), LuneScreen.TEXT);
-        statLine(lines, "Average nodes",
+        statLine(lines, Lang.get("lune.gui.main.average_nodes"),
                 number(divide(statistics.counter("path_nodes"), searches)), LuneScreen.TEXT_DIM);
-        statLine(lines, "Longest route", number(statistics.peak("path_length")) + " nodes",
+        statLine(lines, Lang.get("lune.gui.main.longest_route"), Lang.get("lune.gui.main.route_nodes", number(statistics.peak("path_length"))),
                 LuneScreen.TEXT_DIM);
-        statLine(lines, "Stalls recovered", number(stalls),
+        statLine(lines, Lang.get("lune.gui.main.stalls_recovered"), number(stalls),
                 stalls == 0 ? LuneScreen.TEXT_DIM : PAUSED);
 
-        lines.add(DashboardStatsPanel.Line.section("SURVIVAL"));
-        statLine(lines, "Deaths", number(deaths), deaths == 0 ? LuneScreen.TEXT_DIM : PAUSED);
-        statLine(lines, "Health lost", health(statistics.counter("health_lost_tenths")),
+        lines.add(DashboardStatsPanel.Line.section(Lang.get("lune.gui.main.survival")));
+        statLine(lines, Lang.get("lune.gui.main.deaths"), number(deaths), deaths == 0 ? LuneScreen.TEXT_DIM : PAUSED);
+        statLine(lines, Lang.get("lune.gui.main.health_lost"), health(statistics.counter("health_lost_tenths")),
                 LuneScreen.TEXT);
-        statLine(lines, "Biggest hit", health(statistics.peak("hit_tenths")), LuneScreen.TEXT);
-        statLine(lines, "Close calls", number(closeCalls),
+        statLine(lines, Lang.get("lune.gui.main.biggest_hit"), health(statistics.peak("hit_tenths")), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.close_calls"), number(closeCalls),
                 closeCalls == 0 ? LuneScreen.TEXT_DIM : PAUSED);
-        statLine(lines, "Mobs killed", number(statistics.counter("mobs_killed")), LuneScreen.TEXT);
-        statLine(lines, "Escapes", number(dangers),
+        statLine(lines, Lang.get("lune.gui.main.mobs_killed"), number(statistics.counter("mobs_killed")), LuneScreen.TEXT);
+        statLine(lines, Lang.get("lune.gui.main.escapes"), number(dangers),
                 dangers == 0 ? LuneScreen.TEXT_DIM : LuneScreen.TEXT);
-        statLine(lines, "  from monsters", number(statistics.counter("danger_monster")),
+        statLine(lines, Lang.get("lune.gui.main.from_monsters"), number(statistics.counter("danger_monster")),
                 LuneScreen.TEXT_DIM);
-        statLine(lines, "  from lava", number(statistics.counter("danger_lava")), LuneScreen.TEXT_DIM);
-        statLine(lines, "  from drowning", number(statistics.counter("danger_drowning")),
+        statLine(lines, Lang.get("lune.gui.main.from_lava"), number(statistics.counter("danger_lava")), LuneScreen.TEXT_DIM);
+        statLine(lines, Lang.get("lune.gui.main.from_drowning"), number(statistics.counter("danger_drowning")),
                 LuneScreen.TEXT_DIM);
-        statLine(lines, "  from falls", number(statistics.counter("danger_fall")), LuneScreen.TEXT_DIM);
-        statLine(lines, "  to heal up", number(statistics.counter("danger_health")),
+        statLine(lines, Lang.get("lune.gui.main.from_falls"), number(statistics.counter("danger_fall")), LuneScreen.TEXT_DIM);
+        statLine(lines, Lang.get("lune.gui.main.from_fireballs"), number(statistics.counter("danger_fireball")),
                 LuneScreen.TEXT_DIM);
+        statLine(lines, Lang.get("lune.gui.main.heal_up"), number(statistics.counter("danger_health")),
+                LuneScreen.TEXT_DIM);
+        statLine(lines, Lang.get("lune.gui.main.fireballs_batted"), number(statistics.counter("fireballs_batted")),
+                LuneScreen.TEXT);
 
         if (BotConfig.get().dashboardShowLearning) {
-            lines.add(DashboardStatsPanel.Line.section("LEARNING"));
-            statLine(lines, "Profile", engine.getLearning().summary(false), LuneScreen.TEXT_DIM);
+            lines.add(DashboardStatsPanel.Line.section(Lang.get("lune.gui.main.learning")));
+            statLine(lines, Lang.get("lune.gui.main.profile"), engine.getLearning().displaySummary(), LuneScreen.TEXT_DIM);
         }
         return lines;
     }
@@ -710,7 +708,7 @@ public class MainTab extends LuneTab {
     }
 
     private static String blocks(double value) {
-        return String.format(Locale.ROOT, "%.1f blocks", value);
+        return Lang.get("lune.gui.main.1f_blocks", value);
     }
 
     private static String health(long tenths) {
@@ -718,7 +716,7 @@ public class MainTab extends LuneTab {
     }
 
     private static String millis(long micros) {
-        return String.format(Locale.ROOT, "%.1f ms", micros / 1000.0D);
+        return Lang.get("lune.gui.main.1f_ms", micros / 1000.0D);
     }
 
     /** Draws the rows a card is tall enough for, in priority order. */
@@ -808,7 +806,7 @@ public class MainTab extends LuneTab {
         if (engine.getCurrent() == null && message != null && !message.isBlank()) {
             return message;
         }
-        return engine.getCurrent() == null ? "still running / ready" : "still running";
+        return engine.getCurrent() == null ? Lang.get("lune.gui.main.still_running_ready") : Lang.get("lune.gui.main.still_running");
     }
 
     private static int occupiedSlots(net.minecraft.client.player.LocalPlayer player) {
@@ -823,7 +821,7 @@ public class MainTab extends LuneTab {
 
     private static String itemCondition(ItemStack stack) {
         if (stack == null || stack.isEmpty()) {
-            return "empty";
+            return Lang.get("lune.gui.main.empty");
         }
         String name = stack.getHoverName().getString();
         if (stack.isDamageableItem() && stack.getMaxDamage() > 0) {
@@ -839,26 +837,26 @@ public class MainTab extends LuneTab {
 
     private static String activeEffects(net.minecraft.client.player.LocalPlayer player) {
         int effects = player.getActiveEffects().size();
-        return effects == 0 ? "none" : effects + " active";
+        return effects == 0 ? Lang.get("lune.gui.param.none") : Lang.get("lune.gui.main.active_effect_count", effects);
     }
 
-    private static String environment(net.minecraft.client.player.LocalPlayer player) {
+    private static String environmentKey(net.minecraft.client.player.LocalPlayer player) {
         if (player.isOnFire()) {
-            return "on fire";
+            return "lune.gui.main.fire";
         }
         if (player.isInLava()) {
-            return "in lava";
+            return "lune.gui.main.lava";
         }
         if (player.isInWater()) {
-            return "swimming";
+            return "lune.gui.main.swimming";
         }
-        return player.onGround() ? "safe" : "airborne";
+        return player.onGround() ? "lune.gui.main.safe" : "lune.gui.main.airborne";
     }
 
     private static String lightLevel(Minecraft mc) {
         var pos = mc.player.blockPosition();
-        return "block " + mc.level.getBrightness(LightLayer.BLOCK, pos)
-                + " / sky " + mc.level.getBrightness(LightLayer.SKY, pos);
+        return Lang.get("lune.gui.main.block") + mc.level.getBrightness(LightLayer.BLOCK, pos)
+                + Lang.get("lune.gui.main.sky") + mc.level.getBrightness(LightLayer.SKY, pos);
     }
 
     private static int visibleEnemies(Minecraft mc) {
@@ -881,12 +879,12 @@ public class MainTab extends LuneTab {
         long minutes = (totalSeconds % 3600L) / 60L;
         long seconds = totalSeconds % 60L;
         if (hours > 0L) {
-            return hours + "h " + minutes + "m " + seconds + "s";
+            return Lang.get("lune.gui.main.duration_hours", hours, minutes, seconds);
         }
         if (minutes > 0L) {
-            return minutes + "m " + seconds + "s";
+            return Lang.get("lune.gui.main.duration_minutes", minutes, seconds);
         }
-        return seconds + "s";
+        return Lang.get("lune.gui.main.duration_seconds", seconds);
     }
 
     private static String fit(String value, int maxWidth) {

@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.widget;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.command.CommandDef;
 import com.etka.lune.bot.command.Param;
 import com.etka.lune.client.gui.LuneScreen;
@@ -9,6 +10,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Util;
 import net.minecraft.client.gui.Font;
@@ -47,6 +49,8 @@ public class ParamPanel extends AbstractWidget {
     private static final int TOOLTIP_DELAY_MS = 500;
     private static final int CHOICE_MAX_VISIBLE = 5;
     private static final String ELLIPSIS = "…";
+    /** How far a shift-click on a coordinate row will look for the spot being pointed at. */
+    private static final double PICK_RANGE = 64.0;
 
     private static final Identifier HEART_SPRITE = Identifier.withDefaultNamespace("hud/heart/full");
     private static final Identifier AIR_SPRITE = Identifier.withDefaultNamespace("hud/air");
@@ -66,7 +70,7 @@ public class ParamPanel extends AbstractWidget {
 
     private static final int ROW_HOVER = 0x28FFFFFF;
     private static final int VALUE_BG = 0xFF1E1E24;
-    private static final int CHECK_ON = 0xFF4C9EFF;
+    private static final int CHECK_ON = LuneScreen.ACCENT;
     private static final int OUTPUT_ON = 0xFFF2C14E;
     private static final int CHOICE_BG = 0xFF17171D;
     private static final int CHOICE_HOVER = 0xFF303846;
@@ -93,6 +97,8 @@ public class ParamPanel extends AbstractWidget {
     private int scrollRows;
     private Consumer<Param.BlockSet> onOpenBlockPicker;
     private Consumer<Param.ItemChoice> onOpenItemPicker;
+    private Consumer<Param.Recipe> onOpenRecipePicker;
+    private Consumer<Param.Text> onOpenNamePrompt;
     private Set<String> exposedInputs = Set.of();
     private Set<String> exposedOutputs = Set.of();
     private BiConsumer<String, PortSide> onTogglePort;
@@ -122,6 +128,14 @@ public class ParamPanel extends AbstractWidget {
         this.onOpenItemPicker = onOpenItemPicker;
     }
 
+    public void setOpenRecipePicker(Consumer<Param.Recipe> onOpenRecipePicker) {
+        this.onOpenRecipePicker = onOpenRecipePicker;
+    }
+
+    public void setOpenNamePrompt(Consumer<Param.Text> onOpenNamePrompt) {
+        this.onOpenNamePrompt = onOpenNamePrompt;
+    }
+
     public void setCommand(CommandDef command) {
         if (this.command != command) {
             this.command = command;
@@ -148,6 +162,19 @@ public class ParamPanel extends AbstractWidget {
         closeChoice();
         scrollRows = 0;
         rebuild();
+    }
+
+    /**
+     * What a section header is called on screen.
+     *
+     * <p>The name a section is grouped by is an identifier - rows are batched by comparing it -
+     * so it stays as it is and only the drawing is looked up. A section nobody has written a line
+     * for reads as its own name, which is what it did before there were lines at all.</p>
+     */
+    private static String sectionTitle(String name) {
+        return Lang.getOr("lune.gui.section."
+                + name.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]+", "_")
+                        .replaceAll("^_+|_+$", ""), name);
     }
 
     /** Adds lightweight section headers while retaining the command's normal parameter model. */
@@ -203,6 +230,11 @@ public class ParamPanel extends AbstractWidget {
         }
         String previousSection = null;
         for (Param<?> param : command.params()) {
+            // A parameter the current values make meaningless is left out rather than greyed: the
+            // shortest card is the one that only asks what it will actually read.
+            if (!command.isRelevant(param.id())) {
+                continue;
+            }
             String section = sections.get(param.id());
             if (section != null && !section.equals(previousSection)) {
                 rows.add(new SectionRow(section));
@@ -236,10 +268,10 @@ public class ParamPanel extends AbstractWidget {
         if (command == null) {
             if (sourceDescription == null) {
                 text.accept(getX() + 6, getY() + 6,
-                        Component.literal("Pick a command on the left").withColor(LuneScreen.TEXT_DIM));
+                        Component.literal(Lang.get("lune.gui.param.pick_command_left")).withColor(LuneScreen.TEXT_DIM));
             } else {
                 text.accept(getX() + 6, getY() + 6,
-                        Component.literal("Logic").withColor(LuneScreen.ACCENT));
+                        Component.literal(Lang.get("lune.gui.param.logic")).withColor(LuneScreen.ACCENT));
                 List<String> lines = wrapText(Minecraft.getInstance().font, sourceDescription,
                         Math.max(20, getWidth() - 12), 8);
                 for (int i = 0; i < lines.size(); i++) {
@@ -266,7 +298,7 @@ public class ParamPanel extends AbstractWidget {
             extractor.fill(getX() + 1, getY() + 1, getX() + getWidth() - 1,
                     rowsTop() - 1, ROW_HOVER);
             newHoverRow = LOGIC_HOVER_ROW;
-            hoverTooltip.add(Component.literal("Logic: " + command.logicDescription(repeat))
+            hoverTooltip.add(Component.literal(Lang.get("lune.gui.param.logic_2", command.logicDescription(repeat)))
                     .withColor(LuneScreen.TEXT));
         }
 
@@ -313,7 +345,7 @@ public class ParamPanel extends AbstractWidget {
                              net.minecraft.client.gui.ActiveTextCollector text) {
         int left = getX() + 6;
         int width = Math.max(20, getWidth() - 12);
-        text.accept(left, getY() + 4, Component.literal("Logic").withColor(LuneScreen.ACCENT));
+        text.accept(left, getY() + 4, Component.literal(Lang.get("lune.gui.param.logic")).withColor(LuneScreen.ACCENT));
         List<String> lines = wrapText(Minecraft.getInstance().font,
                 command.logicDescription(repeat), width, LOGIC_MAX_LINES);
         for (int i = 0; i < lines.size(); i++) {
@@ -326,7 +358,7 @@ public class ParamPanel extends AbstractWidget {
                            Row row, int rowY, boolean hovered) {
         switch (row) {
             case SectionRow(String title) -> text.accept(getX() + 6, rowY + 3,
-                    Component.literal(title).withColor(LuneScreen.ACCENT));
+                    Component.literal(sectionTitle(title)).withColor(LuneScreen.ACCENT));
             case ParamRow(Param<?> param) -> {
                 boolean enabled = isParameterEnabled(param);
                 Icon icon = ICONS.getOrDefault(param.id(), Icon.NONE);
@@ -362,7 +394,7 @@ public class ParamPanel extends AbstractWidget {
                         hoverTooltip.add(Component.literal(description).withColor(LuneScreen.TEXT_DIM));
                     }
                     if (!enabled) {
-                        hoverTooltip.add(Component.literal("Unavailable in this world or for this player")
+                        hoverTooltip.add(Component.literal(Lang.get("lune.gui.param.unavailable_world_or_player"))
                                 .withColor(LuneScreen.TEXT_DIM));
                     }
                 }
@@ -377,10 +409,11 @@ public class ParamPanel extends AbstractWidget {
                 }
 
                 String display = param.displayValue();
-                if (param instanceof Param.BlockSet || param instanceof Param.EntitySet) {
+                if (param instanceof Param.BlockSet || param instanceof Param.EntitySet
+                        || param instanceof Param.Recipe || param instanceof Param.Text) {
                     boolean expanded = this.expanded.contains(param.id());
-                    if (param instanceof Param.BlockSet) {
-                        // The block picker opens from this row; the arrow is a hint that it is a picker.
+                    if (!(param instanceof Param.EntitySet)) {
+                        // The picker opens from this row; the arrow is a hint that it is a picker.
                         display = "▸ " + display;
                     } else {
                         display = (expanded ? "▾ " : "▸ ") + display;
@@ -475,7 +508,8 @@ public class ParamPanel extends AbstractWidget {
                 extractor.fill(choiceDropX, optionY, choiceDropX + VALUE_WIDTH,
                         optionY + ROW_HEIGHT, selected ? CHOICE_SELECTED : CHOICE_HOVER);
             }
-            String clipped = clipToWidth(font, option, VALUE_WIDTH - 8);
+            String clipped = clipToWidth(font, openChoice.label(option),
+                    VALUE_WIDTH - 8);
             int centredX = choiceDropX + Math.max(4,
                     (VALUE_WIDTH - font.width(clipped)) / 2);
             text.accept(centredX, optionY + 3,
@@ -601,9 +635,16 @@ public class ParamPanel extends AbstractWidget {
             case Param.Bool bool -> bool.toggle();
             case Param.Choice choice -> openChoice(choice);
             case Param.Pos pos -> {
-                if (Minecraft.getInstance().player != null) {
-                    pos.set(Minecraft.getInstance().player.blockPosition());
+                net.minecraft.world.entity.player.Player player = Minecraft.getInstance().player;
+                if (player == null) {
+                    return;
                 }
+                // Plain click: where you are standing. Shift-click: where you are pointing - which
+                // is the only way to say "that spot over there" about a place you are not in, and
+                // the answer to how a build card is aimed at all. The view angles do not move while
+                // this screen is open, so the crosshair is still where you left it.
+                BlockPos aimed = shift ? aimedSpot(player) : null;
+                pos.set(aimed != null ? aimed : player.blockPosition());
             }
             case Param.BlockSet blocks -> {
                 if (onOpenBlockPicker != null) {
@@ -611,6 +652,18 @@ public class ParamPanel extends AbstractWidget {
                 }
             }
             case Param.EntitySet entities -> toggleExpanded(entities.id());
+            case Param.Text typed -> {
+                if (onOpenNamePrompt != null) {
+                    onOpenNamePrompt.accept(typed);
+                }
+            }
+            case Param.Recipe recipe -> {
+                // Naming an item and drawing a grid are two answers to one question, so they are
+                // two tabs of one editor rather than two rows of the card.
+                if (onOpenRecipePicker != null) {
+                    onOpenRecipePicker.accept(recipe);
+                }
+            }
             case Param.ItemChoice item -> {
                 // Cycling one at a time through every registered item is hopeless on a modded
                 // instance; the picker shows what the player is actually carrying instead.
@@ -623,6 +676,24 @@ public class ParamPanel extends AbstractWidget {
             default -> {
             }
         }
+    }
+
+    /**
+     * The spot the crosshair is pointing at: the empty space against the face being aimed at, which
+     * is where a block would appear - not the block being looked at. It reads the same way for a
+     * destination, since that empty space is exactly where you would stand.
+     */
+    private static BlockPos aimedSpot(net.minecraft.world.entity.player.Player player) {
+        net.minecraft.world.phys.Vec3 eye = player.getEyePosition();
+        net.minecraft.world.phys.Vec3 end = eye.add(player.getViewVector(1.0F).scale(PICK_RANGE));
+        net.minecraft.world.phys.BlockHitResult hit = player.level().clip(
+                new net.minecraft.world.level.ClipContext(eye, end,
+                        net.minecraft.world.level.ClipContext.Block.OUTLINE,
+                        net.minecraft.world.level.ClipContext.Fluid.NONE, player));
+        if (hit.getType() != net.minecraft.world.phys.HitResult.Type.BLOCK) {
+            return null;
+        }
+        return hit.getBlockPos().relative(hit.getDirection());
     }
 
     private void openChoice(Param.Choice choice) {

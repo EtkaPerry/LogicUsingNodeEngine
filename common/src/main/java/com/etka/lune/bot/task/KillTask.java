@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -135,7 +137,7 @@ public final class KillTask implements Task {
     private Block shelterMaterial;
     private int shelterPlacementTicks;
     private String combatStrategy = CombatPolicy.DEFAULT;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     private enum PreparationKind {
         SHIELD, WEAPON
@@ -165,11 +167,17 @@ public final class KillTask implements Task {
 
     @Override
     public String name() {
-        return "Kill";
+        return Lang.get("lune.task.kill.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Kill");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -184,7 +192,7 @@ public final class KillTask implements Task {
 
     @Override
     public TaskProgress learningProgress() {
-        return new TaskProgress(killed, Math.max(1, killed), "kills");
+        return new TaskProgress(killed, Math.max(1, killed), Lang.get("lune.unit.kills"));
     }
 
     @Override
@@ -240,13 +248,13 @@ public final class KillTask implements Task {
         fireResistanceTicks = 0;
         resetEndermanSafety();
         shelterPlacementTicks = 0;
-        status = "";
+        status.clear();
     }
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (targets.isEmpty()) {
-            status = "no mobs selected";
+            status.set("lune.status.find.no_mobs_selected");
             return TaskStatus.FAILED;
         }
 
@@ -278,7 +286,7 @@ public final class KillTask implements Task {
         if (sweepPending) {
             if (dropSettleTicks > 0) {
                 dropSettleTicks--;
-                status = "waiting for the drop";
+                status.set("lune.status.kill.waiting_drop");
                 return TaskStatus.RUNNING;
             }
             TaskStatus sweep = tickSweep(ctx);
@@ -292,7 +300,7 @@ public final class KillTask implements Task {
             target = findNearest(ctx);
             openingHitDone = false;
             if (target == null) {
-                status = "killed " + killed + ", nothing left within " + radius + " blocks";
+                status.set("lune.status.kill.killed_nothing_left_within_blocks", killed, radius);
                 return TaskStatus.SUCCESS;
             }
             tactic = tacticFor(target);
@@ -313,7 +321,7 @@ public final class KillTask implements Task {
             if (safetyResult != TaskStatus.SUCCESS) {
                 if (safetyResult == TaskStatus.FAILED) {
                     clearTarget(ctx);
-                    status = "could not make an Enderman-safe position, trying another";
+                    status.set("lune.status.kill.could_not_make_enderman_safe_position");
                     return TaskStatus.RUNNING;
                 }
                 return safetyResult;
@@ -402,7 +410,7 @@ public final class KillTask implements Task {
 
         if (ctx.player.isUsingItem() && ctx.player.getUseItem().is(Items.SHIELD)) {
             ctx.gameMode.releaseUsingItem(ctx.player);
-            status = "lowering shield to strike";
+            status.set("lune.status.kill.lowering_shield_strike");
             return TaskStatus.RUNNING;
         }
 
@@ -425,12 +433,12 @@ public final class KillTask implements Task {
                 && canCrit(ctx)) {
             if (ctx.player.onGround()) {
                 ctx.input.jump = true;
-                status = "opening with a jump for the critical";
+                status.set("lune.status.kill.opening_with_jump_critical");
                 return TaskStatus.RUNNING;
             }
             if (ctx.player.getDeltaMovement().y >= 0.0) {
                 // Still rising: the hit only crits on the way down.
-                status = "waiting for the top of the jump";
+                status.set("lune.status.kill.waiting_top_jump");
                 return TaskStatus.RUNNING;
             }
         }
@@ -447,7 +455,7 @@ public final class KillTask implements Task {
             }
         }
 
-        status = "fighting " + target.getType().getDescription().getString() + " (" + killed + " killed)";
+        status.set("lune.status.kill.fighting_killed", target.getType().getDescription().getString(), killed);
         return TaskStatus.RUNNING;
     }
 
@@ -455,7 +463,7 @@ public final class KillTask implements Task {
         if (ctx.player.isUsingItem() && ctx.player.getUseItem().is(Items.SHIELD)) {
             ctx.gameMode.releaseUsingItem(ctx.player);
             bowTicks = 0;
-            status = "lowering shield to draw bow";
+            status.set("lune.status.kill.lowering_shield_draw_bow");
             return TaskStatus.RUNNING;
         }
         if (InventoryHelper.equip(ctx, stack -> stack.is(Items.BOW)) < 0) {
@@ -470,7 +478,7 @@ public final class KillTask implements Task {
                 return attack(ctx);
             }
             bowTicks = 1;
-            status = "drawing bow at " + target.getType().getDescription().getString();
+            status.set("lune.status.kill.drawing_bow", target.getType().getDescription().getString());
             return TaskStatus.RUNNING;
         }
 
@@ -479,14 +487,14 @@ public final class KillTask implements Task {
                 && ctx.look.isLookingAt(ctx.player, target.getEyePosition(), AIM_TOLERANCE)) {
             ctx.gameMode.releaseUsingItem(ctx.player);
             bowTicks = 0;
-            status = "fired at " + target.getType().getDescription().getString();
+            status.set("lune.status.kill.fired", target.getType().getDescription().getString());
             return TaskStatus.RUNNING;
         }
         if (bowTicks > BOW_CHARGE_TICKS + 30) {
             ctx.gameMode.releaseUsingItem(ctx.player);
             bowTicks = 0;
         }
-        status = "charging bow at " + target.getType().getDescription().getString();
+        status.set("lune.status.kill.charging_bow", target.getType().getDescription().getString());
         return TaskStatus.RUNNING;
     }
 
@@ -524,7 +532,7 @@ public final class KillTask implements Task {
         } else if (++noChaseProgressTicks > CHASE_GIVE_UP_TICKS) {
             givenUpOn.add(target.getId());
             clearTarget(ctx);
-            status = "cannot get any closer to that one, looking for another";
+            status.set("lune.status.kill.cannot_get_any_closer_one_looking");
             return TaskStatus.RUNNING;
         }
 
@@ -540,17 +548,17 @@ public final class KillTask implements Task {
 
         if (result == TaskStatus.FAILED) {
             clearTarget(ctx);
-            status = "target unreachable, looking for another";
+            status.set("lune.status.kill.target_unreachable_looking_another");
             return TaskStatus.RUNNING;
         }
         if (result == TaskStatus.SUCCESS) {
             approach.stop(ctx);
             approach = null;
             approachAim = null;
-            status = "closing in";
+            status.set("lune.status.kill.closing");
             return TaskStatus.RUNNING;
         }
-        status = "chasing " + target.getType().getDescription().getString();
+        status.set("lune.status.kill.chasing", target.getType().getDescription().getString());
         return TaskStatus.RUNNING;
     }
 
@@ -576,7 +584,7 @@ public final class KillTask implements Task {
         ctx.input.backward = true;
         raiseShieldIfUseful(ctx);
 
-        status = "backing off from " + target.getType().getDescription().getString();
+        status.set("lune.status.kill.backing_off_from", target.getType().getDescription().getString());
         return TaskStatus.RUNNING;
     }
 
@@ -600,9 +608,9 @@ public final class KillTask implements Task {
         ctx.input.sprint = true;
 
         if (target != null) {
-            status = "retreating from " + target.getType().getDescription().getString();
+            status.set("lune.status.kill.retreating_from", target.getType().getDescription().getString());
         } else {
-            status = "retreating to recover";
+            status.set("lune.status.kill.retreating_recover");
         }
         return TaskStatus.RUNNING;
     }
@@ -640,7 +648,7 @@ public final class KillTask implements Task {
         if (preparation != null) {
             TaskStatus result = preparation.tick(ctx);
             String item = preparationKind == PreparationKind.WEAPON ? "weapon" : "shield";
-            status = "preparing " + item + " - " + preparation.status();
+            status.set("lune.status.kill.preparing", item, preparation.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return result;
             }
@@ -656,9 +664,9 @@ public final class KillTask implements Task {
                 shieldPrepared = true;
             }
             if (result == TaskStatus.FAILED) {
-                status = item + " craft failed, continuing without it";
+                status.set("lune.status.kill.craft_failed_continuing_without", item);
             } else {
-                status = item + " crafted";
+                status.set("lune.status.kill.crafted", item);
             }
             return TaskStatus.RUNNING;
         }
@@ -675,10 +683,10 @@ public final class KillTask implements Task {
                         drinkingFireResistance = true;
                         fireResistanceTicks = 0;
                         ctx.gameMode.useItem(ctx.player, InteractionHand.MAIN_HAND);
-                        status = "drinking fire resistance for Blaze";
+                        status.set("lune.status.kill.drinking_fire_resistance_blaze");
                         return TaskStatus.RUNNING;
                     }
-                    status = "no fire resistance potion, fighting Blaze carefully";
+                    status.set("lune.status.kill.no_fire_resistance_potion_fighting_blaze");
                 }
             }
         }
@@ -686,7 +694,7 @@ public final class KillTask implements Task {
         if ((options.useShield() || options.craftShield()) && !shieldPrepared) {
             if (InventoryHelper.equipOffhand(ctx, stack -> stack.is(Items.SHIELD))) {
                 shieldPrepared = true;
-                status = "shield ready";
+                status.set("lune.status.kill.shield_ready");
                 return TaskStatus.RUNNING;
             }
             if (options.craftShield() && !shieldCraftAttempted) {
@@ -695,17 +703,21 @@ public final class KillTask implements Task {
                         .withTableSearchRadius(REMEMBERED_TABLE_SEARCH_RADIUS);
                 preparationKind = PreparationKind.SHIELD;
                 preparation.start(ctx);
-                status = "crafting a shield";
+                status.set("lune.status.kill.crafting_shield");
                 return TaskStatus.RUNNING;
             }
             shieldPrepared = true;
-            status = options.useShield() ? "no shield available" : "shield preparation skipped";
+            if (options.useShield()) {
+                status.set("lune.status.kill.no_shield_available");
+            } else {
+                status.set("lune.status.kill.shield_preparation_skipped");
+            }
         }
 
         if (!weaponPrepared) {
             if (equipPreferredWeapon(ctx)) {
                 weaponPrepared = true;
-                status = "weapon ready";
+                status.set("lune.status.kill.weapon_ready");
                 return TaskStatus.RUNNING;
             }
             if (options.craftWeapon() && !weaponCraftAttempted) {
@@ -716,10 +728,10 @@ public final class KillTask implements Task {
                             .withTableSearchRadius(REMEMBERED_TABLE_SEARCH_RADIUS);
                     preparationKind = PreparationKind.WEAPON;
                     preparation.start(ctx);
-                    status = "crafting " + InventoryHelper.itemName(craft);
+                    status.set("lune.status.kill.crafting", InventoryHelper.itemName(craft));
                     return TaskStatus.RUNNING;
                 }
-                status = "no materials for requested weapon";
+                status.set("lune.status.kill.no_materials_requested_weapon");
             }
             weaponPrepared = true;
         }
@@ -792,7 +804,7 @@ public final class KillTask implements Task {
             if (ctx.player.isUsingItem()) {
                 ctx.gameMode.releaseUsingItem(ctx.player);
             }
-            status = "fire resistance active";
+            status.set("lune.status.kill.fire_resistance_active");
             return TaskStatus.RUNNING;
         }
 
@@ -801,10 +813,10 @@ public final class KillTask implements Task {
             if (fireResistanceTicks > 70) {
                 ctx.gameMode.releaseUsingItem(ctx.player);
                 drinkingFireResistance = false;
-                status = "fire resistance drink timed out";
+                status.set("lune.status.kill.fire_resistance_drink_timed_out");
                 return TaskStatus.RUNNING;
             }
-            status = "drinking fire resistance";
+            status.set("lune.status.kill.drinking_fire_resistance");
             return TaskStatus.RUNNING;
         }
 
@@ -812,16 +824,16 @@ public final class KillTask implements Task {
         // giving up; after that, continuing with the ordinary retreat logic is safer than hanging.
         if (fireResistanceTicks <= 3) {
             ctx.gameMode.useItem(ctx.player, InteractionHand.MAIN_HAND);
-            status = "starting fire resistance drink";
+            status.set("lune.status.kill.starting_fire_resistance_drink");
             return TaskStatus.RUNNING;
         }
 
         if (fireResistanceTicks > 70) {
             drinkingFireResistance = false;
-            status = "fire resistance was not applied";
+            status.set("lune.status.kill.fire_resistance_not_applied");
             return TaskStatus.RUNNING;
         }
-        status = "waiting for fire resistance";
+        status.set("lune.status.kill.waiting_fire_resistance");
         return TaskStatus.RUNNING;
     }
 
@@ -863,27 +875,27 @@ public final class KillTask implements Task {
     /** Places a boat next to a nearby Enderman; the target is lured into range after setup. */
     private TaskStatus prepareBoat(BotContext ctx) {
         if (isNearBoat(ctx)) {
-            status = "Enderman boat trap ready";
+            status.set("lune.status.kill.enderman_boat_trap_ready");
             return TaskStatus.SUCCESS;
         }
         if (boatPlacementTicks >= 30) {
-            status = "could not place an Enderman boat";
+            status.set("lune.status.kill.could_not_place_enderman_boat");
             return TaskStatus.FAILED;
         }
 
         if (ctx.player.distanceTo(target) > 5.0) {
-            status = "Enderman too far away for a boat trap";
+            status.set("lune.status.kill.enderman_too_far_away_boat_trap");
             return TaskStatus.FAILED;
         }
         if (InventoryHelper.equip(ctx, stack -> stack.getItem() instanceof BoatItem) < 0) {
-            status = "no boat available";
+            status.set("lune.status.kill.no_boat_available");
             return TaskStatus.FAILED;
         }
 
         BlockPos floor = findBoatFloor(ctx);
         if (floor == null) {
             boatPlacementTicks++;
-            status = "looking for a place to trap Enderman";
+            status.set("lune.status.kill.looking_place_trap_enderman");
             return TaskStatus.RUNNING;
         }
 
@@ -891,13 +903,13 @@ public final class KillTask implements Task {
         ctx.look.lookAt(ctx.player, hit);
         boatPlacementTicks++;
         if (!ctx.look.isLookingAt(ctx.player, hit, AIM_TOLERANCE)) {
-            status = "aiming the Enderman boat";
+            status.set("lune.status.kill.aiming_enderman_boat");
             return TaskStatus.RUNNING;
         }
 
         ctx.gameMode.useItem(ctx.player, InteractionHand.MAIN_HAND);
         ctx.player.swing(InteractionHand.MAIN_HAND);
-        status = "placing Enderman boat";
+        status.set("lune.status.kill.placing_enderman_boat");
         return TaskStatus.RUNNING;
     }
 
@@ -913,13 +925,13 @@ public final class KillTask implements Task {
         }
 
         if (hasTwoBlockShelter(ctx, feet)) {
-            status = "two-block Enderman shelter ready";
+            status.set("lune.status.kill.two_block_enderman_shelter_ready");
             return TaskStatus.SUCCESS;
         }
         if (shelterMaterial == null) {
             shelterMaterial = BlockPlacer.findSolidMaterial(ctx);
             if (shelterMaterial == null) {
-                status = "need a solid block for Enderman shelter";
+                status.set("lune.status.kill.need_solid_block_enderman_shelter");
                 return TaskStatus.FAILED;
             }
         }
@@ -928,7 +940,7 @@ public final class KillTask implements Task {
             shelterRoof = feet.above(2);
         }
         if (!BlockPlacer.isReplaceable(ctx, shelterRoof)) {
-            status = "roof space is occupied but not safe";
+            status.set("lune.status.kill.roof_space_occupied_but_not_safe");
             return TaskStatus.FAILED;
         }
 
@@ -939,14 +951,13 @@ public final class KillTask implements Task {
             if (placement == BlockPlacer.PlacementResult.PLACED
                     || placement == BlockPlacer.PlacementResult.ALREADY_PRESENT) {
                 shelterPlacementTicks = 0;
-                status = "built two-block Enderman shelter";
+                status.set("lune.status.kill.built_two_block_enderman_shelter");
             } else if (!placement.isTransient()
                     || ++shelterPlacementTicks >= MAX_SHELTER_PLACE_TICKS) {
-                status = "could not place Enderman shelter roof ("
-                        + placement.name().toLowerCase() + ")";
+                status.set("lune.status.kill.could_not_place_enderman_shelter_roof", placement.displayName());
                 return TaskStatus.FAILED;
             } else {
-                status = "placing Enderman shelter roof";
+                status.set("lune.status.kill.placing_enderman_shelter_roof");
             }
             return TaskStatus.RUNNING;
         }
@@ -961,7 +972,7 @@ public final class KillTask implements Task {
             }
         }
         if (shelterSupport == null) {
-            status = "no support for Enderman shelter";
+            status.set("lune.status.kill.no_support_enderman_shelter");
             return TaskStatus.FAILED;
         }
 
@@ -971,18 +982,17 @@ public final class KillTask implements Task {
             if (placement == BlockPlacer.PlacementResult.PLACED
                     || placement == BlockPlacer.PlacementResult.ALREADY_PRESENT) {
                 shelterPlacementTicks = 0;
-                status = "building Enderman shelter support";
+                status.set("lune.status.kill.building_enderman_shelter_support");
             } else if (!placement.isTransient()
                     || ++shelterPlacementTicks >= MAX_SHELTER_PLACE_TICKS) {
-                status = "could not place Enderman shelter support ("
-                        + placement.name().toLowerCase() + ")";
+                status.set("lune.status.kill.could_not_place_enderman_shelter_support", placement.displayName());
                 return TaskStatus.FAILED;
             } else {
-                status = "placing Enderman shelter support";
+                status.set("lune.status.kill.placing_enderman_shelter_support");
             }
             return TaskStatus.RUNNING;
         }
-        status = "finishing Enderman shelter roof";
+        status.set("lune.status.kill.finishing_enderman_shelter_roof");
         return TaskStatus.RUNNING;
     }
 
@@ -990,8 +1000,7 @@ public final class KillTask implements Task {
         // Eye contact makes the Enderman commit to the fight. The player stays under the roof or
         // beside the boat instead of pathing into open ground and losing the safety setup.
         ctx.look.lookAt(ctx.player, target.getEyePosition());
-        status = "luring Enderman into safety (" + String.format("%.1f", ctx.player.distanceTo(target))
-                + " blocks)";
+        status.set("lune.status.kill.luring_enderman_into_safety_blocks", String.format("%.1f", ctx.player.distanceTo(target)));
         return TaskStatus.RUNNING;
     }
 
@@ -1138,7 +1147,7 @@ public final class KillTask implements Task {
             sweeper.start(ctx);
         }
         TaskStatus result = sweeper.tick(ctx);
-        status = "collecting the drop - " + sweeper.status();
+        status.set("lune.status.kill.collecting_drop", sweeper.statusLine());
         if (result == TaskStatus.RUNNING) {
             return TaskStatus.RUNNING;
         }

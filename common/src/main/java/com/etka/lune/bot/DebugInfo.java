@@ -85,6 +85,23 @@ public final class DebugInfo {
     public int searchViewCount;
     public int scanTicks;
     public String searchHeading = "";
+    /**
+     * Which of the several ways of choosing a target actually produced this one.
+     * <p>
+     * The journal could always say what was picked and never why that one rather than the block
+     * beside it. That is the difference between reading a run and guessing at it: "in reach" and
+     * "visible sweep" lead to completely different behaviour on the next twenty ticks, and when the
+     * bot walks past wood it is standing next to, this field is the first thing worth knowing.
+     */
+    public String selectionSource = "";
+    /**
+     * Why the candidates that were not chosen were refused, counted.
+     * <p>
+     * A search that reports "nothing visible" while stood in a forest is either looking at an empty
+     * index or throwing away everything it finds, and those want opposite fixes. One says how many
+     * were sealed in rock, how many were behind something, and how many were simply behind the head.
+     */
+    public String sightTally = "";
     /** What the next fallback is, before it happens. */
     public String nextDecision = "";
     /** Remembered blocks/sites and blacklists that affect the current choice. */
@@ -125,6 +142,18 @@ public final class DebugInfo {
      * journal. These survive that.
      */
     public final Deque<String> failures = new ArrayDeque<>();
+    /**
+     * What the always-on safety reflex is doing this tick, and how often it has had to step in.
+     *
+     * <p>Blank while nothing is wrong. Two runs of the wood benchmark ended with the player dead -
+     * one drowned with air at zero for five seconds, one beaten from full health to nothing in six
+     * - and neither journal carried a single field saying so, because the safety circuit existed
+     * only as a card nobody had wired in. A reflex that fires unseen is indistinguishable from one
+     * that does not fire.</p>
+     */
+    public String safety = "";
+    /** How many separate emergencies the reflex has handled this run. */
+    public int safetyEpisodes;
 
     // --- last path search ---
     public int nodesExpanded;
@@ -175,6 +204,8 @@ public final class DebugInfo {
         searchViewCount = 0;
         scanTicks = 0;
         searchHeading = "";
+        selectionSource = "";
+        sightTally = "";
         nextDecision = "";
         memory = "";
         missionProgress = "";
@@ -196,6 +227,8 @@ public final class DebugInfo {
         decisionRepeat = 0;
         diversions = "";
         failures.clear();
+        safety = "";
+        safetyEpisodes = 0;
     }
 
     /** Clears task-level learning labels while retaining the last profile summary. */

@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.tab;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.command.CommandDef;
@@ -9,12 +10,19 @@ import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.LuneTab;
 import com.etka.lune.bot.command.Param;
 import com.etka.lune.client.gui.widget.BlockPicker;
+import com.etka.lune.client.gui.widget.NamePrompt;
+import com.etka.lune.client.gui.widget.RecipePicker;
 import com.etka.lune.client.gui.widget.InventoryPicker;
 import com.etka.lune.client.gui.widget.BlueprintPanel;
 import com.etka.lune.client.gui.widget.ListPanel;
 import com.etka.lune.client.gui.widget.PalettePanel;
 import com.etka.lune.client.gui.widget.ParamPanel;
+import com.etka.lune.client.gui.widget.TrainingScreen;
 import com.etka.lune.client.gui.widget.VerticalSplitter;
+import com.etka.lune.training.TrainingCourse;
+import com.etka.lune.training.TrainingAnswer;
+import com.etka.lune.training.TrainingLesson;
+import com.etka.lune.training.TrainingProgress;
 import com.etka.lune.task.TaskGraph;
 import com.etka.lune.task.TaskCableAnchor;
 import com.etka.lune.task.TaskWiring;
@@ -51,7 +59,13 @@ public class TasksTab extends LuneTab {
 
     private static final int MARGIN = 8;
     private static final int GAP = 6;
-    private static final int BUTTON_ROW = 70;
+    /**
+     * Height reserved at the foot of the task pane for its button block.
+     *
+     * <p>Four rows now: Training sits full-width above New/Delete/Run, where it reads as a heading
+     * over the block rather than a fourth peer squeezed into a row of three.</p>
+     */
+    private static final int BUTTON_ROW = 91;
     private static final int BUTTON_GAP = 2;
     /**
      * Offered repeat counts; 0 is the endless one and shows as an infinity sign.
@@ -91,6 +105,35 @@ public class TasksTab extends LuneTab {
     private final ParamPanel stepParams;
     private BlockPicker blockPicker;
     private InventoryPicker inventoryPicker;
+    private RecipePicker recipePicker;
+    private NamePrompt namePrompt;
+    private TrainingScreen trainingScreen;
+    /** The lesson being attempted, or null when the editor is being used for real work. */
+    private TrainingLesson activeLesson;
+    /** Ticks spent on the current lesson, used to rotate gentle practice dialogue. */
+    private int lessonTicks;
+    private String lessonSpeech = "";
+    private boolean previewFailure;
+    private boolean helpExpanded;
+    private boolean hintUsed;
+    private boolean answerUsed;
+    /** Number of Answer requests; the fifth request starts the visible auto-solve. */
+    private int answerPresses;
+    private boolean answerRevealActive;
+    private int answerRevealTicks;
+    private boolean answerRevealHistoryStarted;
+    /** True once the current lesson is solved; training stays on so the routine can be run. */
+    private boolean lessonSolved;
+    /** The task selected before training started, restored on the way out. */
+    private String taskBeforeTraining;
+    /**
+     * The task that lesson was handed to, by name.
+     *
+     * <p>By name rather than by reference: undo restores the whole store from a JSON snapshot, so
+     * every {@link TaskGraph} the tab is holding is replaced by an equal one the moment the player
+     * presses it, and a reference kept here would go quietly stale mid-puzzle.</p>
+     */
+    private String lessonTaskName;
     private final EditBox nameBox;
     private final EditBox paletteSearch;
 
@@ -101,13 +144,25 @@ public class TasksTab extends LuneTab {
     private final Button runButton;
     private final Button undoButton;
     private final Button redoButton;
+    private final Button trainingButton;
+    private final Button restartButton;
+    private final Button outcomeButton;
+    private final Button helpButton;
+    private final Button nextLessonButton;
 
     private boolean confirmingDelete;
     private final ArrayDeque<HistoryEntry> undoStack = new ArrayDeque<>();
     private final ArrayDeque<HistoryEntry> redoStack = new ArrayDeque<>();
+    /** Normal editor history is parked while a scratch lesson is open. */
+    private ArrayDeque<HistoryEntry> savedUndoStack;
+    private ArrayDeque<HistoryEntry> savedRedoStack;
     private String lastStoreSnapshot;
     private String selectedTaskName;
     private String knownTaskList;
+    /** A drag can change the graph for many ticks; hold its first snapshot until the drag settles. */
+    private String pendingHistorySnapshot;
+    private String pendingHistoryTaskName;
+    private int pendingHistoryIdleTicks;
 
     private record HistoryEntry(String snapshot, String taskName) {}
 
@@ -142,14 +197,14 @@ public class TasksTab extends LuneTab {
     private String message = "";
 
     public TasksTab() {
-        super(Component.literal("Task"));
+        super(Component.literal(Lang.get("lune.gui.tasks.task")));
 
         taskList = add(new ListPanel<>(0, 0, 10, 10, TaskGraph::describe, this::onTaskSelected));
         blueprintPanel = add(new BlueprintPanel(0, 0, 10, 10, this::onStepSelected,
                 () -> TaskStore.get().save(), value -> message = value, this::removeSteps));
         palettePanel = add(new PalettePanel(0, 0, 10, 10, this::onPaletteSelect, this::onPaletteDrop));
-        paletteSearch = add(new EditBox(Minecraft.getInstance().font, 0, 0, 10, 16, Component.literal("Search")));
-        paletteSearch.setHint(Component.literal("search nodes..."));
+        paletteSearch = add(new EditBox(Minecraft.getInstance().font, 0, 0, 10, 16, Component.literal(Lang.get("lune.gui.tasks.search"))));
+        paletteSearch.setHint(Component.literal(Lang.get("lune.gui.tasks.search_nodes")));
         paletteSearch.setMaxLength(32);
         paletteSearch.setResponder(this::onPaletteSearch);
         stepParams = add(new ParamPanel(0, 0, 10, 10));
@@ -157,52 +212,68 @@ public class TasksTab extends LuneTab {
         leftSplitter = add(new VerticalSplitter(0, 0, 10, 1, dx -> resizeLeftPane(dx)));
         rightSplitter = add(new VerticalSplitter(0, 0, 10, -1, dx -> resizeRightPane(dx)));
 
-        nameBox = add(new EditBox(Minecraft.getInstance().font, 0, 0, 120, 16, Component.literal("Name")));
-        nameBox.setHint(Component.literal("task name"));
+        nameBox = add(new EditBox(Minecraft.getInstance().font, 0, 0, 120, 16, Component.literal(Lang.get("lune.gui.tasks.name"))));
+        nameBox.setHint(Component.literal(Lang.get("lune.gui.tasks.task_name")));
         nameBox.setMaxLength(32);
         nameBox.setResponder(this::onRename);
 
-        newButton = add(Button.builder(Component.literal("New"), b -> createTask()).size(42, 18).build());
-        deleteButton = add(Button.builder(Component.literal("Delete"), b -> deleteTask()).size(42, 18)
+        newButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.new")), b -> createTask()).size(42, 18).build());
+        deleteButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.del")), b -> deleteTask()).size(42, 18)
                 .tooltip(net.minecraft.client.gui.components.Tooltip.create(
-                        Component.literal("Delete this whole task. To delete a card instead,"
-                                + " select it and press Delete.")))
+                        Component.literal(Lang.get("lune.gui.tasks.delete_whole_task_delete_card_instead"))))
                 .build());
-        importButton = add(Button.builder(Component.literal("Import"), b -> importTask()).size(44, 18).build());
-        exportButton = add(Button.builder(Component.literal("Export"), b -> exportTask()).size(50, 18).build());
-        runButton = add(Button.builder(Component.literal("Run"), b -> runTask()).size(44, 18).build());
-        undoButton = add(Button.builder(Component.literal("Undo"), b -> undo()).size(42, 18).build());
-        redoButton = add(Button.builder(Component.literal("Redo"), b -> redo()).size(42, 18).build());
+        importButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.import")), b -> importTask()).size(44, 18).build());
+        exportButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.export")), b -> exportTask()).size(50, 18).build());
+        runButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.run")), b -> runTask()).size(124, 18).build());
+        trainingButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.training")), b -> onTrainingButton())
+                .size(104, 18)
+                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.literal(Lang.get("lune.gui.tasks.ten_puzzles_easiest_first_each_one_hands"))))
+                .build());
+        restartButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.restart")), b -> restartLesson())
+                .size(96, 18).build());
+        outcomeButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.path_success")), b -> {
+            previewFailure = !previewFailure;
+            outcomeButtonLabel();
+        }).size(108, 18).build());
+        helpButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.need_help")), b -> showHelp())
+                .size(104, 18).build());
+        nextLessonButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.next")), b -> nextLesson())
+                .size(104, 18).build());
+        undoButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.undo")), b -> undo()).size(42, 18).build());
+        redoButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.redo")), b -> redo()).size(42, 18).build());
 
-        removeStepButton = add(Button.builder(Component.literal("Del"), b -> removeStep()).size(46, 18).build());
+        removeStepButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.del")), b -> removeStep()).size(46, 18).build());
         upButton = add(Button.builder(Component.literal("▲"), b -> moveStep(-1)).size(22, 18).build());
         downButton = add(Button.builder(Component.literal("▼"), b -> moveStep(1)).size(22, 18).build());
-        repeatButton = add(Button.builder(Component.literal("x1"), b -> cycleRepeat()).size(34, 18).build());
+        repeatButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.x1")), b -> cycleRepeat()).size(34, 18).build());
         // A typed box beside the cycle, because the useful count is often not on any short list -
         // "run this 37 times" is a perfectly ordinary thing to want and cycling to it is not.
         repeatBox = add(new EditBox(Minecraft.getInstance().font, 0, 0, 34, 18,
-                Component.literal("Repeat")));
+                Component.literal(Lang.get("lune.gui.tasks.repeat"))));
         repeatBox.setMaxLength(7);
         repeatBox.setResponder(TasksTab.this::applyTypedRepeat);
-        alwaysFrequencyButton = add(Button.builder(Component.literal("Every tick"),
+        alwaysFrequencyButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.every_tick")),
                 b -> cycleAlwaysFrequency()).size(62, 18).build());
         alwaysSecondsBox = add(new EditBox(Minecraft.getInstance().font, 0, 0, 38, 18,
-                Component.literal("Seconds")));
-        alwaysSecondsBox.setHint(Component.literal("sec"));
+                Component.literal(Lang.get("lune.gui.tasks.seconds"))));
+        alwaysSecondsBox.setHint(Component.literal(Lang.get("lune.gui.tasks.sec")));
         alwaysSecondsBox.setMaxLength(4);
         alwaysSecondsBox.setResponder(TasksTab.this::applyTypedAlwaysFrequency);
-        relayInputsButton = add(Button.builder(Component.literal("Inputs: 1"),
+        relayInputsButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.inputs_1")),
                 b -> cycleRelayPorts(true)).size(64, 18).build());
-        relayOutputsButton = add(Button.builder(Component.literal("Outputs: 1"),
+        relayOutputsButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.outputs_1")),
                 b -> cycleRelayPorts(false)).size(72, 18).build());
-        buttonPressButton = add(Button.builder(Component.literal("Press"),
+        buttonPressButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.press")),
                 b -> pressSelectedButton()).size(42, 18).build());
-        layoutButton = add(Button.builder(Component.literal("Layout"), b -> blueprintPanel.autoLayout()).size(48, 18).build());
-        minimapButton = add(Button.builder(Component.literal("Map: on"), b -> toggleMinimap()).size(58, 18).build());
-        tasksButton = add(Button.builder(Component.literal("Tasks"), b -> toggleList()).size(46, 18).build());
+        layoutButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.layout")), b -> blueprintPanel.autoLayout()).size(48, 18).build());
+        minimapButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.map")), b -> toggleMinimap()).size(58, 18).build());
+        tasksButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.title")), b -> toggleList()).size(46, 18).build());
 
         stepParams.setOpenBlockPicker(this::openBlockPicker);
         stepParams.setOpenItemPicker(this::openItemPicker);
+        stepParams.setOpenRecipePicker(this::openRecipePicker);
+        stepParams.setOpenNamePrompt(this::openNamePrompt);
 
         if (lastOpenedTaskName == null && BotConfig.get().lastOpenedTask != null
                 && !BotConfig.get().lastOpenedTask.isBlank()) {
@@ -221,6 +292,323 @@ public class TasksTab extends LuneTab {
 
     public void setInventoryPicker(InventoryPicker picker) {
         this.inventoryPicker = picker;
+    }
+
+    public void setRecipePicker(RecipePicker picker) {
+        this.recipePicker = picker;
+    }
+
+    public void setNamePrompt(NamePrompt prompt) {
+        this.namePrompt = prompt;
+    }
+
+    public void setTrainingScreen(TrainingScreen screen) {
+        this.trainingScreen = screen;
+        if (screen != null) {
+            screen.setOnStartLesson(this::startLesson);
+        }
+    }
+
+    // --- training ------------------------------------------------------------
+
+    /** True while a puzzle is open, which is what puts the tab - and Lune - into training mode. */
+    public boolean inTraining() {
+        return activeLesson != null;
+    }
+
+    /** Gentle, non-answer guidance, replaced by the requested hint until the player moves on. */
+    public String trainingLine() {
+        if (activeLesson == null) return "";
+        if (!lessonSpeech.isBlank()) return lessonSpeech;
+        if (lessonSolved) return Lang.get("lune.gui.tasks.step_complete_watch_signal_travel_then");
+        String[] lines = {
+                Lang.get("lune.gui.tasks.take_time_follow_wires_see_where_each"),
+                Lang.get("lune.gui.tasks.try_tracing_one_branch_from_source_where"),
+                Lang.get("lune.gui.tasks.send_preview_pulse_whenever_want_inspect"),
+                Lang.get("lune.gui.tasks.success_fail_different_paths_preview"),
+                Lang.get("lune.gui.tasks.experiments_welcome_here_undo_lets_try"),
+                Lang.get("lune.gui.tasks.look_card_whose_job_missing_from_routine"),
+                Lang.get("lune.gui.tasks.time_limit_we_work_through_pace"),
+                Lang.get("lune.gui.tasks.experiment_safely_routine_only_training"),
+                Lang.get("lune.gui.tasks.card_needs_connection_take_part_look"),
+                Lang.get("lune.gui.tasks.follow_one_wire_time_do_need_solve_whole")
+        };
+        return lines[(lessonTicks / (20 * 18)) % lines.length];
+    }
+
+    private void outcomeButtonLabel() {
+        outcomeButton.setMessage(Component.literal(Lang.get(previewFailure ? "lune.gui.tasks.path_fail" : "lune.gui.tasks.path_success")));
+    }
+
+    public boolean trainingHelpVisible() {
+        return activeLesson != null && helpExpanded;
+    }
+
+    public void showHelp() {
+        if (activeLesson != null) {
+            helpExpanded = true;
+            lessonSpeech = Lang.get("lune.gui.tasks.give_small_hint_or_tell_card_choose_when");
+            syncTrainingControls();
+        }
+    }
+
+    private void nextLesson() {
+        if (!lessonSolved || activeLesson == null) return;
+        int nextIndex = stepNumber(activeLesson);
+        leavePuzzle();
+        if (nextIndex < TrainingCourse.lessons().size()) startLesson(TrainingCourse.lessons().get(nextIndex));
+        else if (trainingScreen != null) trainingScreen.open();
+    }
+
+    /** Opens the course map, or walks out of the puzzle already open. */
+    private void onTrainingButton() {
+        if (activeLesson != null) {
+            leavePuzzle();
+            return;
+        }
+        if (trainingScreen != null) {
+            trainingScreen.open();
+        }
+    }
+
+    /**
+     * Hands the player a broken routine and the three cards one of which finishes it.
+     *
+     * <p>The attempt is a real task in the real store, edited with the real editor. A read-only
+     * sandbox would be easier to write and would teach a set of controls the player never uses
+     * again; the only thing that has to be protected is the task they were already working on, and
+     * that is protected by giving the lesson its own.</p>
+     */
+    private void startLesson(TrainingLesson lesson) {
+        if (lesson == null || !TrainingProgress.isUnlocked(lesson)) {
+            return;
+        }
+        if (activeLesson == null) {
+            taskBeforeTraining = selectedTaskName;
+            // A lesson is a disposable copy. Park the real editor's history before adopting it;
+            // otherwise Undo in Step 4 can jump out of the puzzle and resurrect the user's old
+            // While cards and END node.
+            savedUndoStack = new ArrayDeque<>(undoStack);
+            savedRedoStack = new ArrayDeque<>(redoStack);
+            undoStack.clear();
+            redoStack.clear();
+            pendingHistorySnapshot = null;
+            pendingHistoryTaskName = null;
+            pendingHistoryIdleTicks = 0;
+        }
+        activeLesson = lesson;
+        lessonSpeech = "";
+        previewFailure = false;
+        helpExpanded = false;
+        hintUsed = false;
+        answerUsed = false;
+        answerPresses = 0;
+        answerRevealActive = false;
+        answerRevealTicks = 0;
+        answerRevealHistoryStarted = false;
+        outcomeButtonLabel();
+        blueprintPanel.setTrainingSolved(false);
+        blueprintPanel.stopTrainingPulse();
+        lessonTicks = 0;
+        lessonSolved = false;
+        TaskGraph attempt = TaskStore.get().adopt(lesson.newAttempt());
+        lessonTaskName = attempt.name;
+        refreshTasks();
+        taskList.setSelected(attempt);
+        onTaskSelected(attempt);
+        // Not autoLayout: the starter's positions are the puzzle. Each one leaves an empty column
+        // where the answer belongs, and a grid reflow would fill it in.
+        blueprintPanel.resetView();
+        paletteSearch.setValue("");
+        palettePanel.setPuzzleChoices(lesson.choices());
+        syncTrainingControls();
+        if (area != null && area.width() > 0) {
+            layout(area);
+        }
+        recordEdit();
+        message = Lang.get("lune.gui.tasks.step_2") + stepNumber(lesson) + ": " + lesson.about();
+    }
+
+    /**
+     * Ends training and takes the scratch routine away with it.
+     *
+     * <p>The attempt is never left behind. It looks exactly like a task the player wrote, sits in
+     * the list beside the ones they did write, and is the whole reason training has to be a mode
+     * rather than a task with a prefix on its name.</p>
+     */
+    private void leavePuzzle() {
+        boolean wasSolved = lessonSolved;
+        activeLesson = null;
+        lessonSpeech = "";
+        helpExpanded = false;
+        hintUsed = false;
+        answerUsed = false;
+        answerPresses = 0;
+        answerRevealActive = false;
+        answerRevealTicks = 0;
+        answerRevealHistoryStarted = false;
+        blueprintPanel.setTrainingSolved(false);
+        blueprintPanel.stopTrainingPulse();
+        lessonSolved = false;
+        lessonTicks = 0;
+        palettePanel.setPuzzleChoices(null);
+        discardAttempt();
+        restoreTaskBeforeTraining();
+        // Refresh the baseline before putting the user's history back. This makes a subsequent
+        // edit behave like the training detour never happened.
+        recordEdit();
+        if (savedUndoStack != null) {
+            undoStack.clear();
+            undoStack.addAll(savedUndoStack);
+            savedUndoStack = null;
+        }
+        if (savedRedoStack != null) {
+            redoStack.clear();
+            redoStack.addAll(savedRedoStack);
+            savedRedoStack = null;
+        }
+        syncTrainingControls();
+        if (area != null && area.width() > 0) {
+            layout(area);
+        }
+        message = wasSolved
+                ? Lang.get("lune.gui.tasks.back_tasks_practice_routine_scratch_has")
+                : Lang.get("lune.gui.tasks.left_training_nothing_added_task_list");
+    }
+
+    private void discardAttempt() {
+        if (lessonTaskName != null) {
+            TaskStore store = TaskStore.get();
+            store.byName(lessonTaskName).ifPresent(store::remove);
+            lessonTaskName = null;
+        }
+    }
+
+    private void restoreTaskBeforeTraining() {
+        refreshTasks();
+        TaskGraph previous = taskBeforeTraining == null
+                ? null : TaskStore.get().byName(taskBeforeTraining).orElse(null);
+        taskBeforeTraining = null;
+        if (previous == null) {
+            restoreTaskSelection();
+            return;
+        }
+        taskList.setSelected(previous);
+        onTaskSelected(previous);
+    }
+
+    public void showHint() {
+        if (activeLesson != null) {
+            helpExpanded = true;
+            hintUsed = true;
+            lessonSpeech = activeLesson.hint();
+            syncTrainingControls();
+        }
+    }
+
+    /** Rebuilds only the current scratch lesson, leaving the user's task and history parked. */
+    private void restartLesson() {
+        if (activeLesson == null) {
+            return;
+        }
+        TrainingLesson lesson = activeLesson;
+        undoStack.clear();
+        redoStack.clear();
+        pendingHistorySnapshot = null;
+        pendingHistoryTaskName = null;
+        pendingHistoryIdleTicks = 0;
+        answerRevealActive = false;
+        answerRevealHistoryStarted = false;
+        startLesson(lesson);
+        message = Lang.get("lune.gui.tasks.restarted_step_practice_copy_fresh", stepNumber(lesson));
+    }
+
+    public void showAnswer() {
+        if (activeLesson != null && !answerRevealActive && !lessonSolved) {
+            helpExpanded = true;
+            answerUsed = true;
+            answerPresses = Math.min(5, answerPresses + 1);
+            if (answerPresses >= 5) {
+                answerRevealActive = true;
+                answerRevealTicks = 0;
+                answerRevealHistoryStarted = false;
+                lessonSpeech = Lang.get("lune.gui.tasks.ill_place_answer_one_part_time_watch");
+            } else {
+                lessonSpeech = Lang.get("lune.gui.tasks.answer_request_5_ask_again_when_want_me", answerPresses);
+            }
+            syncTrainingControls();
+        }
+    }
+
+    /** The name a card wears in the palette; the general nodes are not in the command registry. */
+    private static String cardName(String commandId) {
+        CommandDef def = CommandRegistry.byId(commandId);
+        if (def != null) {
+            return def.name();
+        }
+        return switch (commandId) {
+            case TaskNode.START_COMMAND -> Lang.get("lune.gui.tasks.start");
+            case TaskNode.ALWAYS_COMMAND -> Lang.get("lune.gui.tasks.always");
+            case TaskNode.PULSE_COMMAND -> Lang.get("lune.gui.tasks.pulse");
+            case TaskNode.SIGNAL_RELAY_COMMAND -> Lang.get("lune.gui.tasks.signal_relay");
+            case TaskNode.BUTTON_COMMAND -> Lang.get("lune.gui.tasks.button");
+            case TaskNode.TIMER_COMMAND -> Lang.get("lune.gui.tasks.timer");
+            case TaskNode.COUNTER_COMMAND -> Lang.get("lune.gui.tasks.counter");
+            case TaskNode.END_COMMAND -> Lang.get("lune.gui.tasks.end");
+            default -> commandId;
+        };
+    }
+
+    private int stepNumber(TrainingLesson lesson) {
+        return TrainingCourse.lessons().indexOf(lesson) + 1;
+    }
+
+    /**
+     * The task the current lesson was handed to, but only while it is the one on screen.
+     *
+     * <p>Selecting another task mid-puzzle must not have that task marked - or criticised - against
+     * a lesson it has nothing to do with.</p>
+     */
+    private TaskGraph lessonTask() {
+        TaskGraph selected = taskList.getSelected();
+        return selected != null && selected.name.equals(lessonTaskName) ? selected : null;
+    }
+
+    /**
+     * Marks a lesson cleared the moment its routine is whole.
+     *
+     * <p>Checked every tick rather than behind a "check my answer" button. The audit is already
+     * computed for the canvas, and a puzzle that only tells you at the end is a puzzle you solve by
+     * guessing; one that reacts as you wire teaches which wire was the one that mattered.</p>
+     */
+    private void checkLesson() {
+        if (activeLesson == null) {
+            return;
+        }
+        lessonTicks++;
+        TaskGraph attempt = lessonTask();
+        boolean solvedNow = attempt != null && activeLesson.isSolvedBy(attempt);
+        if (!solvedNow) {
+            if (lessonSolved) {
+                lessonSolved = false;
+                lessonSpeech = "";
+                blueprintPanel.setTrainingSolved(false);
+                blueprintPanel.stopTrainingPulse();
+                palettePanel.setPuzzleChoices(activeLesson.choices());
+            }
+            return;
+        }
+        if (lessonSolved) return;
+        boolean firstTime = !TrainingProgress.isComplete(activeLesson);
+        TrainingProgress.markComplete(activeLesson);
+        // Training mode stays on. Ending it here would drop the practice routine straight into the
+        // task list, and the reward for finishing a routine is being allowed to run it.
+        lessonSolved = true;
+        lessonSpeech = "";
+        blueprintPanel.setTrainingSolved(true);
+        blueprintPanel.sendTrainingPulse(false);
+        palettePanel.setPuzzleChoices(null);
+        message = Lang.get("lune.gui.tasks.solved_step", stepNumber(activeLesson), activeLesson.title(), (firstTime ? Lang.get("lune.gui.tasks.watch_pulse_then_choose_next_step") : Lang.get("lune.gui.tasks.already_cleared_press_finish_when_done")));
     }
 
     private void onPaletteSearch(String value) {
@@ -251,13 +639,49 @@ public class TasksTab extends LuneTab {
                 area.top() + (area.height() - h) / 2);
         inventoryPicker.setSize(w, h);
         // The escape hatch keeps every registered item reachable: a backpack that stores its
-        // contents somewhere Lune cannot read contributes nothing to the grid.
-        inventoryPicker.open(param, param::set, param::cycle);
+        // contents somewhere Lune cannot read contributes nothing to the grid, and what you want
+        // to craft is usually not something you are already carrying.
+        inventoryPicker.open(param, param::set, () -> {
+            if (recipePicker == null) {
+                param.cycle();
+            } else {
+                recipePicker.openItem(param.get(), param::set);
+            }
+        });
+    }
+
+    /** Opens the typing prompt for a parameter whose value is a name nothing can offer as a list. */
+    private void openNamePrompt(Param.Text param) {
+        if (namePrompt == null) {
+            return;
+        }
+        CommandDef editing = stepParams.getCommand();
+        String title = (editing == null ? "" : editing.name() + " - ") + param.label();
+        namePrompt.open(title, param.hint(), param.get(), param.maxLength(), typed -> {
+            param.set(typed);
+            stepParams.refresh();
+        });
+    }
+
+    /**
+     * Opens the recipe editor. It lays itself out against the whole screen, like the block picker,
+     * because a crafting grid beside a full item catalog does not fit in a parameter pane.
+     */
+    private void openRecipePicker(Param.Recipe param) {
+        if (recipePicker == null) {
+            return;
+        }
+        recipePicker.open(param.get(), recipe -> {
+            param.set(recipe);
+            // Which rows the card shows depends on the answer - a drawing decides its own grid
+            // size, so it is not asked about a table - and the panel only rebuilds when told to.
+            stepParams.refresh();
+        });
     }
 
     private void createTask() {
         beginEdit();
-        TaskGraph created = TaskStore.get().create("New Task");
+        TaskGraph created = TaskStore.get().create(Lang.get("lune.gui.tasks.new_task"));
         refreshTasks();
         taskList.setSelected(created);
         onTaskSelected(created);
@@ -271,8 +695,8 @@ public class TasksTab extends LuneTab {
         }
         if (!confirmingDelete) {
             confirmingDelete = true;
-            deleteButton.setMessage(Component.literal("Sure?"));
-            message = "Click Delete again to confirm";
+            deleteButton.setMessage(Component.literal(Lang.get("lune.gui.tasks.sure")));
+            message = Lang.get("lune.gui.tasks.click_delete_again_confirm");
             return;
         }
         beginEdit();
@@ -289,22 +713,22 @@ public class TasksTab extends LuneTab {
         selectedTaskName = null;
         recordEdit();
         resetDeleteConfirmation();
-        message = "Deleted " + selected.name;
+        message = Lang.get("lune.gui.tasks.deleted") + selected.displayName();
     }
 
     private void exportTask() {
         TaskGraph selected = taskList.getSelected();
         message = TaskStore.get().exportToClipboard(selected)
-                ? "Copied '" + selected.name + "' to clipboard"
-                : "Select a task first";
+                ? Lang.get("lune.gui.tasks.copied_clipboard", selected.displayName())
+                : Lang.get("lune.gui.tasks.select_task_first");
     }
 
     private void importTask() {
         beginEdit();
         Optional<TaskGraph> imported = TaskStore.get().importFromClipboard();
         message = imported
-                .map(task -> "Imported '" + task.name + "'")
-                .orElse("Clipboard did not contain a task");
+                .map(task -> Lang.get("lune.gui.tasks.imported") + task.displayName() + "'")
+                .orElse(Lang.get("lune.gui.tasks.clipboard_did_contain_task"));
         if (imported.isPresent()) {
             TaskGraph task = imported.get();
             taskList.setSelected(task);
@@ -329,15 +753,20 @@ public class TasksTab extends LuneTab {
      * the state it is in can also be the one that changes it.</p>
      */
     private void runTask() {
+        if (inTraining()) {
+            blueprintPanel.sendTrainingPulse(previewFailure);
+            message = Lang.get("lune.gui.tasks.wiring_preview_outcomes_one_pass_timer", (previewFailure ? Lang.get("lune.gui.blueprint.fail") : Lang.get("lune.gui.blueprint.success")));
+            return;
+        }
         if (selectedTaskIsRunning()) {
             BotEngine.get().stopAll();
-            message = "Stopped";
+            message = Lang.get("lune.engine.stopped");
             syncRunButton();
             return;
         }
         TaskGraph selected = taskList.getSelected();
         if (selected == null || selected.nodes.isEmpty()) {
-            message = "Nothing to run";
+            message = Lang.get("lune.gui.tasks.nothing_run");
             return;
         }
         TaskStore.get().save();
@@ -345,26 +774,33 @@ public class TasksTab extends LuneTab {
         if (BotConfig.get().closePanelOnRun) {
             Minecraft.getInstance().setScreen(null);
         } else {
-            message = "Running " + selected.name + " - the panel stays open";
+            message = Lang.get("lune.gui.tasks.running_panel_stays_open", selected.displayName());
             syncRunButton();
         }
     }
 
     private void syncRunButton() {
+        if (inTraining()) {
+            runButton.setMessage(Component.literal(Lang.get("lune.gui.tasks.send_pulse")));
+            runButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal(Lang.get("lune.gui.tasks.preview_one_pulse_through_selected_path"))));
+            return;
+        }
         boolean running = selectedTaskIsRunning();
-        runButton.setMessage(Component.literal(running ? "Stop" : "Run"));
+        runButton.setMessage(Component.literal(Lang.get(running ? "lune.gui.tasks.stop" : "lune.gui.tasks.run")));
         runButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
-                Component.literal(running
-                        ? "Stop this task"
-                        : BotConfig.get().closePanelOnRun
-                        ? "Start this task and close the panel"
-                        : "Start this task and keep the panel open")));
+                Component.literal(Lang.get(running ? "lune.gui.tasks.stop_tip"
+                : BotConfig.get().closePanelOnRun ? "lune.gui.tasks.run_tip_close"
+                : "lune.gui.tasks.run_tip_keep"))));
     }
 
     private void onRename(String value) {
         TaskGraph selected = taskList.getSelected();
-        if (selected != null && !value.isBlank() && !value.equals(selected.name)) {
+        if (selected != null && !value.isBlank() && !value.equals(selected.displayName())) {
             selected.name = value;
+            // Named by the player now, so it stops following the language. Showing them a title
+            // they did not write, over the one they just typed, would be the wrong answer to
+            // "what is this task called".
+            selected.seededId = null;
             lastOpenedTaskName = value;
             BotConfig.get().lastOpenedTask = value;
             BotConfig.get().save();
@@ -383,8 +819,13 @@ public class TasksTab extends LuneTab {
         resetDeleteConfirmation();
         setTask(task);
         setSelectedStep(null);
-        if (task != null && !task.name.equals(nameBox.getValue())) {
-            nameBox.setValue(task.name);
+        if (task != null && !task.displayName().equals(nameBox.getValue())) {
+            nameBox.setValue(task.displayName());
+            // setValue parks the cursor at the end, which scrolls a name longer than the box out
+            // of view and leaves its tail showing - "land Cleanup" for "Woodland Cleanup". Nobody
+            // reading a name wants to read the end of it first; typing still starts wherever the
+            // player clicks.
+            nameBox.moveCursorToStart(false);
         }
     }
 
@@ -436,7 +877,7 @@ public class TasksTab extends LuneTab {
     private void addFromPalette(PalettePanel.Item item, Integer screenX, Integer screenY) {
         TaskGraph task = taskList.getSelected();
         if (task == null) {
-            message = "Create a task first";
+            message = Lang.get("lune.gui.tasks.create_task_first");
             return;
         }
 
@@ -473,7 +914,7 @@ public class TasksTab extends LuneTab {
                 setSelectedStep(copies.get(0));
                 onStepSelected(copies.get(0));
             }
-            message = "Added " + copies.size() + " steps from " + blueprint.name();
+            message = Lang.get("lune.gui.tasks.added_steps_from", copies.size(), blueprint.name());
         } else if (item instanceof PalettePanel.General general) {
             TaskNode node = new TaskNode(general.id());
             if (node.isPulseSourceNode()) {
@@ -484,7 +925,7 @@ public class TasksTab extends LuneTab {
             task.nodes.add(index, node);
             setSelectedStep(node);
             onStepSelected(node);
-            message = "Added " + general.name() + " node";
+            message = Lang.get("lune.gui.tasks.added") + general.name() + Lang.get("lune.gui.tasks.node");
         } else if (item instanceof PalettePanel.Command cmd) {
             CommandDef def = CommandRegistry.byId(cmd.id());
             if (def == null) {
@@ -554,7 +995,7 @@ public class TasksTab extends LuneTab {
             recordEdit();
             TaskStore.get().save();
             setTask(task);
-            message = removed.size() == 1 ? "Step deleted" : "Deleted " + removed.size() + " steps";
+            message = removed.size() == 1 ? Lang.get("lune.gui.tasks.step_deleted") : Lang.get("lune.gui.tasks.deleted_steps", removed.size());
         }
     }
 
@@ -704,8 +1145,8 @@ public class TasksTab extends LuneTab {
 
     private void toggleMinimap() {
         boolean visible = blueprintPanel.toggleMinimap();
-        minimapButton.setMessage(Component.literal(visible ? "Map: on" : "Map: off"));
-        message = visible ? "Minimap shown" : "Minimap hidden";
+        minimapButton.setMessage(Component.literal(Lang.get(visible ? "lune.gui.tasks.map" : "lune.gui.tasks.map_off")));
+        message = visible ? Lang.get("lune.gui.tasks.minimap_shown") : Lang.get("lune.gui.tasks.minimap_hidden");
     }
 
     private void onStepSelected(TaskNode step) {
@@ -724,11 +1165,10 @@ public class TasksTab extends LuneTab {
         if (step.isStartNode() || step.isClockNode() || step.isButtonNode()) {
             stepParams.setCommand(null);
             stepParams.setSourceDescription(step.isStartNode()
-                    ? "START sends one signal to its connected Success target."
+                    ? Lang.get("lune.gui.tasks.start_sends_one_signal_connected_success")
                     : step.isClockNode()
-                    ? "Always sends a new signal to each connected target "
-                            + step.describeAlwaysInterval() + ". Each target runs as its own circuit."
-                    : "Press this control to send one pulse to every connected output.");
+                    ? Lang.get("lune.gui.tasks.always_sends_new_signal_each_connected", step.describeAlwaysInterval())
+                    : Lang.get("lune.gui.tasks.press_control_send_one_pulse_every"));
             stepParams.setRepeat(1);
             stepParams.setPortExposure(java.util.Set.of(), java.util.Set.of(), null);
             syncAlwaysFrequencyControls();
@@ -760,6 +1200,9 @@ public class TasksTab extends LuneTab {
         def.apply(step.params);
         stepParams.setRepeat(isWhileCompanion(step) ? 0 : step.repeat);
         stepParams.setCommand(def);
+        // Selecting another card of the same kind reuses the same definition, so the panel does not
+        // rebuild on its own - and which rows a card shows can depend on the values just applied.
+        stepParams.refresh();
         stepParams.setPortExposure(step.exposedInputs, step.exposedOutputs,
                 (parameterId, side) -> togglePortExposure(step, parameterId, side));
         syncAlwaysFrequencyControls();
@@ -773,7 +1216,7 @@ public class TasksTab extends LuneTab {
             return;
         }
         TaskRunner.pressButton(step);
-        message = "Button pulse queued";
+        message = Lang.get("lune.gui.tasks.button_pulse_queued");
     }
 
     private void syncButtonControls() {
@@ -806,8 +1249,7 @@ public class TasksTab extends LuneTab {
             int seconds = Math.clamp(step.alwaysIntervalSeconds,
                     TaskNode.MIN_ALWAYS_INTERVAL_SECONDS, TaskNode.MAX_ALWAYS_INTERVAL_SECONDS);
             alwaysFrequencyButton.setMessage(Component.literal(alwaysFrequencyLabel(seconds)));
-            stepParams.setSourceDescription("Always sends a new signal to each connected target "
-                    + step.describeAlwaysInterval() + ". Each target runs as its own circuit.");
+            stepParams.setSourceDescription(Lang.get("lune.gui.tasks.always_sends_new_signal_each_connected", step.describeAlwaysInterval()));
             syncingAlwaysSecondsBox = true;
             alwaysSecondsBox.setValue(String.valueOf(seconds));
             syncingAlwaysSecondsBox = false;
@@ -818,14 +1260,11 @@ public class TasksTab extends LuneTab {
     }
 
     private String alwaysFrequencyLabel(int seconds) {
-        return seconds == 0 ? "Every tick" : "Every " + seconds + "s";
+        return seconds == 0 ? Lang.get("lune.gui.tasks.every_tick") : Lang.get("lune.gui.tasks.every_seconds", seconds);
     }
 
     private String relayDescription(TaskNode node) {
-        return "Signal Relay has " + node.signalInputCount + " input"
-                + (node.signalInputCount == 1 ? "" : "s") + " and " + node.signalOutputCount
-                + " output" + (node.signalOutputCount == 1 ? "" : "s")
-                + ". A pulse arriving at any input is forwarded through every connected output.";
+        return Lang.get("lune.gui.tasks.signal_relay_has_input_output_pulse", node.signalInputCount, (node.signalInputCount == 1 ? "" : "s"), node.signalOutputCount, (node.signalOutputCount == 1 ? "" : "s"));
     }
 
     private void syncRelayPortControls() {
@@ -841,8 +1280,8 @@ public class TasksTab extends LuneTab {
             relayInputsButton.setFocused(false);
             relayOutputsButton.setFocused(false);
         } else {
-            relayInputsButton.setMessage(Component.literal("Inputs: " + step.signalInputCount));
-            relayOutputsButton.setMessage(Component.literal("Outputs: " + step.signalOutputCount));
+            relayInputsButton.setMessage(Component.literal(Lang.get("lune.gui.tasks.inputs", step.signalInputCount)));
+            relayOutputsButton.setMessage(Component.literal(Lang.get("lune.gui.tasks.outputs", step.signalOutputCount)));
         }
         if (visible) {
             stepParams.setSourceDescription(relayDescription(step));
@@ -921,10 +1360,10 @@ public class TasksTab extends LuneTab {
                 if (step.inputLinks != null) {
                     step.inputLinks.remove(parameterId);
                 }
-                message = "Removed " + parameterId + " data input";
+                message = Lang.get("lune.gui.tasks.removed_data_input", parameterId);
             } else {
                 step.exposedInputs.add(parameterId);
-                message = "Added " + parameterId + " data input";
+                message = Lang.get("lune.gui.tasks.added_data_input", parameterId);
             }
         } else {
             if (step.exposedOutputs.remove(parameterId)) {
@@ -937,10 +1376,10 @@ public class TasksTab extends LuneTab {
                         });
                     }
                 }
-                message = "Removed " + parameterId + " data output";
+                message = Lang.get("lune.gui.tasks.removed_data_output", parameterId);
             } else {
                 step.exposedOutputs.add(parameterId);
-                message = "Added " + parameterId + " data output";
+                message = Lang.get("lune.gui.tasks.added_data_output", parameterId);
             }
         }
         TaskStore.get().save();
@@ -972,19 +1411,17 @@ public class TasksTab extends LuneTab {
         // whole task away. Saying how many cards this one takes is what makes the difference
         // visible at the moment of the click rather than after it.
         int selectedCount = selectedNodesForAction().size();
-        removeStepButton.setMessage(Component.literal(
-                selectedCount > 1 ? "Del " + selectedCount : "Del"));
+        removeStepButton.setMessage(Component.literal(Lang.get(selectedCount > 1 ? "lune.gui.tasks.delete_many"
+                : "lune.gui.tasks.del", selectedCount)));
         removeStepButton.active = selectedCount > 0;
         removeStepButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
-                Component.literal(selectedCount == 0
-                        ? "Select a card to delete it. Delete or Backspace does the same."
-                        : selectedCount == 1
-                        ? "Delete the selected card (Delete or Backspace)"
-                        : "Delete the " + selectedCount + " selected cards (Delete or Backspace)")));
+                Component.literal(Lang.get(selectedCount == 0 ? "lune.gui.tasks.delete_tip_none"
+                        : selectedCount == 1 ? "lune.gui.tasks.delete_tip_one"
+                        : "lune.gui.tasks.delete_tip_many", selectedCount))));
 
         syncRunButton();
-        repeatButton.setMessage(Component.literal(step == null ? "-"
-                : isWhileCompanion(step) ? "x∞" : step.describeRepeat()));
+        syncTrainingControls();
+        repeatButton.setMessage(Component.literal(step == null ? "-" : isWhileCompanion(step) ? "x∞" : step.describeRepeat()));
         boolean repeatable = step != null && !step.isSourceNode()
                 && (!step.isPulseNode() || step.isTimerNode())
                 && !isWhileCompanion(step);
@@ -997,6 +1434,41 @@ public class TasksTab extends LuneTab {
         syncAlwaysFrequencyControls();
         syncRelayPortControls();
         syncButtonControls();
+        tickAnswerReveal();
+        checkLesson();
+    }
+
+    /**
+     * The fifth Answer request is an actual demonstration. The missing card appears first, then
+     * its connections arrive a short moment later, so the player can see what Lune changed instead
+     * of watching a finished graph pop into existence.
+     */
+    private void tickAnswerReveal() {
+        if (!answerRevealActive || activeLesson == null) {
+            return;
+        }
+        TaskGraph attempt = lessonTask();
+        if (attempt == null) {
+            answerRevealActive = false;
+            return;
+        }
+        if (!answerRevealHistoryStarted) {
+            beginEdit();
+            TrainingAnswer.applyCard(activeLesson, attempt);
+            TaskStore.get().save();
+            recordEdit();
+            answerRevealHistoryStarted = true;
+            lessonSpeech = Lang.get("lune.gui.tasks.placed_now_im_connecting_signal_path", cardName(activeLesson.answerCommandId()));
+            return;
+        }
+        if (++answerRevealTicks < 10) {
+            return;
+        }
+        TrainingAnswer.solve(activeLesson, attempt);
+        TaskStore.get().save();
+        recordEdit();
+        answerRevealActive = false;
+        lessonSpeech = Lang.get("lune.gui.tasks.answer_wired_watch_pulse_then_try");
     }
 
     private TaskNode selectedStep() {
@@ -1013,6 +1485,8 @@ public class TasksTab extends LuneTab {
 
 
     private void beginEdit() {
+        if (inTraining()) blueprintPanel.stopTrainingPulse();
+        commitPendingHistory();
         if (lastStoreSnapshot != null) {
             undoStack.push(new HistoryEntry(lastStoreSnapshot, selectedTaskName));
             redoStack.clear();
@@ -1020,6 +1494,9 @@ public class TasksTab extends LuneTab {
     }
 
     private void recordEdit() {
+        pendingHistorySnapshot = null;
+        pendingHistoryTaskName = null;
+        pendingHistoryIdleTicks = 0;
         TaskGraph task = taskList.getSelected();
         selectedTaskName = task != null ? task.name : null;
         lastStoreSnapshot = TaskStore.get().exportAll();
@@ -1032,17 +1509,34 @@ public class TasksTab extends LuneTab {
         }
         String current = TaskStore.get().exportAll();
         if (!current.equals(lastStoreSnapshot)) {
-            undoStack.push(new HistoryEntry(lastStoreSnapshot, selectedTaskName));
-            redoStack.clear();
+            if (pendingHistorySnapshot == null) {
+                pendingHistorySnapshot = lastStoreSnapshot;
+                pendingHistoryTaskName = selectedTaskName;
+            }
+            pendingHistoryIdleTicks = 0;
             lastStoreSnapshot = current;
             TaskGraph task = taskList.getSelected();
             selectedTaskName = task != null ? task.name : null;
+            return;
+        }
+        if (pendingHistorySnapshot != null && ++pendingHistoryIdleTicks >= 3) {
+            commitPendingHistory();
         }
     }
 
+    private void commitPendingHistory() {
+        if (pendingHistorySnapshot == null) return;
+        undoStack.push(new HistoryEntry(pendingHistorySnapshot, pendingHistoryTaskName));
+        redoStack.clear();
+        pendingHistorySnapshot = null;
+        pendingHistoryTaskName = null;
+        pendingHistoryIdleTicks = 0;
+    }
+
     private void undo() {
+        commitPendingHistory();
         if (undoStack.isEmpty()) {
-            message = "Nothing to undo";
+            message = Lang.get("lune.gui.tasks.nothing_undo");
             return;
         }
         HistoryEntry entry = undoStack.pop();
@@ -1060,12 +1554,13 @@ public class TasksTab extends LuneTab {
         refreshTasks();
         restoreTaskSelection();
         setSelectedStep(null);
-        message = "Undone";
+        message = Lang.get("lune.gui.tasks.undone");
     }
 
     private void redo() {
+        commitPendingHistory();
         if (redoStack.isEmpty()) {
-            message = "Nothing to redo";
+            message = Lang.get("lune.gui.tasks.nothing_redo");
             return;
         }
         HistoryEntry entry = redoStack.pop();
@@ -1083,19 +1578,24 @@ public class TasksTab extends LuneTab {
         refreshTasks();
         restoreTaskSelection();
         setSelectedStep(null);
-        message = "Redone";
+        message = Lang.get("lune.gui.tasks.redone");
     }
 
     private void resetDeleteConfirmation() {
         if (confirmingDelete) {
             confirmingDelete = false;
-            deleteButton.setMessage(Component.literal("Delete"));
+            deleteButton.setMessage(Component.literal(Lang.get("lune.gui.tasks.delete_2")));
         }
     }
 
     /** Called when the panel closes, so edits survive without writing the file every tick. */
     public void save() {
         tick();
+        if (inTraining()) {
+            // Closing the panel mid-puzzle would otherwise write the practice routine into
+            // lune-tasks.json, which is the one place it must never end up.
+            leavePuzzle();
+        }
         TaskStore.get().save();
     }
 
@@ -1186,9 +1686,9 @@ public class TasksTab extends LuneTab {
     protected void layout(ScreenRectangle area) {
         clampPaneWidths();
         boolean listVisible = listVisible();
-        setLeftPaneVisible(listVisible);
+        syncPaneWidgets(listVisible);
         tasksButton.visible = narrow();
-        tasksButton.setMessage(Component.literal(listExpanded ? "Hide" : "Tasks"));
+        tasksButton.setMessage(Component.literal(Lang.get(listExpanded ? "lune.gui.tasks.hide_list" : "lune.gui.tasks.title")));
 
         // The strip is flowed first: how many rows it wraps onto decides where the canvas starts.
         Frame provisional = frame(area, 1);
@@ -1232,12 +1732,27 @@ public class TasksTab extends LuneTab {
     private void layoutTaskPane(Frame frame) {
         int left = frame.left();
         int top = frame.top();
+        int rowY = top + frame.height() - BUTTON_ROW + 4;
+        int fullW = Math.max(28, frame.leftPane());
+        int halfW = Math.max(28, (frame.leftPane() - BUTTON_GAP) / 2);
+        int tailW = Math.max(28, frame.leftPane() - halfW - BUTTON_GAP);
+
+        // Row one is the mode switch in both modes, so the button that took you in is the button
+        // that takes you out, without moving.
+        trainingButton.setPosition(left, rowY);
+        trainingButton.setSize(fullW, CONTROL_H);
+
+        if (inTraining()) {
+            layoutTrainingPane(rowY, left, fullW, halfW, tailW);
+            return;
+        }
+
         nameBox.setPosition(left + 2, top + 2);
         nameBox.setWidth(frame.leftPane() - 4);
         taskList.setPosition(left, top + 22);
         taskList.setSize(frame.leftPane(), Math.max(20, frame.listHeight() - 22));
 
-        int taskButtonsY = top + frame.height() - BUTTON_ROW + 4;
+        int taskButtonsY = rowY + 21;
         int topW = Math.max(28, (frame.leftPane() - BUTTON_GAP * 2) / 3);
         newButton.setPosition(left, taskButtonsY);
         newButton.setSize(topW, CONTROL_H);
@@ -1247,28 +1762,77 @@ public class TasksTab extends LuneTab {
         runButton.setSize(Math.max(28, frame.leftPane() - 2 * (topW + BUTTON_GAP)), CONTROL_H);
 
         int midY = taskButtonsY + 21;
-        int midW = Math.max(28, (frame.leftPane() - BUTTON_GAP) / 2);
         importButton.setPosition(left, midY);
-        importButton.setSize(midW, CONTROL_H);
-        exportButton.setPosition(left + midW + BUTTON_GAP, midY);
-        exportButton.setSize(Math.max(28, frame.leftPane() - midW - BUTTON_GAP), CONTROL_H);
+        importButton.setSize(halfW, CONTROL_H);
+        exportButton.setPosition(left + halfW + BUTTON_GAP, midY);
+        exportButton.setSize(tailW, CONTROL_H);
 
         int botY = midY + 21;
         undoButton.setPosition(left, botY);
-        undoButton.setSize(midW, CONTROL_H);
-        redoButton.setPosition(left + midW + BUTTON_GAP, botY);
-        redoButton.setSize(Math.max(28, frame.leftPane() - midW - BUTTON_GAP), CONTROL_H);
+        undoButton.setSize(halfW, CONTROL_H);
+        redoButton.setPosition(left + halfW + BUTTON_GAP, botY);
+        redoButton.setSize(tailW, CONTROL_H);
     }
 
-    private void setLeftPaneVisible(boolean visible) {
-        for (AbstractWidget widget : List.of(nameBox, taskList, newButton, deleteButton,
-                importButton, exportButton, undoButton, redoButton, leftSplitter)) {
+    /**
+     * The same four rows, with different occupants.
+     *
+     * <p>Keeping the geometry identical is deliberate: the pane above it changes completely, and
+     * a button block that also jumped around would make the switch read as a different screen
+     * rather than the same editor in another mode.</p>
+     */
+    private void layoutTrainingPane(int rowY, int left, int fullW, int halfW, int tailW) {
+        // Training controls live in the canvas toolbar. The brief stays focused on the lesson.
+        int botY = rowY + 21;
+        undoButton.setPosition(left, botY);
+        undoButton.setSize(halfW, CONTROL_H);
+        redoButton.setPosition(left + halfW + BUTTON_GAP, botY);
+        redoButton.setSize(tailW, CONTROL_H);
+    }
+
+    /**
+     * Which of the left pane's two occupants is on screen.
+     *
+     * <p>The pane holds the task list or the training brief, never both. That is the point: a
+     * practice routine looks exactly like a real one on the canvas, so the only honest place to say
+     * which mode the editor is in is the pane the player reads before they touch anything.</p>
+     *
+     * <p>Run and Training are absent from both sets. Neither is ever hidden - when the pane
+     * collapses they move into the control strip instead, because starting a task and getting into
+     * the course are not things to bury behind a toggle.</p>
+     */
+    private void syncPaneWidgets(boolean paneVisible) {
+        show(paneVisible && !inTraining(), nameBox, taskList, newButton, deleteButton,
+                importButton, exportButton);
+        show(paneVisible, undoButton, redoButton, leftSplitter);
+    }
+
+    private static void show(boolean visible, AbstractWidget... widgets) {
+        for (AbstractWidget widget : widgets) {
             widget.visible = visible;
             if (!visible) {
                 // The name box would otherwise keep the focus ring, and the keystrokes with it.
                 widget.setFocused(false);
             }
         }
+    }
+
+    /** Help lives on Lune; the pane offers preview controls and gated progression. */
+    private void syncTrainingControls() {
+        boolean training = inTraining();
+        restartButton.visible = training;
+        restartButton.active = training;
+        outcomeButton.visible = training;
+        outcomeButton.active = training;
+        helpButton.visible = training;
+        helpButton.active = training;
+        nextLessonButton.visible = training;
+        nextLessonButton.active = training && lessonSolved;
+        nextLessonButton.setMessage(Component.literal(Lang.get(activeLesson != null
+                && stepNumber(activeLesson) == TrainingCourse.lessons().size()
+                ? "lune.gui.tasks.course_map" : "lune.gui.tasks.next_step")));
+        trainingButton.setMessage(Component.literal(Lang.get(!training ? "lune.gui.tasks.training" : "lune.gui.tasks.leave_puzzle")));
+        syncRunButton();
     }
 
     /**
@@ -1289,10 +1853,19 @@ public class TasksTab extends LuneTab {
         if (buttonPressButton.visible) {
             controls.add(buttonPressButton);
         }
-        if (!listVisible) {
+        if (inTraining()) {
+            controls.addAll(0, List.of(runButton, restartButton, outcomeButton, helpButton,
+                    nextLessonButton, trainingButton));
+        } else if (!listVisible) {
             // Run lives in the task pane; with that collapsed it moves here, because starting the
-            // selected task is not something to hide behind a toggle.
-            controls.add(0, runButton);
+            // selected task is not something to hide behind a toggle. Training comes with it, and
+            // so do the preview and next-step buttons - otherwise a narrow window is a window with
+            // no way into the course and no way out of a puzzle.
+            List<AbstractWidget> promoted = new java.util.ArrayList<>(
+                    List.of(runButton, trainingButton));
+            if (outcomeButton.visible) promoted.add(outcomeButton);
+            if (nextLessonButton.visible) promoted.add(nextLessonButton);
+            controls.addAll(0, promoted);
         }
         if (tasksButton.visible) {
             controls.add(0, tasksButton);
@@ -1315,11 +1888,20 @@ public class TasksTab extends LuneTab {
     public void extractTabBackground(GuiGraphicsExtractor extractor) {
         Frame frame = frame(area, controlRows);
         if (frame.listVisible()) {
-            LuneScreen.panel(extractor, frame.left(), frame.top() + 22, frame.leftPane(),
-                    Math.max(20, frame.listHeight() - 22));
+            // The 22px gap at the top is the name box's. Training has no name box - the practice
+            // routine is not something to rename - so the brief gets the whole pane to sit on.
+            int paneTop = inTraining() ? frame.top() : frame.top() + 22;
+            LuneScreen.panel(extractor, frame.left(), paneTop, frame.leftPane(),
+                    Math.max(20, frame.top() + frame.listHeight() - paneTop));
         }
         LuneScreen.panel(extractor, frame.flowX(), frame.flowTop(), frame.flowWidth(),
                 frame.flowHeight());
+        if (inTraining()) {
+            // The canvas is the same widget in both modes and a practice routine looks exactly
+            // like a real one on it, so the frame around it is what says this is not your task.
+            extractor.outline(frame.flowX(), frame.flowTop(), frame.flowWidth(),
+                    frame.flowHeight(), LuneScreen.ACCENT);
+        }
         LuneScreen.panel(extractor, frame.rightX(), frame.top(), frame.rightPane(),
                 frame.paletteBackHeight());
         LuneScreen.panel(extractor, frame.rightX(), frame.paramsTop(), frame.rightPane(),
@@ -1329,15 +1911,24 @@ public class TasksTab extends LuneTab {
     @Override
     public void extractTabRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float partialTick) {
         var text = extractor.textRenderer();
+        drawTrainingBrief(extractor);
         int y = area.bottom() - 12;
-        if (!message.isEmpty()) {
+        // The lesson brief owns the teaching text. Keeping the answer-like critique out of this
+        // single-line footer prevents it being clipped and makes the left panel the place to read
+        // what the exercise is about.
+        if (activeLesson != null) {
+            String footer = lessonSolved
+                    ? Lang.get("lune.gui.tasks.step_complete_use_next_step_continue", stepNumber(activeLesson))
+                    : Lang.get("lune.gui.tasks.training_goal_shown_left_panel_follow");
+            text.accept(area.left() + MARGIN, y, Component.literal(footer)
+                    .withColor(lessonSolved ? 0xFF6FBF87 : LuneScreen.TEXT_DIM));
+        } else if (!message.isEmpty()) {
             text.accept(area.left() + MARGIN, y, Component.literal(message).withColor(LuneScreen.ACCENT));
         } else {
             // A collapsed list is easy to miss, so the idle line says where the tasks went.
             text.accept(area.left() + MARGIN, y,
-                    Component.literal(listVisible()
-                                    ? "Blueprint wires use the same task logic. Export copies JSON."
-                                    : "Tasks is hidden - open it to pick or create another task.")
+                    Component.literal(Lang.get(listVisible() ? "lune.gui.tasks.blueprint_hint"
+                : "lune.gui.tasks.list_hidden_hint"))
                             .withColor(LuneScreen.TEXT_DIM));
         }
 
@@ -1345,11 +1936,106 @@ public class TasksTab extends LuneTab {
         Task current = BotEngine.get().getCurrent();
         if (current instanceof TaskRunner task) {
             text.accept(area.left() + MARGIN, y - 13,
-                    Component.literal("Running " + task.currentTask().name + ": " + task.describeFlow())
+                    Component.literal(Lang.get("lune.gui.tasks.running", task.currentTask().name, task.describeFlow()))
                             .withColor(LuneScreen.ACCENT));
         }
 
         drawPaletteDragGhost(extractor);
+    }
+
+    /**
+     * The training brief, drawn where the task list normally is.
+     *
+     * <p>This is the mode marker that matters. Everything else on the tab - the canvas, the
+     * palette, the toolbar - is the ordinary editor doing ordinary things, and a player who walked
+     * in halfway would have no way to tell a lesson from their own work without it.</p>
+     */
+    private void drawTrainingBrief(GuiGraphicsExtractor extractor) {
+        if (!inTraining() || !listVisible()) {
+            return;
+        }
+        Frame frame = frame(area, controlRows);
+        var text = extractor.textRenderer();
+        var font = Minecraft.getInstance().font;
+        int left = frame.left() + 5;
+        int width = Math.max(20, frame.leftPane() - 10);
+        int y = frame.top() + 4;
+
+        text.accept(left, y, Component.literal(Lang.get("lune.gui.tasks.training_2")).withColor(LuneScreen.ACCENT));
+        y += 12;
+        text.accept(left, y, Component.literal(Lang.get("lune.gui.tasks.step", stepNumber(activeLesson), TrainingCourse.lessons().size())).withColor(LuneScreen.TEXT_DIM));
+        y += 14;
+        text.accept(left, y, Component.literal(Lang.get("lune.gui.tasks.what_teaches"))
+                .withColor(LuneScreen.ACCENT));
+        y += 12;
+        for (String line : wrapPlain(font, activeLesson.title(), width, 2)) {
+            text.accept(left, y, Component.literal(line).withColor(LuneScreen.TEXT));
+            y += 10;
+        }
+        y += 4;
+        text.accept(left, y, Component.literal(Lang.get("lune.gui.tasks.task_2"))
+                .withColor(LuneScreen.ACCENT));
+        y += 12;
+        for (String line : wrapPlain(font, activeLesson.about(), width, 4)) {
+            text.accept(left, y, Component.literal(line).withColor(LuneScreen.TEXT_DIM));
+            y += 10;
+        }
+        y += 8;
+        String status = lessonSolved ? Lang.get("lune.gui.tasks.solved") : Lang.get("lune.gui.tasks.solved_yet");
+        if (hintUsed) status += Lang.get("lune.gui.tasks.hint_used");
+        if (answerUsed) status += Lang.get("lune.gui.tasks.answer_used");
+        for (String line : wrapPlain(font, status, width, 2)) {
+            text.accept(left, y, Component.literal(line)
+                    .withColor(lessonSolved ? 0xFF6FBF87 : LuneScreen.TEXT_DIM));
+            y += 10;
+        }
+        y += 2;
+        if (!lessonSolved) {
+            for (String line : wrapPlain(font,
+                    helpExpanded ? Lang.get("lune.gui.tasks.lune_ready_with_hint_answer")
+                            : Lang.get("lune.gui.tasks.lune_offer_help_when_ask"), width, 5)) {
+                text.accept(left, y, Component.literal(line).withColor(LuneScreen.TEXT_DIM));
+                y += 10;
+            }
+        }
+    }
+
+    /** Greedy word wrap, capped. The overflowing tail is clipped into the last line, not dropped. */
+    private static List<String> wrapPlain(net.minecraft.client.gui.Font font, String value,
+                                          int maxWidth, int maxLines) {
+        List<String> lines = new java.util.ArrayList<>(maxLines);
+        String[] words = value.split(" ");
+        StringBuilder current = new StringBuilder();
+        for (int i = 0; i < words.length; i++) {
+            String candidate = current.isEmpty() ? words[i] : current + " " + words[i];
+            if (font.width(candidate) <= maxWidth) {
+                current.setLength(0);
+                current.append(candidate);
+                continue;
+            }
+            if (lines.size() == maxLines - 1) {
+                String tail = String.join(" ", List.of(words).subList(i, words.length));
+                lines.add(clipPlain(font, current.isEmpty() ? tail : current + " " + tail, maxWidth));
+                return lines;
+            }
+            if (!current.isEmpty()) {
+                lines.add(clipPlain(font, current.toString(), maxWidth));
+            }
+            current.setLength(0);
+            current.append(words[i]);
+        }
+        if (!current.isEmpty() && lines.size() < maxLines) {
+            lines.add(clipPlain(font, current.toString(), maxWidth));
+        }
+        return lines;
+    }
+
+    private static String clipPlain(net.minecraft.client.gui.Font font, String value, int maxWidth) {
+        if (font.width(value) <= maxWidth) {
+            return value;
+        }
+        String fit = font.plainSubstrByWidth(value, Math.max(0, maxWidth - font.width("...")), false);
+        return fit.isEmpty() ? "..." : fit + "...";
     }
 
     /** A card outline under the cursor, so a dragged palette tile is visibly being carried. */

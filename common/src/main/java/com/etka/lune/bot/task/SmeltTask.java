@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -59,7 +61,7 @@ public final class SmeltTask implements Task {
     private int cooldown;
     private int startCount = -1;
     private int completed;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public SmeltTask(Set<Item> inputs, Item output, int wanted) {
         this.inputs = Set.copyOf(inputs);
@@ -69,17 +71,23 @@ public final class SmeltTask implements Task {
 
     @Override
     public String name() {
-        return "Smelt " + InventoryHelper.itemName(output);
+        return Lang.get("lune.task.smelt.name", InventoryHelper.itemName(output));
+    }
+
+    /** English on purpose: this is the learner's row key, and is never shown. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Smelt " + InventoryHelper.itemName(output));
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
     @Override
     public TaskProgress progress() {
-        return new TaskProgress(completed, wanted, "items");
+        return new TaskProgress(completed, wanted, Lang.get("lune.unit.items"));
     }
 
     @Override
@@ -93,7 +101,7 @@ public final class SmeltTask implements Task {
         completed = Math.max(0, done);
         if (done >= wanted) {
             closeMenu(ctx);
-            status = "smelted " + InventoryHelper.itemName(output) + " x" + done;
+            status.set("lune.status.smelt.smelted_x", InventoryHelper.itemName(output), done);
             return TaskStatus.SUCCESS;
         }
 
@@ -104,7 +112,7 @@ public final class SmeltTask implements Task {
 
         if (surfaceRecovery != null) {
             TaskStatus recovery = surfaceRecovery.tick(ctx);
-            status = "returning to dry ground - " + surfaceRecovery.status();
+            status.set("lune.status.smelt.returning_dry_ground", surfaceRecovery.statusLine());
             if (recovery == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
@@ -112,10 +120,10 @@ public final class SmeltTask implements Task {
             surfaceRecovery = null;
             if (recovery == TaskStatus.SUCCESS) {
                 cooldown = ACTION_COOLDOWN;
-                status = "reached room for a furnace";
+                status.set("lune.status.smelt.reached_room_furnace");
                 return TaskStatus.RUNNING;
             }
-            status = "could not make room for a furnace";
+            status.set("lune.status.smelt.could_not_make_room_furnace");
             return TaskStatus.FAILED;
         }
 
@@ -130,7 +138,7 @@ public final class SmeltTask implements Task {
                 furnacePlaceTicks = 0;
                 furnacePlacementAttempts = 0;
                 openAttempts = 0;
-                status = "furnace placed";
+                status.set("lune.status.smelt.furnace_placed");
                 cooldown = ACTION_COOLDOWN;
                 return TaskStatus.RUNNING;
             }
@@ -142,27 +150,25 @@ public final class SmeltTask implements Task {
                     placingFurnacePos = null;
                     furnacePlaceTicks = 0;
                     if (++furnacePlacementAttempts < MAX_PLACEMENT_SPOTS) {
-                        status = "that furnace spot failed ("
-                                + placement.name().toLowerCase() + "), trying another";
+                        status.set("lune.status.smelt.furnace_spot_failed_trying_another", placement.displayName());
                         return TaskStatus.RUNNING;
                     }
                     furnacePlacementAttempts = 0;
-                    status = "could not place a furnace ("
-                            + placement.name().toLowerCase() + ")";
+                    status.set("lune.status.smelt.could_not_place_furnace_2", placement.displayName());
                     return TaskStatus.FAILED;
                 }
-                status = "placing furnace";
+                status.set("lune.status.smelt.placing_furnace");
                 return TaskStatus.RUNNING;
             }
             badPlacementSpots.add(placingFurnacePos.asLong());
             placingFurnacePos = null;
             furnacePlaceTicks = 0;
             if (++furnacePlacementAttempts < MAX_PLACEMENT_SPOTS) {
-                status = "that furnace spot failed, trying another";
+                status.set("lune.status.smelt.furnace_spot_failed_trying_another_2");
                 return TaskStatus.RUNNING;
             }
             furnacePlacementAttempts = 0;
-            status = "could not place a furnace";
+            status.set("lune.status.smelt.could_not_place_furnace");
             return TaskStatus.FAILED;
         }
 
@@ -180,7 +186,7 @@ public final class SmeltTask implements Task {
             furnacePos = findFurnace(ctx);
             if (furnacePos == null) {
                 if (!InventoryHelper.has(ctx.player, Items.FURNACE, 1)) {
-                    status = "no furnace";
+                    status.set("lune.status.smelt.no_furnace");
                     return TaskStatus.FAILED;
                 }
                 placingFurnacePos = BlockPlacer.findPlacementSpot(ctx, badPlacementSpots);
@@ -190,13 +196,13 @@ public final class SmeltTask implements Task {
                         surfaceRecoveryAttempted = true;
                         surfaceRecovery = new SurfaceRecoveryTask();
                         surfaceRecovery.start(ctx);
-                        status = "no room for a furnace; returning to dry ground";
+                        status.set("lune.status.smelt.no_room_furnace_returning_dry_ground");
                         return TaskStatus.RUNNING;
                     }
-                    status = "nowhere to put a furnace after surface recovery";
+                    status.set("lune.status.smelt.nowhere_put_furnace_after_surface");
                     return TaskStatus.FAILED;
                 }
-                status = "placing furnace";
+                status.set("lune.status.smelt.placing_furnace");
                 return TaskStatus.RUNNING;
             }
             badPlacementSpots.clear();
@@ -211,15 +217,15 @@ public final class SmeltTask implements Task {
         if (!(ctx.player.containerMenu instanceof AbstractFurnaceMenu menu)) {
             if (inReach(ctx, furnacePos)) {
                 if (openAttempts >= MAX_OPEN_ATTEMPTS) {
-                    status = "can't open furnace";
+                    status.set("lune.status.smelt.cant_open_furnace");
                     return TaskStatus.FAILED;
                 }
                 if (BlockPlacer.use(ctx, furnacePos)) {
                     openAttempts++;
-                    status = "opening furnace";
+                    status.set("lune.status.smelt.opening_furnace");
                     cooldown = ACTION_COOLDOWN + 3;
                 } else {
-                    status = "aiming at furnace";
+                    status.set("lune.status.smelt.aiming_furnace");
                 }
                 return TaskStatus.RUNNING;
             }
@@ -230,10 +236,10 @@ public final class SmeltTask implements Task {
             }
             TaskStatus walk = approach.tick(ctx);
             if (walk == TaskStatus.FAILED) {
-                status = "can't reach furnace";
+                status.set("lune.status.smelt.cant_reach_furnace");
                 return TaskStatus.FAILED;
             }
-            status = "walking to furnace";
+            status.set("lune.status.smelt.walking_furnace");
             return TaskStatus.RUNNING;
         }
 
@@ -245,7 +251,7 @@ public final class SmeltTask implements Task {
         if (!result.isEmpty() && result.is(output)) {
             ctx.gameMode.handleContainerInput(menu.containerId, resultSlot, 0, ContainerInput.QUICK_MOVE, ctx.player);
             cooldown = ACTION_COOLDOWN;
-            status = "collecting " + InventoryHelper.itemName(output);
+            status.set("lune.status.smelt.collecting", InventoryHelper.itemName(output));
             return TaskStatus.RUNNING;
         }
 
@@ -256,10 +262,10 @@ public final class SmeltTask implements Task {
             if (fuelInvSlot >= 0) {
                 ctx.gameMode.handleContainerInput(menu.containerId, fuelInvSlot, 0, ContainerInput.QUICK_MOVE, ctx.player);
                 cooldown = ACTION_COOLDOWN;
-                status = "adding fuel";
+                status.set("lune.status.smelt.adding_fuel");
                 return TaskStatus.RUNNING;
             }
-            status = "no fuel";
+            status.set("lune.status.smelt.no_fuel");
             return TaskStatus.FAILED;
         }
 
@@ -270,14 +276,14 @@ public final class SmeltTask implements Task {
             if (inputInvSlot >= 0) {
                 ctx.gameMode.handleContainerInput(menu.containerId, inputInvSlot, 0, ContainerInput.QUICK_MOVE, ctx.player);
                 cooldown = ACTION_COOLDOWN;
-                status = "adding " + menu.getSlot(inputInvSlot).getItem().getHoverName().getString();
+                status.set("lune.status.smelt.adding", menu.getSlot(inputInvSlot).getItem().getHoverName().getString());
                 return TaskStatus.RUNNING;
             }
-            status = "no " + InventoryHelper.itemName(inputs.iterator().next());
+            status.set("lune.status.smelt.no", InventoryHelper.itemName(inputs.iterator().next()));
             return TaskStatus.FAILED;
         }
 
-        status = "smelting " + InventoryHelper.itemName(output) + " (" + done + "/" + wanted + ")";
+        status.set("lune.status.smelt.smelting", InventoryHelper.itemName(output), done, wanted);
         return TaskStatus.RUNNING;
     }
 

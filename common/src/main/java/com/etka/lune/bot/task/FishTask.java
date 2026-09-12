@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -34,6 +36,14 @@ public final class FishTask implements Task {
     private static final double BITE_DROP = 0.10;
     /** Let the bobber settle before interpreting a downward movement as a bite. */
     private static final int MIN_WATER_TICKS = 8;
+    /**
+     * Ticks the hook may read as out of water before the observation is abandoned.
+     *
+     * <p>Long enough to ride out the surface animation, short enough that a bobber genuinely thrown
+     * onto land still gives up quickly - and the land case never reaches this anyway, because it
+     * requires the hook to have been in the water first.</p>
+     */
+    private static final int BOB_TOLERANCE = 4;
     /** Ticks to wait after using the rod, so one action isn't sent several times. */
     private static final int USE_COOLDOWN = 20;
     /** Maximum time to wait for the client/server to expose the new bobber. */
@@ -59,6 +69,7 @@ public final class FishTask implements Task {
     private int castConfirmTicks;
     private int reelConfirmTicks;
     private int waterTicks;
+    private int dryTicks;
     private int flightTicks;
     private int aimSettledTicks;
     private int caught;
@@ -67,7 +78,7 @@ public final class FishTask implements Task {
     private boolean awaitingReelConfirmation;
     private BlockPos waterTarget;
     private Vec3 castAim;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public FishTask(boolean autoRecast) {
         this.autoRecast = autoRecast;
@@ -75,17 +86,23 @@ public final class FishTask implements Task {
 
     @Override
     public String name() {
-        return "Fish";
+        return Lang.get("lune.task.fish.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Fish");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
     @Override
     public TaskProgress learningProgress() {
-        return new TaskProgress(caught, autoRecast ? Math.max(1, caught) : 1, "catches");
+        return new TaskProgress(caught, autoRecast ? Math.max(1, caught) : 1, Lang.get("lune.unit.catches"));
     }
 
     @Override
@@ -103,7 +120,7 @@ public final class FishTask implements Task {
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (!ctx.player.getMainHandItem().is(Items.FISHING_ROD)) {
-            status = "no fishing rod in main hand";
+            status.set("lune.status.fish.no_fishing_rod_main_hand");
             return TaskStatus.FAILED;
         }
 
@@ -116,11 +133,10 @@ public final class FishTask implements Task {
         if (hook == null) {
             if (awaitingCastConfirmation) {
                 if (++castConfirmTicks < CAST_CONFIRM_TIMEOUT) {
-                    status = "waiting for bobber (" + castConfirmTicks + "/"
-                            + CAST_CONFIRM_TIMEOUT + ")";
+                    status.set("lune.status.fish.waiting_bobber", castConfirmTicks, CAST_CONFIRM_TIMEOUT);
                     return TaskStatus.RUNNING;
                 }
-                status = "cast did not create a bobber";
+                status.set("lune.status.fish.cast_did_not_create_bobber");
                 return TaskStatus.FAILED;
             }
             if (awaitingReelConfirmation) {
@@ -130,7 +146,7 @@ public final class FishTask implements Task {
                 clearAimTarget();
             }
             if (caught > 0 && !autoRecast) {
-                status = "caught " + caught;
+                status.set("lune.status.fish.caught", caught);
                 return TaskStatus.SUCCESS;
             }
             return aimAndCast(ctx);
@@ -138,8 +154,7 @@ public final class FishTask implements Task {
 
         if (awaitingReelConfirmation) {
             if (++reelConfirmTicks < REEL_SYNC_TIMEOUT) {
-                status = "waiting for reel (" + reelConfirmTicks + "/"
-                        + REEL_SYNC_TIMEOUT + ")";
+                status.set("lune.status.fish.waiting_reel", reelConfirmTicks, REEL_SYNC_TIMEOUT);
                 return TaskStatus.RUNNING;
             }
             // In singleplayer the server can finish retrieve() before the client-side
@@ -152,7 +167,7 @@ public final class FishTask implements Task {
             resetHookObservation();
             clearAimTarget();
             if (caught > 0 && !autoRecast) {
-                status = "caught " + caught;
+                status.set("lune.status.fish.caught", caught);
                 return TaskStatus.SUCCESS;
             }
             return aimAndCast(ctx);
@@ -169,15 +184,31 @@ public final class FishTask implements Task {
                 awaitingReelConfirmation = true;
                 reelConfirmTicks = 0;
                 resetHookObservation();
-                status = "cast missed water; retrying";
+                status.set("lune.status.fish.cast_missed_water_retrying");
+                return TaskStatus.RUNNING;
+            }
+            // A bobber that has already settled is allowed to bob.
+            //
+            // isInWater() is false on any tick the hook's own box clears the surface, and a float
+            // riding the water animation does that constantly - measured, 535 times in a ten-minute
+            // run. Resetting the observation on each of those put waterTicks back to zero, and
+            // since a bite is only looked for after MIN_WATER_TICKS consecutive ticks in water, the
+            // check often never got to run at all: eight fish in ten minutes where vanilla's bite
+            // timer alone should give something like thirty.
+            //
+            // Only a hook that has never been in the water is still in flight, so the grace is
+            // conditional on waterTicks - "cast missed water; retrying" is untouched.
+            if (waterTicks > 0 && ++dryTicks <= BOB_TOLERANCE) {
+                status.set("lune.status.fish.waiting_bite_caught", caught);
                 return TaskStatus.RUNNING;
             }
             resetHookObservation();
-            status = "waiting for bobber to reach water (" + caught + " caught)";
+            status.set("lune.status.fish.waiting_bobber_reach_water_caught", caught);
             return TaskStatus.RUNNING;
         }
 
         flightTicks = 0;
+        dryTicks = 0;
         waterTicks++;
         double downwardDrop = Double.isNaN(lastHookY) ? 0.0 : lastHookY - hook.getY();
         lastHookY = hook.getY();
@@ -188,11 +219,11 @@ public final class FishTask implements Task {
             awaitingReelConfirmation = true;
             reelConfirmTicks = 0;
             resetHookObservation();
-            status = "caught " + caught;
+            status.set("lune.status.fish.caught", caught);
             return TaskStatus.RUNNING;
         }
 
-        status = "waiting for a bite (" + caught + " caught)";
+        status.set("lune.status.fish.waiting_bite_caught", caught);
         return TaskStatus.RUNNING;
     }
 
@@ -223,7 +254,7 @@ public final class FishTask implements Task {
             castAim = null;
         }
         if (waterTarget == null) {
-            status = "no stable water to aim at";
+            status.set("lune.status.fish.no_stable_water_aim");
             return TaskStatus.FAILED;
         }
 
@@ -234,16 +265,16 @@ public final class FishTask implements Task {
         ctx.look.lookAt(ctx.player, aim);
         if (!ctx.look.isLookingAt(ctx.player, aim, AIM_TOLERANCE)) {
             aimSettledTicks = 0;
-            status = "aiming at water " + waterTarget;
+            status.set("lune.status.fish.aiming_water", waterTarget);
             return TaskStatus.RUNNING;
         }
         if (++aimSettledTicks < AIM_SETTLE_TICKS) {
-            status = "holding aim at water " + waterTarget;
+            status.set("lune.status.fish.holding_aim_water", waterTarget);
             return TaskStatus.RUNNING;
         }
 
         castRod(ctx);
-        status = "casting at water " + waterTarget;
+        status.set("lune.status.fish.casting_water", waterTarget);
         return TaskStatus.RUNNING;
     }
 
@@ -454,6 +485,7 @@ public final class FishTask implements Task {
     }
 
     private void resetHookObservation() {
+        dryTicks = 0;
         waterTicks = 0;
         lastHookY = Double.NaN;
     }

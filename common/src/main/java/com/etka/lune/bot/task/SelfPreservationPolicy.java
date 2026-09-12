@@ -12,6 +12,8 @@ public final class SelfPreservationPolicy {
     public static final String PILLAR_FIRST = "pillar-first";
     public static final String COUNTERATTACK_FIRST = "counterattack-first";
     public static final String SHELTER_FIRST = "shelter-first";
+    public static final String DEFLECT_FIRST = "deflect-first";
+    public static final String DODGE_FIRST = "dodge-first";
     public static final String WATER_CLUTCH = "water-clutch";
     public static final String CUSHION_CLUTCH = "cushion-clutch";
     public static final String BOAT_CLUTCH = "boat-clutch";
@@ -36,6 +38,25 @@ public final class SelfPreservationPolicy {
             actions.add(COUNTERATTACK_FIRST);
         }
         return List.copyOf(actions);
+    }
+
+    /**
+     * What can be done about a fireball already in the air.
+     *
+     * <p>Two genuinely different bets, which is why the learner gets to rank them rather than one
+     * being hard-coded as the answer. Batting it back kills the Ghast on the spot - a reflected
+     * fireball is lethal to its shooter regardless of its health - but it needs the head on target
+     * and the shot inside reach, and a swing that misses is a swing taken instead of a step. Stepping
+     * out of the line always works and leaves the Ghast up there still shooting.
+     *
+     * <p>Cover is absent on purpose: a wall takes a dozen ticks to place and the fireball is arriving
+     * in three.
+     */
+    public static List<String> fireballActions(boolean canDeflect, boolean canDodge) {
+        List<String> actions = new ArrayList<>();
+        if (canDeflect) actions.add(DEFLECT_FIRST);
+        if (canDodge) actions.add(DODGE_FIRST);
+        return actions.isEmpty() ? List.of(DIRECT) : List.copyOf(actions);
     }
 
     /** A clutch method is offered only when it can physically work at the start of this fall. */

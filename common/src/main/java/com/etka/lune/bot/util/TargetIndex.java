@@ -16,6 +16,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.function.BiPredicate;
+import java.util.function.Predicate;
 import java.util.function.ToDoubleFunction;
 
 /**
@@ -51,10 +52,16 @@ public final class TargetIndex {
     /** Distance-sorted view of {@link #candidates}, cached per observer position. */
     private List<BlockPos> sorted;
     private BlockPos sortedOrigin;
-    /** Where the next bounded sweep resumes, so a large candidate set is covered over time. */
-    private int cursor;
-    /** Candidates the bounded sweep has looked at since the rebuild. See {@link #sweptEveryCandidate()}. */
-    private int sweptSinceRebuild;
+    /** How far the bounded sweep has got, so a large candidate set is covered over time. */
+    private final SweepCursor sweep = new SweepCursor();
+    /**
+     * Why candidates were refused during the current sweep, so a fruitless search can say what it
+     * was looking at rather than only that it found nothing.
+     */
+    private int refusedSealed;
+    private int refusedFiltered;
+    private int refusedPostponed;
+    private int refusedExcluded;
 
     /**
      * How many candidates a bounded sweep may <em>look at</em> per ray cast it is allowed to spend.
@@ -93,8 +100,7 @@ public final class TargetIndex {
         candidates.clear();
         sorted = null;
         sortedOrigin = null;
-        cursor = 0;
-        sweptSinceRebuild = 0;
+        resetSweep();
         this.centre = centre;
         this.targets = Set.copyOf(targets);
         this.radius = radius;
@@ -160,6 +166,10 @@ public final class TargetIndex {
                 }
             }
         }
+        // Size the sweep now that the list exists. The reset at the top of this method ran against
+        // an empty one, and a sweep that believes it has no candidates believes it has already
+        // looked at all of them.
+        resetSweep();
     }
 
     private void collectFromSection(LevelHeightAccessor height, LevelChunkSection section,
@@ -263,27 +273,48 @@ public final class TargetIndex {
     }
 
     /**
-     * A bounded slice of {@link #nearest}: tests at most {@code maxChecks} candidates and resumes
-     * from where the previous bounded call stopped, wrapping around the list.
+     * A bounded slice of {@link #nearest}: spends at most {@code maxChecks} ray casts and resumes
+     * where the previous slice stopped, so one sweep is spread over as many ticks as it needs.
      * <p>
      * Visibility is a ray cast per candidate, and an ore search can index thousands of blocks that
      * are all buried. Running every one of them on every tick is affordable while the bot is
      * standing still and looking around; it is not while it is also walking and the client is
      * rendering. Any visible target is worth stopping for, so a slice per tick finds one just as
-     * surely - it simply takes a few ticks to work through a large candidate set. The sweep still
-     * begins at the nearest candidate after every rebuild, so the closest blocks are always the
-     * first ones considered.
+     * surely - it simply takes a few ticks to work through a large candidate set. A sweep always
+     * begins at the nearest candidate, so the closest blocks are always the first ones considered.
      */
     public BlockPos nearestBounded(BlockGetter level, BlockPos origin, Set<Long> excluded,
                                    BiPredicate<BlockPos, BlockState> filter, int maxChecks) {
+        return nearestBounded(level, origin, excluded, filter, null, maxChecks);
+    }
+
+    /**
+     * As {@link #nearestBounded(BlockGetter, BlockPos, Set, BiPredicate, int)}, but able to tell a
+     * candidate that was ruled out from one the caller merely has its back to.
+     *
+     * <p>This distinction is the whole difference between a search that behaves like a person and
+     * one that does not. Visibility depends on where the head is pointing, the head turns while the
+     * sweep runs, and the sweep is spread over many ticks - so without it, whether a block is chosen
+     * comes down to which tick of the head's rotation it happened to be tested on. The nearest tree
+     * gets tested while the bot is looking at its own feet, is written off, and some tree across the
+     * field - tested three ticks later, while facing it - wins instead. That is the bot walking past
+     * the wood it is standing next to.
+     *
+     * <p>So a rejection that {@code postponed} claims is only about facing does not count as an
+     * answer: the sweep comes back to it, for {@link SweepCursor#MAX_POSTPONE_PASSES} passes. And
+     * the result is the <em>nearest</em> acceptance rather than the first one stumbled across, held
+     * back until everything closer has been resolved. {@link SweepCursor} owns that bookkeeping.
+     *
+     * @param postponed consulted only when {@code filter} rejects; true when the sole objection is
+     *                  where the head currently points
+     */
+    public BlockPos nearestBounded(BlockGetter level, BlockPos origin, Set<Long> excluded,
+                                   BiPredicate<BlockPos, BlockState> filter,
+                                   Predicate<BlockPos> postponed, int maxChecks) {
         if (candidates.isEmpty() || maxChecks <= 0) {
             return null;
         }
         List<BlockPos> ordered = inDistanceOrder(origin);
-        int size = ordered.size();
-        if (cursor >= size) {
-            cursor = 0;
-        }
         // The budget is a budget of *ray casts*, not of candidates.
         //
         // An ore index in stone is overwhelmingly blocks sealed on all six sides, and a sealed block
@@ -295,11 +326,13 @@ public final class TargetIndex {
         // skipped for free and the budget goes to blocks that might actually be in view.
         int examineBudget = maxChecks * EXAMINED_PER_CAST;
         int spent = 0;
-        int scanned = 0;
-        while (spent < maxChecks && scanned < size && scanned < examineBudget) {
-            BlockPos pos = ordered.get((cursor + scanned) % size);
-            scanned++;
+        int examined = 0;
+        while (spent < maxChecks && examined < examineBudget && sweep.hasNext()) {
+            int at = sweep.next();
+            examined++;
+            BlockPos pos = ordered.get(at);
             if (excluded.contains(pos.asLong())) {
+                refusedExcluded++;
                 continue;
             }
             BlockState state = level.getBlockState(pos);
@@ -307,20 +340,49 @@ public final class TargetIndex {
                 continue;
             }
             if (!hasExposedFace(level, pos)) {
+                refusedSealed++;
                 continue;
             }
             spent++;
             if (filter.test(pos, state)) {
-                return pos;
+                sweep.accept(at);
+                break;
+            }
+            boolean facingAway = postponed != null && postponed.test(pos);
+            if (facingAway) {
+                refusedPostponed++;
+                if (!sweep.hasPostponement()) {
+                    sweep.postpone(at);
+                }
+            } else {
+                refusedFiltered++;
             }
         }
-        cursor = (cursor + scanned) % size;
-        sweptSinceRebuild += scanned;
-        return null;
+
+        if (sweep.finish() != SweepCursor.Outcome.COMMIT) {
+            return null;
+        }
+        // A held result is a tick or more old, and a block can be mined, burnt or grown over in the
+        // meantime. Confirm before handing it back.
+        BlockPos chosen = ordered.get(sweep.accepted());
+        resetSweep();
+        return targets.contains(level.getBlockState(chosen).getBlock()) ? chosen : null;
     }
 
     /**
-     * Whether the bounded sweeps since the last rebuild have between them looked at every candidate.
+     * Abandons the current sweep so the next one starts from the nearest candidate again.
+     * <p>
+     * Callers that physically turn the head must call this as they turn. Visibility is measured
+     * against where the head points, so a sweep that finished under one heading has not looked
+     * anywhere under the next one, and without this the four views of a scan would all be answered
+     * by whatever the first view happened to conclude.
+     */
+    public void restartSweep() {
+        resetSweep();
+    }
+
+    /**
+     * Whether the sweep has finished looking, so that no result means there is nothing to find.
      *
      * <p>This is the difference between "there is nothing visible here" and "I have not finished
      * looking yet", and only the caller can tell them apart: {@link #nearestBounded} returns
@@ -328,7 +390,32 @@ public final class TargetIndex {
      * search on the first tick, every tick.</p>
      */
     public boolean sweptEveryCandidate() {
-        return sweptSinceRebuild >= candidates.size();
+        return candidates.isEmpty() || sweep.isComplete();
+    }
+
+    /** Drops everything the current sweep had decided, so the next one starts from the nearest. */
+    private void resetSweep() {
+        sweep.reset(candidates.size());
+        refusedSealed = 0;
+        refusedFiltered = 0;
+        refusedPostponed = 0;
+        refusedExcluded = 0;
+    }
+
+    /**
+     * What the current sweep has looked at and turned down, for the run journal.
+     * <p>
+     * "Nothing visible" is the same sentence whether the index was empty, whether every candidate
+     * was sealed in rock, or whether the bot simply had its back to a forest - and those want three
+     * different fixes. Counting them is what tells them apart after the fact.
+     */
+    public String sightTally() {
+        return "indexed=" + candidates.size()
+                + ";sealed=" + refusedSealed
+                + ";refused=" + refusedFiltered
+                + ";facing-away=" + refusedPostponed
+                + ";written-off=" + refusedExcluded
+                + ";swept=" + sweptEveryCandidate();
     }
 
     /**
@@ -378,8 +465,7 @@ public final class TargetIndex {
         candidates.clear();
         sorted = null;
         sortedOrigin = null;
-        cursor = 0;
-        sweptSinceRebuild = 0;
+        resetSweep();
     }
 
     private List<BlockPos> inDistanceOrder(BlockPos origin) {
@@ -404,7 +490,7 @@ public final class TargetIndex {
         sorted.sort(order);
         sortedOrigin = origin;
         // Positions in the previous ordering mean nothing in this one.
-        cursor = 0;
+        resetSweep();
         return sorted;
     }
 }

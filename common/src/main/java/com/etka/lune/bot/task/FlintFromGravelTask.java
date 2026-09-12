@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -45,11 +47,17 @@ public class FlintFromGravelTask implements Task {
     private int ticks;
     private int collecting;
     private int badSites;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     @Override
     public String name() {
-        return "Flint From Gravel";
+        return Lang.get("lune.task.flint_from_gravel.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Flint From Gravel");
     }
 
     @Override
@@ -59,35 +67,35 @@ public class FlintFromGravelTask implements Task {
         collecting = 0;
         badSites = 0;
         rejected.clear();
-        status = "knapping gravel for flint";
+        status.set("lune.status.flint_from_gravel.knapping_gravel_flint");
     }
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (InventoryHelper.has(ctx.player, Items.FLINT, 1)) {
-            status = "got the flint";
+            status.set("lune.status.flint_from_gravel.got_flint");
             return TaskStatus.SUCCESS;
         }
         if (++ticks > MAX_TICKS) {
-            status = "no flint after " + ticks + " ticks of knapping";
+            status.set("lune.status.flint_from_gravel.no_flint_after_ticks_knapping", ticks);
             return TaskStatus.FAILED;
         }
         if (!InventoryHelper.has(ctx.player, Items.GRAVEL, 1)) {
-            status = "out of gravel without a flint";
+            status.set("lune.status.flint_from_gravel.out_gravel_without_flint");
             return TaskStatus.FAILED;
         }
         // Let the drop come to the player before the spot is reused; placing straight over an item
         // that has not been picked up yet loses the gravel it was meant to recycle.
         if (collecting > 0) {
             collecting--;
-            status = "collecting the gravel back";
+            status.set("lune.status.flint_from_gravel.collecting_gravel_back");
             return TaskStatus.RUNNING;
         }
 
         if (site == null) {
             site = placementSite(ctx);
             if (site == null) {
-                status = "nowhere to set a block down here";
+                status.set("lune.status.flint_from_gravel.nowhere_set_block_down_here");
                 return TaskStatus.FAILED;
             }
         }
@@ -102,21 +110,21 @@ public class FlintFromGravelTask implements Task {
             switch (result) {
                 case PLACED, ALREADY_PRESENT -> { }
                 case NO_MATERIAL -> {
-                    status = "out of gravel without a flint";
+                    status.set("lune.status.flint_from_gravel.out_gravel_without_flint");
                     return TaskStatus.FAILED;
                 }
                 case BLOCKED, NO_SUPPORT, OUT_OF_REACH -> {
                     rejected.add(site.asLong());
                     site = null;
                     if (++badSites >= MAX_BAD_SITES) {
-                        status = "nowhere to set a block down here";
+                        status.set("lune.status.flint_from_gravel.nowhere_set_block_down_here");
                         return TaskStatus.FAILED;
                     }
-                    status = "looking for somewhere to set the gravel down";
+                    status.set("lune.status.flint_from_gravel.looking_somewhere_set_gravel_down");
                     return TaskStatus.RUNNING;
                 }
                 default -> {
-                    status = "placing gravel";
+                    status.set("lune.status.flint_from_gravel.placing_gravel");
                     return TaskStatus.RUNNING;
                 }
             }
@@ -128,10 +136,10 @@ public class FlintFromGravelTask implements Task {
             ctx.debug.decide("broke a placed gravel block; hoping for flint");
         } else if (progress == BlockBreaker.Progress.NO_TOOL
                 || progress == BlockBreaker.Progress.HAZARD) {
-            status = "cannot break the gravel here";
+            status.set("lune.status.flint_from_gravel.cannot_break_gravel_here");
             return TaskStatus.FAILED;
         }
-        status = "knapping gravel for flint";
+        status.set("lune.status.flint_from_gravel.knapping_gravel_flint");
         return TaskStatus.RUNNING;
     }
 
@@ -142,7 +150,7 @@ public class FlintFromGravelTask implements Task {
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 

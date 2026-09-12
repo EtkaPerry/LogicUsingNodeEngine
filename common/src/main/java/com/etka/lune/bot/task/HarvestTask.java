@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -76,7 +78,7 @@ public final class HarvestTask implements Task {
     private int replantTicks;
     private int harvested;
     private String collectionStrategy = CollectionPolicy.DEFAULT;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public HarvestTask(Set<Block> targets, int radius, int limit) {
         this(targets, radius, limit, true, true);
@@ -94,22 +96,28 @@ public final class HarvestTask implements Task {
 
     @Override
     public String name() {
-        return "Harvest";
+        return Lang.get("lune.task.harvest.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Harvest");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
     @Override
     public TaskProgress progress() {
-        return limit <= 0 ? null : new TaskProgress(harvested, limit, "crops");
+        return limit <= 0 ? null : new TaskProgress(harvested, limit, Lang.get("lune.unit.crops"));
     }
 
     @Override
     public TaskProgress learningProgress() {
-        return new TaskProgress(harvested, limit <= 0 ? Math.max(1, harvested) : limit, "crops");
+        return new TaskProgress(harvested, limit <= 0 ? Math.max(1, harvested) : limit, Lang.get("lune.unit.crops"));
     }
 
     @Override
@@ -164,7 +172,7 @@ public final class HarvestTask implements Task {
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (targets.isEmpty()) {
-            status = "no crops selected";
+            status.set("lune.status.harvest.no_crops_selected");
             return TaskStatus.FAILED;
         }
 
@@ -190,13 +198,13 @@ public final class HarvestTask implements Task {
 
         if (limit > 0 && harvested >= limit) {
             stopBreaking(ctx);
-            status = "harvested " + harvested;
+            status.set("lune.status.harvest.harvested", harvested);
             return TaskStatus.SUCCESS;
         }
 
         if (farmScout != null) {
             TaskStatus result = farmScout.tick(ctx);
-            status = "checking another farm - " + farmScout.status();
+            status.set("lune.status.harvest.checking_another_farm", farmScout.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
@@ -224,7 +232,7 @@ public final class HarvestTask implements Task {
                 startFarmScout(ctx);
                 return TaskStatus.RUNNING;
             } else {
-                status = "harvested " + harvested + ", nothing visible left to harvest";
+                status.set("lune.status.harvest.harvested_nothing_visible_left_harvest", harvested);
                 return TaskStatus.SUCCESS;
             }
         }
@@ -244,7 +252,7 @@ public final class HarvestTask implements Task {
             // air makes the eye ray bob past short crops and can trample the soil on landing.
             if (!ctx.player.onGround()) {
                 ctx.input.reset();
-                status = "settling beside crop";
+                status.set("lune.status.harvest.settling_beside_crop");
                 return TaskStatus.RUNNING;
             }
             // A candidate can be geometrically close while another row hides the crop from the
@@ -252,7 +260,7 @@ public final class HarvestTask implements Task {
             // immature crop that happened to intercept the ray.
             if (!Vision.isReachable(ctx, target)) {
                 unsuitableApproaches.add(MovementHelper.feetPosition(ctx.player).asLong());
-                status = "moving to a clear side of crop";
+                status.set("lune.status.harvest.moving_clear_side_crop");
                 return walkToTarget(ctx);
             }
             return breakTarget(ctx);
@@ -276,7 +284,7 @@ public final class HarvestTask implements Task {
         farmScout = new ExploreTask(targets, radius, stops, FARM_SCAN_STEP, true,
                 HeadScanner.Style.GLANCE, false, CropHelper::isMature);
         farmScout.start(ctx);
-        status = "walking between farms to check for visible crops";
+        status.set("lune.status.harvest.walking_between_farms_check_visible");
         ctx.debug.nextDecision = "glance ahead, sweep, then walk to another nearby farm";
     }
 
@@ -306,7 +314,7 @@ public final class HarvestTask implements Task {
             // Visibility is tested below on every tick, including while turning. A player notices
             // a crop as it swings into view; settled is only used to decide when to turn farther.
             settled = headScanner.tickTurn(ctx);
-            status = headScanner.status();
+            status.set(headScanner.statusLine());
             ctx.debug.searchHeading = headScanner.status();
         }
 
@@ -356,12 +364,12 @@ public final class HarvestTask implements Task {
         }
         if (headScanner.advance()) {
             scanDone = false;
-            status = "looking " + headScanner.status();
+            status.set("lune.status.scan.looking", headScanner.statusLine());
             return null;
         }
         if (headScanner.escalate(ctx.player)) {
             scanDone = false;
-            status = "widening the farm scan";
+            status.set("lune.status.harvest.widening_farm_scan");
             return null;
         }
         scanDone = true;
@@ -397,18 +405,18 @@ public final class HarvestTask implements Task {
         String name = ctx.level.getBlockState(target).getBlock().getName().getString();
         BlockBreaker.Progress progress = breaker.tick(ctx, target);
         if (progress == BlockBreaker.Progress.NO_TOOL) {
-            status = "can't harvest " + name;
+            status.set("lune.status.harvest.cant_harvest", name);
             return TaskStatus.FAILED;
         }
         if (progress == BlockBreaker.Progress.HAZARD) {
-            status = breaker.getFailureReason();
+            status.set(breaker.getFailureReason());
             unreachable.add(target.asLong());
             BlockMemory.get().markUnreachable(target);
             clearTarget(ctx);
             return TaskStatus.RUNNING;
         }
         breaking = true;
-        status = "harvesting " + name + " (" + harvested + " done)";
+        status.set("lune.status.harvest.harvesting_done", name, harvested);
         return TaskStatus.RUNNING;
     }
 
@@ -422,7 +430,7 @@ public final class HarvestTask implements Task {
                 unreachable.add(target.asLong());
                 BlockMemory.get().markUnreachable(target);
                 clearTarget(ctx);
-                status = "no safe footing beside crop, skipping it";
+                status.set("lune.status.harvest.no_safe_footing_beside_crop_skipping");
                 return TaskStatus.RUNNING;
             }
             // A crop does not justify building a bridge or pillar. If this floating farm has no
@@ -439,7 +447,7 @@ public final class HarvestTask implements Task {
             // choose another side instead of rebuilding an already-satisfied goal forever.
             if (!ctx.player.onGround()) {
                 ctx.input.reset();
-                status = "settling beside crop";
+                status.set("lune.status.harvest.settling_beside_crop");
                 return TaskStatus.RUNNING;
             }
             Vec3 aim = Vision.blockAimPoint(ctx, target);
@@ -447,7 +455,7 @@ public final class HarvestTask implements Task {
                     <= STAND_REACH * STAND_REACH;
             if (!closeEnough || !Vision.isReachable(ctx, target)) {
                 unsuitableApproaches.add(MovementHelper.feetPosition(ctx.player).asLong());
-                status = "route reached, trying a clear side of crop";
+                status.set("lune.status.harvest.route_reached_trying_clear_side_crop");
             }
             return TaskStatus.RUNNING;
         }
@@ -455,10 +463,10 @@ public final class HarvestTask implements Task {
             unreachable.add(target.asLong());
             BlockMemory.get().markUnreachable(target);
             clearTarget(ctx);
-            status = "crop unreachable, checking the next farm";
+            status.set("lune.status.harvest.crop_unreachable_checking_next_farm");
             return TaskStatus.RUNNING;
         }
-        status = "walking close to crop - " + approach.status();
+        status.set("lune.status.harvest.walking_close_crop", approach.statusLine());
         return TaskStatus.RUNNING;
     }
 
@@ -500,7 +508,7 @@ public final class HarvestTask implements Task {
         if (collectDrops && collector != null) {
             TaskStatus result = collector.tick(ctx);
             if (result == TaskStatus.RUNNING) {
-                status = "collecting harvest drops";
+                status.set("lune.status.harvest.collecting_harvest_drops");
                 return false;
             }
             stopCollector(ctx);
@@ -518,7 +526,11 @@ public final class HarvestTask implements Task {
         headScanner.reset(ctx.player);
         scanDone = false;
         scoutingDone = false;
-        status = replant ? "replanted crop; checking this farm" : "crop finished; checking this farm";
+        if (replant) {
+            status.set("lune.status.harvest.replanted_crop_checking_farm");
+        } else {
+            status.set("lune.status.harvest.crop_finished_checking_farm");
+        }
         return true;
     }
 
@@ -527,18 +539,18 @@ public final class HarvestTask implements Task {
             return true;
         }
         if (postBreakType == null || !CropHelper.hasSeed(ctx, postBreakType)) {
-            status = "no seed for the harvested crop; moving on";
+            status.set("lune.status.harvest.no_seed_harvested_crop_moving");
             return true;
         }
         if (++replantTicks > REPLANT_DEADLINE) {
-            status = "replanting took too long; moving on";
+            status.set("lune.status.harvest.replanting_took_too_long_moving");
             return true;
         }
         if (CropHelper.plant(ctx, postBreakCrop, postBreakType)) {
-            status = "replanted crop; checking this farm";
+            status.set("lune.status.harvest.replanted_crop_checking_farm");
             return true;
         }
-        status = "replanting crop";
+        status.set("lune.status.harvest.replanting_crop");
         return false;
     }
 

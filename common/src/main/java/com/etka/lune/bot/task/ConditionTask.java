@@ -1,9 +1,12 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.util.InventoryHelper;
+import com.etka.lune.bot.util.WorldClock;
 import com.etka.lune.waypoint.Waypoint;
 import com.etka.lune.waypoint.WaypointStore;
 import net.minecraft.core.BlockPos;
@@ -29,7 +32,8 @@ public final class ConditionTask implements Task {
     public enum Kind {
         ITEM_COUNT,
         PLAYER_VALUE,
-        WAYPOINT_DISTANCE
+        WAYPOINT_DISTANCE,
+        WORLD_TIME
     }
 
     private final Kind kind;
@@ -38,7 +42,7 @@ public final class ConditionTask implements Task {
     private final String waypointName;
     private final String comparison;
     private final int threshold;
-    private String status = "";
+    private final StatusText status = new StatusText();
     private final Map<String, String> outputs = new LinkedHashMap<>();
 
     private ConditionTask(Kind kind, Item item, String metric, String waypointName,
@@ -63,17 +67,39 @@ public final class ConditionTask implements Task {
         return new ConditionTask(Kind.WAYPOINT_DISTANCE, null, null, waypointName, comparison, threshold);
     }
 
+    /**
+     * Asks the overworld clock a yes-or-no question.
+     *
+     * <p>The odd one out among the conditions: a stretch of the day is not a number you usefully
+     * compare against, so this one carries a phase name where the others carry a comparison. Making
+     * it "time of day at most 13800" instead would have been consistent and unreadable.</p>
+     */
+    public static ConditionTask worldTime(String phase) {
+        return new ConditionTask(Kind.WORLD_TIME, null, phase, null, null, 0);
+    }
+
     @Override
     public String name() {
         return switch (kind) {
-            case ITEM_COUNT -> "Check Item Count";
-            case PLAYER_VALUE -> "Check Player";
-            case WAYPOINT_DISTANCE -> "Check Distance";
+            case ITEM_COUNT -> Lang.get("lune.command.check_item.name");
+            case PLAYER_VALUE -> Lang.get("lune.command.check_player.name");
+            case WAYPOINT_DISTANCE -> Lang.get("lune.command.check_distance.name");
+            case WORLD_TIME -> Lang.get("lune.command.check_time.name");
         };
     }
 
     @Override
-    public String status() {
+    public String learningId() {
+        return Task.learningName(switch (kind) {
+            case ITEM_COUNT -> Lang.get("lune.command.check_item.name");
+            case PLAYER_VALUE -> Lang.get("lune.command.check_player.name");
+            case WAYPOINT_DISTANCE -> Lang.get("lune.command.check_distance.name");
+            case WORLD_TIME -> Lang.get("lune.command.check_time.name");
+        });
+    }
+
+    @Override
+    public StatusText statusLine() {
         return status;
     }
 
@@ -88,12 +114,13 @@ public final class ConditionTask implements Task {
             case ITEM_COUNT -> checkItemCount(ctx);
             case PLAYER_VALUE -> checkPlayerValue(ctx);
             case WAYPOINT_DISTANCE -> checkWaypointDistance(ctx);
+            case WORLD_TIME -> checkWorldTime(ctx);
         };
     }
 
     private TaskStatus checkItemCount(BotContext ctx) {
         if (item == null) {
-            status = "no item selected";
+            status.set("lune.status.condition.no_item_selected");
             return TaskStatus.FAILED;
         }
         double actual = InventoryHelper.count(ctx.player, item);
@@ -106,41 +133,56 @@ public final class ConditionTask implements Task {
             case "Hunger" -> ctx.player.getFoodData().getFoodLevel();
             case "Air" -> ctx.player.getAirSupply();
             default -> {
-                status = "unknown player value '" + metric + "'";
+                status.set("lune.status.condition.unknown_player_value", metric);
                 yield Double.NaN;
             }
         };
         if (Double.isNaN(actual)) {
             return TaskStatus.FAILED;
         }
-        return result(metric, actual);
+        return result(com.etka.lune.bot.command.Param.Choice.optionLabel(metric), actual);
     }
 
     private TaskStatus checkWaypointDistance(BotContext ctx) {
         if (waypointName == null || waypointName.isBlank()) {
-            status = "no waypoint selected";
+            status.set("lune.status.condition.no_waypoint_selected");
             return TaskStatus.FAILED;
         }
         Waypoint waypoint = WaypointStore.get().byName(waypointName).orElse(null);
         if (waypoint == null) {
-            status = "no waypoint named '" + waypointName + "'";
+            status.set("lune.status.fail.no_waypoint_named", waypointName);
             return TaskStatus.FAILED;
         }
         String dimension = ctx.level.dimension().identifier().toString();
         if (!dimension.equals(waypoint.dimension())) {
-            status = "waypoint is in another dimension";
+            status.set("lune.status.fail.waypoint_other_dimension");
             return TaskStatus.FAILED;
         }
         BlockPos pos = waypoint.pos();
         double actual = Math.sqrt(ctx.player.distanceToSqr(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5));
-        return result("distance to " + waypoint.name(), actual);
+        return result(Lang.get("lune.condition.distance_to", waypoint.name()), actual);
+    }
+
+    private TaskStatus checkWorldTime(BotContext ctx) {
+        WorldClock.Phase wanted = WorldClock.fromLabel(metric);
+        if (wanted == null) {
+            status.set("lune.status.condition.unknown_time_day", metric);
+            return TaskStatus.FAILED;
+        }
+        long time = WorldClock.dayTime(ctx.level);
+        outputs.put(outputPort(), Long.toString(time));
+        boolean matches = wanted.matches(time);
+        status.set("lune.status.condition.which", Lang.get("lune.condition.world_time",
+                com.etka.lune.bot.command.Param.Choice.optionLabel(WorldClock.bandOf(time).label()), WorldClock.clock(time)),
+                com.etka.lune.bot.command.Param.Choice.optionLabel(wanted.label()),
+                matches ? Lang.get("lune.gui.blueprint.success") : Lang.get("lune.gui.blueprint.fail"));
+        return matches ? TaskStatus.SUCCESS : TaskStatus.FAILED;
     }
 
     private TaskStatus result(String subject, double actual) {
         outputs.put(outputPort(), format(actual));
         boolean passed = compare(actual, comparison, threshold);
-        status = subject + " " + comparisonPhrase(comparison) + " " + threshold
-                + " (actual " + format(actual) + ")";
+        status.set("lune.status.condition.actual", subject, comparisonPhrase(comparison), threshold, format(actual));
         return passed ? TaskStatus.SUCCESS : TaskStatus.FAILED;
     }
 
@@ -149,6 +191,7 @@ public final class ConditionTask implements Task {
             case ITEM_COUNT -> "count";
             case PLAYER_VALUE -> "value";
             case WAYPOINT_DISTANCE -> "distance";
+            case WORLD_TIME -> "time";
         };
     }
 

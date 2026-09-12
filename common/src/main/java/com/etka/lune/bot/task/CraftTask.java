@@ -1,15 +1,12 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
-import com.etka.lune.bot.memory.CraftingTableMemory;
-import com.etka.lune.bot.path.Goals;
-import com.etka.lune.bot.util.BlockPlacer;
-import com.etka.lune.bot.util.BlockScanner;
 import com.etka.lune.bot.util.InventoryHelper;
 import net.minecraft.client.gui.screens.recipebook.RecipeCollection;
-import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.util.context.ContextMap;
@@ -18,15 +15,9 @@ import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.display.RecipeDisplayEntry;
 import net.minecraft.world.item.crafting.display.RecipeDisplayId;
 import net.minecraft.world.item.crafting.display.SlotDisplayContext;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.ClipContext;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
-import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -44,9 +35,11 @@ import java.util.function.Predicate;
  * way to place ingredients slot by slot reliably. Going through {@code handlePlaceRecipe} means the
  * server does the matching, which is also what makes this work unchanged with modded recipes.
  * <p>
- * Anything needing a 3×3 grid places and opens a crafting table first. The bot remembers tables it
- * has placed or used and can walk back to them when no wood is close, while staying willing to build
- * a fresh one when it is cheaper than the hike.
+ * Anything needing a 3×3 grid gets one through {@link CraftingTableAccess}, which finds, places,
+ * walks to and opens a table.
+ * <p>
+ * The other half of crafting is {@link GridCraftTask}: this card can only make what the recipe book
+ * already knows, and that one lays the ingredients out by hand for the recipes it does not.
  */
 public final class CraftTask implements Task {
 
@@ -56,27 +49,6 @@ public final class CraftTask implements Task {
     private static final int ACTION_COOLDOWN = 5;
     /** Ticks of no new items before concluding the ingredients aren't there. */
     private static final int GIVE_UP_TICKS = 80;
-    /** Default radius for looking for an existing crafting table before placing one. */
-    /**
-     * Deliberately short. Since the bot stopped reclaiming its tables there is usually one standing
-     * somewhere behind it, and walking back to it is only worth doing if it is genuinely underfoot.
-     * A table is four planks; further than this and it is faster to make another one where the work
-     * is than to walk there and back - and a table eight blocks away can mean climbing out of a
-     * mineshaft, which is not eight blocks of walking at all.
-     */
-    private static final int TABLE_SEARCH_RADIUS = 4;
-    /** If the nearest table is further than this, the bot prefers placing a fresh one. */
-    private static final int NEARBY_TABLE_RADIUS_SQR = 3 * 3;
-    /**
-     * A crafting table is an interaction target, not merely a nearby landmark. A distance goal can
-     * accept a position below or behind a table where the ray cast can never hit its face. The
-     * approach goal therefore names the eight same-level neighbouring blocks, so arrival is a
-     * meaningful interaction position rather than a satisfied radius beside the table.
-     */
-    /** How many times we will try to open a table before concluding it's unreachable. */
-    private static final int MAX_OPEN_ATTEMPTS = 4;
-    /** How many ticks we will keep trying to place at one spot before picking another. */
-    private static final int MAX_PLACE_TICKS = 40;
     /** Item name endings that identify a per-material family, longest first so "_log" beats "og". */
     private static final List<String> MATERIAL_SUFFIXES = List.of("_planks", "_wool", "_log");
 
@@ -84,40 +56,47 @@ public final class CraftTask implements Task {
     private final String label;
     private final int wanted;
     private final boolean needsTable;
+    /** True when {@link #wanted} counts what this run makes, rather than what the bag holds. */
+    private final boolean countsNewItems;
 
     private final List<RecipeDisplayId> candidates = new ArrayList<>();
-    private final Set<Long> unreachableTables = new HashSet<>();
-    private final Set<Long> badPlacementSpots = new HashSet<>();
+    private final CraftingTableAccess table = new CraftingTableAccess();
 
     private int candidateIndex;
     private int cooldown;
     private int lastCount = -1;
     private int noProgressTicks;
-    private int openAttempts;
-    private long currentTableKey = -1;
-    private BlockPos tablePos;
-    private GotoTask approach;
-    private int tableSearchRadius = TABLE_SEARCH_RADIUS;
-    private int placingTicks;
-    private BlockPos placingSpot;
-    private BlockPos fallbackTablePos;
-    /** One bounded attempt to reconnect to a surface table after a route failed from a pocket. */
-    private SurfaceRecoveryTask tableRecovery;
-    private BlockPos tableForRecovery;
-    private boolean attemptedTableRecovery;
-    private String status = "";
+    /** What was already carried when the run began; zero unless counting new items. */
+    private int baseline;
+    private boolean baselineTaken;
+    private final StatusText status = new StatusText();
 
-    private CraftTask(Predicate<ItemStack> matches, String label, int wanted, boolean needsTable) {
+    private CraftTask(Predicate<ItemStack> matches, String label, int wanted, boolean needsTable,
+                      boolean countsNewItems) {
         this.matches = matches;
         this.label = label;
         this.wanted = Math.max(1, wanted);
         this.needsTable = needsTable;
+        this.countsNewItems = countsNewItems;
     }
 
-    /** Craft a specific item. */
+    /** Craft until the bag holds this many, which is what a job needing materials asks for. */
     public static CraftTask of(Item item, int wanted, boolean needsTable) {
         return new CraftTask(stack -> stack.is(item),
-                InventoryHelper.itemName(item), wanted, needsTable);
+                InventoryHelper.itemName(item), wanted, needsTable, false);
+    }
+
+    /**
+     * Craft this many, whatever is already carried.
+     * <p>
+     * The difference matters more than it reads. "Have four planks" is the right question for a
+     * job that needs four planks to continue, and it is the wrong one for a person who asked for
+     * four planks: a card told to craft four while a stack of sixty-four sits in the bag has
+     * nothing to do, finishes immediately, and looks broken. A card says what it makes.
+     */
+    public static CraftTask make(Item item, int amount, boolean needsTable) {
+        return new CraftTask(stack -> stack.is(item),
+                InventoryHelper.itemName(item), amount, needsTable, true);
     }
 
     /**
@@ -126,7 +105,7 @@ public final class CraftTask implements Task {
      * wood should work without being named anywhere.
      */
     public static CraftTask ofTag(TagKey<Item> tag, String label, int wanted, boolean needsTable) {
-        return new CraftTask(stack -> stack.is(tag), label, wanted, needsTable);
+        return new CraftTask(stack -> stack.is(tag), label, wanted, needsTable, false);
     }
 
     /**
@@ -136,7 +115,7 @@ public final class CraftTask implements Task {
      */
     public static CraftTask matching(Predicate<ItemStack> matches, String label, int wanted,
                                      boolean needsTable) {
-        return new CraftTask(matches, label, wanted, needsTable);
+        return new CraftTask(matches, label, wanted, needsTable, false);
     }
 
     /**
@@ -167,12 +146,7 @@ public final class CraftTask implements Task {
      * recipe that needs a table it cannot reach fails with a message about the recipe.
      */
     public static boolean tableInReach(BotContext ctx, int radius) {
-        if (CraftingTableMemory.get().findNearest(ctx, ctx.player.blockPosition(), radius) != null) {
-            return true;
-        }
-        return BlockScanner.findNearest(ctx.level, ctx.player.blockPosition(),
-                Set.of(Blocks.CRAFTING_TABLE), radius, ctx.level.getMinY(), ctx.level.getMaxY(),
-                Set.of()) != null;
+        return CraftingTableAccess.tableInReach(ctx, radius);
     }
 
     /**
@@ -180,26 +154,43 @@ public final class CraftTask implements Task {
      * would rather hike back to a remembered table than chop a new tree.
      */
     public CraftTask withTableSearchRadius(int radius) {
-        this.tableSearchRadius = Math.max(1, radius);
+        table.setSearchRadius(radius);
         return this;
     }
 
     @Override
     public String name() {
-        return "Craft " + label;
+        return Lang.get("lune.task.craft.name", label);
+    }
+
+    /** English on purpose: this is the learner's row key, and is never shown. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Craft " + label);
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
         int have = InventoryHelper.count(ctx.player, matches);
-        if (have >= wanted) {
+        // Taken on the first tick rather than in onStart, because a caller that ticks a task it
+        // built itself is not obliged to have started it.
+        if (countsNewItems && !baselineTaken) {
+            baseline = have;
+            baselineTaken = true;
+        }
+        int done = have - baseline;
+        if (done >= wanted) {
             closeMenu(ctx);
-            status = "have " + have;
+            if (countsNewItems) {
+                status.set("lune.status.craft.made", done);
+            } else {
+                status.set("lune.status.craft.have", have);
+            }
             return TaskStatus.SUCCESS;
         }
 
@@ -212,7 +203,10 @@ public final class CraftTask implements Task {
             // Time spent finding, placing and opening a table is not the crafting recipe stalling.
             lastCount = have;
             noProgressTicks = 0;
-            return prepareTable(ctx);
+            TaskStatus table = this.table.ensureOpen(ctx);
+            status.set(this.table.statusLine());
+            // SUCCESS here only means the grid is open; the craft itself starts next tick.
+            return table == TaskStatus.FAILED ? TaskStatus.FAILED : TaskStatus.RUNNING;
         }
 
         // Progress is "more of the thing exists". Ingredients running out looks exactly like the
@@ -232,9 +226,11 @@ public final class CraftTask implements Task {
                 return TaskStatus.RUNNING;
             }
             closeMenu(ctx);
-            status = candidates.isEmpty()
-                    ? "no recipe for " + label + " - is the ingredient in the bag?"
-                    : "missing materials for " + label;
+            if (candidates.isEmpty()) {
+                status.set("lune.status.craft.no_recipe_ingredient_bag", label);
+            } else {
+                status.set("lune.status.craft.missing_materials", label);
+            }
             return TaskStatus.FAILED;
         }
 
@@ -242,7 +238,7 @@ public final class CraftTask implements Task {
             // Recipes are unlocked by the server when the ingredient is first picked up, and that
             // reply lands a few ticks after the item does. Failing here would lose a race we only
             // have to wait out; the give-up timer still catches a genuinely unknown recipe.
-            status = "waiting for the " + label + " recipe";
+            status.set("lune.status.craft.waiting_recipe", label);
             cooldown = ACTION_COOLDOWN;
             return TaskStatus.RUNNING;
         }
@@ -255,258 +251,8 @@ public final class CraftTask implements Task {
         ctx.gameMode.handleContainerInput(containerId, RESULT_SLOT, 0, ContainerInput.QUICK_MOVE, ctx.player);
         cooldown = ACTION_COOLDOWN;
 
-        status = "crafting (" + have + "/" + wanted + ")";
+        status.set("lune.status.craft.crafting", done, wanted);
         return TaskStatus.RUNNING;
-    }
-
-    /** Ensures a crafting table exists nearby, we're standing next to it, and it's open. */
-    private TaskStatus prepareTable(BotContext ctx) {
-        if (tableRecovery != null) {
-            TaskStatus recovered = tableRecovery.tick(ctx);
-            status = "returning to the table - " + tableRecovery.status();
-            if (recovered == TaskStatus.RUNNING) {
-                return TaskStatus.RUNNING;
-            }
-
-            tableRecovery.stop(ctx);
-            tableRecovery = null;
-            if (recovered == TaskStatus.SUCCESS && tableForRecovery != null) {
-                // SurfaceRecoveryTask changed the position, so allow the same remembered table to
-                // be selected again. The recovery is deliberately one-shot for this CraftTask;
-                // if the route still fails, the table is genuinely not usable from this side.
-                CraftingTableMemory.get().remember(tableForRecovery);
-                unreachableTables.remove(tableForRecovery.asLong());
-                tablePos = null;
-                fallbackTablePos = null;
-                tableForRecovery = null;
-                status = "back on dry ground; retrying the remembered table";
-                return TaskStatus.RUNNING;
-            }
-
-            if (tableForRecovery != null) {
-                CraftingTableMemory.get().markUnreachable(tableForRecovery);
-            }
-            tableForRecovery = null;
-            status = "couldn't reconnect to the remembered table";
-            return TaskStatus.FAILED;
-        }
-
-        // Forget a table that has been broken or removed.
-        if (tablePos != null && !ctx.level.getBlockState(tablePos).is(Blocks.CRAFTING_TABLE)) {
-            CraftingTableMemory.get().forget(tablePos);
-            unreachableTables.add(tablePos.asLong());
-            tablePos = null;
-        }
-
-        // Track open attempts per table so we don't spin on an unreachable one forever.
-        if (tablePos == null) {
-            currentTableKey = -1;
-            openAttempts = 0;
-        } else if (currentTableKey != tablePos.asLong()) {
-            currentTableKey = tablePos.asLong();
-            openAttempts = 0;
-        }
-
-        if (tablePos == null && fallbackTablePos == null && placingSpot == null) {
-            // First, try the tables the bot has already seen. If none are available in range, the
-            // ordinary scanner still runs.
-            tablePos = CraftingTableMemory.get().findNearest(ctx, ctx.player.blockPosition(), tableSearchRadius);
-
-            if (tablePos == null) {
-                tablePos = BlockScanner.findNearest(ctx.level, ctx.player.blockPosition(),
-                        Set.of(Blocks.CRAFTING_TABLE), tableSearchRadius,
-                        ctx.level.getMinY(), ctx.level.getMaxY(), unreachableTables);
-                if (tablePos != null) {
-                    CraftingTableMemory.get().remember(tablePos);
-                }
-            }
-
-            // The nearest table is far away. Rather than hiking back, try to place a fresh one where
-            // the bot is standing. This keeps the mining site alive and avoids starting a fresh dig.
-            if (tablePos != null && ctx.player.blockPosition().distSqr(tablePos) > NEARBY_TABLE_RADIUS_SQR
-                    && InventoryHelper.has(ctx.player, Items.CRAFTING_TABLE, 1)) {
-                fallbackTablePos = tablePos;
-                tablePos = null;
-            }
-        }
-
-        // No close table in the world; place one if we can.
-        if (tablePos == null) {
-            if (!InventoryHelper.has(ctx.player, Items.CRAFTING_TABLE, 1)) {
-                if (fallbackTablePos != null) {
-                    tablePos = fallbackTablePos;
-                    fallbackTablePos = null;
-                    return TaskStatus.RUNNING;
-                }
-                status = "need a crafting table";
-                return TaskStatus.FAILED;
-            }
-
-            if (placingSpot == null) {
-                placingSpot = findGoodPlacementSpot(ctx);
-                placingTicks = 0;
-            }
-
-            if (placingSpot == null) {
-                if (fallbackTablePos != null) {
-                    tablePos = fallbackTablePos;
-                    fallbackTablePos = null;
-                    return TaskStatus.RUNNING;
-                }
-                status = "nowhere to put a crafting table";
-                return TaskStatus.FAILED;
-            }
-
-            // Only commit the spot once the block is actually there. tryPlace may take several
-            // ticks to finish turning and the server to confirm, and acting as though the table
-            // already exists makes the next tick try to open empty air.
-            BlockPlacer.PlacementResult placement = BlockPlacer.tryPlace(
-                    ctx, Blocks.CRAFTING_TABLE, placingSpot);
-            if (placement == BlockPlacer.PlacementResult.PLACED
-                    || placement == BlockPlacer.PlacementResult.ALREADY_PRESENT) {
-                tablePos = placingSpot;
-                placingSpot = null;
-                placingTicks = 0;
-                fallbackTablePos = null;
-                CraftingTableMemory.get().remember(tablePos);
-                status = "placed a crafting table";
-                cooldown = ACTION_COOLDOWN;
-                return TaskStatus.RUNNING;
-            }
-
-            if (!placement.isTransient()) {
-                badPlacementSpots.add(placingSpot.asLong());
-                placingSpot = null;
-                placingTicks = 0;
-                status = "can't place there (" + placement.name().toLowerCase()
-                        + "), trying another spot";
-                return TaskStatus.RUNNING;
-            }
-
-            placingTicks++;
-            if (placingTicks >= MAX_PLACE_TICKS) {
-                badPlacementSpots.add(placingSpot.asLong());
-                placingSpot = null;
-                placingTicks = 0;
-                status = "can't place there, trying another spot";
-                return TaskStatus.RUNNING;
-            }
-            status = "placing a crafting table";
-            return TaskStatus.RUNNING;
-        }
-
-        // Close enough to interact? Try to open it.
-        if (inReach(ctx, tablePos)) {
-            if (openAttempts >= MAX_OPEN_ATTEMPTS) {
-                unreachableTables.add(tablePos.asLong());
-                CraftingTableMemory.get().markUnreachable(tablePos);
-                tablePos = null;
-                placingSpot = null;
-                fallbackTablePos = null;
-                status = "that table can't be opened from here";
-                return TaskStatus.RUNNING;
-            }
-
-            if (BlockPlacer.use(ctx, tablePos)) {
-                openAttempts++;
-                status = "opening the crafting table";
-                cooldown = ACTION_COOLDOWN + 3;
-                return TaskStatus.RUNNING;
-            }
-            status = "aiming at the crafting table";
-            return TaskStatus.RUNNING;
-        }
-
-        // Need to walk closer. Allow breaking light obstructions (leaves, tall grass) so a table
-        // placed or found behind foliage is still usable.
-        if (approach == null) {
-            approach = new GotoTask(tableApproachGoal(tablePos), false, true);
-            approach.start(ctx);
-        }
-        TaskStatus walk = approach.tick(ctx);
-        if (walk == TaskStatus.SUCCESS) {
-            approach.stop(ctx);
-            approach = null;
-            // A path goal can be satisfied on the same tick that terrain or a collision box makes
-            // the actual interaction impossible. Do not rebuild that already-satisfied goal every
-            // tick: remember the table as unusable from this side and let normal table selection
-            // or placement make a different decision.
-            if (!inReach(ctx, tablePos)) {
-                unreachableTables.add(tablePos.asLong());
-                CraftingTableMemory.get().markUnreachable(tablePos);
-                tablePos = null;
-                placingSpot = null;
-                fallbackTablePos = null;
-                status = "arrived beside a blocked table; trying another";
-                return TaskStatus.RUNNING;
-            }
-            return TaskStatus.RUNNING; // now in reach, open next tick
-        }
-        if (walk == TaskStatus.FAILED) {
-            approach.stop(ctx);
-            approach = null;
-            unreachableTables.add(tablePos.asLong());
-            // A long-route craft may have started at the bottom of a self-dug staircase. Give the
-            // shared route a chance to reconnect with visible dry ground before declaring its
-            // remembered table unusable. Ordinary local crafts keep their old bounded failure.
-            if (tableSearchRadius > TABLE_SEARCH_RADIUS
-                    && ctx.level.dimension() == net.minecraft.world.level.Level.OVERWORLD
-                    && SurfaceRecoveryTask.needsDryGroundRecovery(ctx)
-                    && tableRecovery == null
-                    && !attemptedTableRecovery) {
-                tableForRecovery = tablePos;
-                tablePos = null;
-                fallbackTablePos = null;
-                attemptedTableRecovery = true;
-                tableRecovery = new SurfaceRecoveryTask();
-                tableRecovery.start(ctx);
-                status = "can't reach that table; reconnecting to dry ground";
-                return TaskStatus.RUNNING;
-            }
-            CraftingTableMemory.get().markUnreachable(tablePos);
-            tablePos = null;
-            placingSpot = null;
-            fallbackTablePos = null;
-            status = "can't reach that table, trying another";
-            return TaskStatus.RUNNING;
-        }
-        status = "walking to the crafting table";
-        return TaskStatus.RUNNING;
-    }
-
-    private static boolean inReach(BotContext ctx, BlockPos pos) {
-        Vec3 eye = ctx.player.getEyePosition();
-        Vec3 centre = Vec3.atCenterOf(pos);
-        if (eye.distanceToSqr(centre) > 20.0) {
-            return false;
-        }
-        // Distance alone is not an interaction position. A player below a table can be within the
-        // vanilla reach radius while a stone/dirt lip blocks every face; treating that as ready
-        // leaves CraftTask in its aiming loop forever. Keep the approach goal alive until the
-        // actual table centre is the first block hit by the player's ray.
-        return BlockPlacer.hasLineOfSight(ctx, pos);
-    }
-
-    /**
-     * Stand on a block at the table's own height. Keeping the candidate set explicit prevents a
-     * player one block below a table from satisfying a distance heuristic while remaining unable
-     * to click any of its faces.
-     */
-    private static Goals.Any tableApproachGoal(BlockPos table) {
-        return new Goals.Any(List.of(
-                new Goals.Block(table.north()),
-                new Goals.Block(table.south()),
-                new Goals.Block(table.east()),
-                new Goals.Block(table.west()),
-                new Goals.Block(table.north().east()),
-                new Goals.Block(table.north().west()),
-                new Goals.Block(table.south().east()),
-                new Goals.Block(table.south().west())));
-    }
-
-    /** Picks a table placement spot, excluding spots that have already failed. */
-    private BlockPos findGoodPlacementSpot(BotContext ctx) {
-        return BlockPlacer.findPlacementSpot(ctx, badPlacementSpots);
     }
 
     /**
@@ -600,10 +346,7 @@ public final class CraftTask implements Task {
 
     @Override
     public void onStop(BotContext ctx) {
-        if (approach != null) {
-            approach.stop(ctx);
-            approach = null;
-        }
+        table.stop(ctx);
         closeMenu(ctx);
         ctx.input.reset();
     }

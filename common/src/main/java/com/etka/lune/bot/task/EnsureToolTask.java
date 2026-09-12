@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -82,7 +84,15 @@ public final class EnsureToolTask implements Task {
     private final Item requestedTool;
     private Task current;
     private String stepName = "";
-    private String status = "";
+    /**
+     * Which line {@link #stepName} was set from.
+     *
+     * <p>What kind of step this is used to be recovered by searching the name for the words
+     * "gathering wood" and "iron ore" - a question about English asked of a line written for
+     * the player. The key says the same thing and keeps saying it after translation.</p>
+     */
+    private String stepKey = "";
+    private final StatusText status = new StatusText();
     private boolean exhausted;
     private final Set<Long> avoidedWoodTargets = new HashSet<>();
     private StepKind currentKind = StepKind.OTHER;
@@ -133,19 +143,19 @@ public final class EnsureToolTask implements Task {
     @Override
     public String name() {
         return requestedTool != null
-                ? "Get a " + itemName(requestedTool)
-                : "Get a tool for " + goal.getName().getString();
+                ? Lang.get("lune.status.ensure_tool.get", itemName(requestedTool))
+                : Lang.get("lune.status.ensure_tool.get_tool", goal.getName().getString());
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
     @Override
     public void onStart(BotContext ctx) {
         stopCurrent(ctx);
-        status = "figuring out what is missing";
+        status.set("lune.status.ensure_tool.figuring_out_what_missing");
         exhausted = false;
         avoidedWoodTargets.clear();
         currentKind = StepKind.OTHER;
@@ -169,15 +179,15 @@ public final class EnsureToolTask implements Task {
             // next craft walks to it; a table is four planks if one is ever genuinely needed
             // elsewhere.
             stopCurrent(ctx);
-            status = "ready";
+            status.set("lune.status.ensure_tool.ready");
             return TaskStatus.SUCCESS;
         }
         if (exhausted) {
-            status = requestedTool != null
-                    ? "can't make a " + itemName(requestedTool)
-                            + " - the chain stops at diamond"
-                    : "can't craft a good enough tool for " + goal.getName().getString()
-                            + " - needs netherite or a modded tool we don't know how to make";
+            if (requestedTool != null) {
+                status.set("lune.status.ensure_tool.cant_make_chain_stops_diamond", itemName(requestedTool));
+            } else {
+                status.set("lune.status.ensure_tool.cant_craft_good_enough_tool_needs", goal.getName().getString());
+            }
             return TaskStatus.FAILED;
         }
 
@@ -190,7 +200,7 @@ public final class EnsureToolTask implements Task {
             if (woodScoutPending) {
                 woodScoutPending = false;
                 currentKind = StepKind.WOOD_SCOUT;
-                stepName = "looking for a better tree";
+                setStep("lune.status.ensure_tool.looking_better_tree");
                 current = new ExploreTask(woodBlocks(), Math.min(gatherRadius(ctx), LOG_SEARCH_RADIUS),
                         WOOD_SCOUT_ATTEMPTS, WOOD_SCOUT_STEP, true);
             } else {
@@ -206,7 +216,7 @@ public final class EnsureToolTask implements Task {
         }
 
         TaskStatus result = current.tick(ctx);
-        status = stepName + " - " + current.status();
+        status.set("lune.status.detail", stepName, current.statusLine());
         if (result == TaskStatus.RUNNING) {
             return TaskStatus.RUNNING;
         }
@@ -225,16 +235,16 @@ public final class EnsureToolTask implements Task {
 
         if (finishedKind == StepKind.WOOD_SCOUT) {
             if (result == TaskStatus.SUCCESS) {
-                reconsider("found a better place to try; going back to the tool plan");
+                reconsider("lune.status.ensure_tool.better_place_found");
                 return TaskStatus.RUNNING;
             }
             if (woodScoutRounds < MAX_WOOD_SCOUT_ROUNDS) {
                 woodScoutRounds++;
                 woodScoutPending = true;
-                reconsider("nothing useful that way; trying one more nearby area");
+                reconsider("lune.status.ensure_tool.nothing_useful_that_way");
                 return TaskStatus.RUNNING;
             }
-            status = "couldn't find usable wood nearby; stopping instead of repeating the same route";
+            status.set("lune.status.ensure_tool.couldnt_find_usable_wood_nearby_stopping");
             return TaskStatus.FAILED;
         }
 
@@ -243,27 +253,27 @@ public final class EnsureToolTask implements Task {
                 if (finishedKind == StepKind.WOOD) {
                     woodScoutRounds = 0;
                 }
-                reconsider(stepName + " made some progress; checking what is still needed");
+                reconsider("lune.status.ensure_tool.some_progress", stepName);
                 return TaskStatus.RUNNING;
             }
             return recoverFromStalledGather(finishedKind, reason);
         }
 
         if (result == TaskStatus.FAILED) {
-            status = stepName + " failed - " + reason;
+            status.set("lune.status.speedrun.failed", stepName, reason);
             return TaskStatus.FAILED;
         }
         if (finished instanceof SurfaceRecoveryTask) {
             // Recovery changes the route state, not the inventory. Re-derive the missing
             // dependency on the next tick instead of treating a successful swim to shore as an
             // exhausted tool-gathering step.
-            reconsider("reached dry ground; checking for usable wood");
+            reconsider("lune.status.ensure_tool.reached_dry_ground");
             return TaskStatus.RUNNING;
         }
         if (!finished.madeProgress()) {
             // A gatherer that exhausted its search without collecting anything did not satisfy a
             // dependency. Recreating it next tick causes an infinite full-radius rescan loop.
-            status = stepName + " failed - " + reason;
+            status.set("lune.status.speedrun.failed", stepName, reason);
             return TaskStatus.FAILED;
         }
         // Deliberately no phase advance: the next tick re-derives what's missing now.
@@ -346,20 +356,20 @@ public final class EnsureToolTask implements Task {
         }
 
         if (needTable) {
-            stepName = "making a crafting table";
+            setStep("lune.status.sleep.making_crafting_table");
             return CraftTask.of(Items.CRAFTING_TABLE, 1, false);
         }
         if (needSticks) {
-            stepName = "making sticks";
+            setStep("lune.status.ensure_tool.making_sticks");
             return CraftTask.of(Items.STICK, sticksNeeded, false);
         }
         if (needWoodenFirst) {
-            stepName = "making a wooden pickaxe";
+            setStep("lune.status.ensure_tool.making_wooden_pickaxe");
             return CraftTask.of(Items.WOODEN_PICKAXE, 1, true)
                     .withTableSearchRadius(tableSearchRadius);
         }
         if (material == ToolCatalog.Material.STONE && !hasMaterial(ctx, material, materialNeeded)) {
-            stepName = "mining stone";
+            setStep("lune.status.ensure_tool.mining_stone");
             return new QuickStoneTask(materialNeeded, stoneAttempts++, avoidedStoneStarts);
         }
 
@@ -367,10 +377,10 @@ public final class EnsureToolTask implements Task {
         if (material == ToolCatalog.Material.IRON || material == ToolCatalog.Material.DIAMOND) {
             if (!ToolSelector.canHarvest(ctx.player, Blocks.IRON_ORE.defaultBlockState())) {
                 if (!hasMaterial(ctx, ToolCatalog.Material.STONE, PICKAXE_MATERIAL)) {
-                    stepName = "mining stone for a pickaxe";
+                    setStep("lune.status.ensure_tool.mining_stone_pickaxe");
                     return new QuickStoneTask(PICKAXE_MATERIAL, stoneAttempts++, avoidedStoneStarts);
                 }
-                stepName = "making a stone pickaxe";
+                setStep("lune.status.ensure_tool.making_stone_pickaxe");
                 return CraftTask.of(Items.STONE_PICKAXE, 1, true)
                         .withTableSearchRadius(tableSearchRadius);
             }
@@ -379,10 +389,10 @@ public final class EnsureToolTask implements Task {
         if (material == ToolCatalog.Material.IRON) {
             if (!hasFurnace(ctx, playerPos, tableSearchRadius)) {
                 if (!hasMaterial(ctx, ToolCatalog.Material.STONE, COBBLE_PER_FURNACE)) {
-                    stepName = "mining stone for a furnace";
+                    setStep("lune.status.ensure_tool.mining_stone_furnace");
                     return new QuickStoneTask(COBBLE_PER_FURNACE, stoneAttempts++, avoidedStoneStarts);
                 }
-                stepName = "making a furnace";
+                setStep("lune.status.ensure_tool.making_furnace");
                 return CraftTask.of(Items.FURNACE, 1, true)
                         .withTableSearchRadius(tableSearchRadius);
             }
@@ -394,11 +404,11 @@ public final class EnsureToolTask implements Task {
                                 || stack.is(Items.IRON_ORE)
                                 || stack.is(Items.DEEPSLATE_IRON_ORE));
                 if (ore >= ingotsNeeded) {
-                    stepName = "smelting iron";
+                    setStep("lune.status.ensure_tool.smelting_iron");
                     return new SmeltTask(Set.of(Items.RAW_IRON, Items.IRON_ORE, Items.DEEPSLATE_IRON_ORE),
                             Items.IRON_INGOT, ingotsNeeded);
                 }
-                stepName = "mining iron ore";
+                setStep("lune.status.ensure_tool.mining_iron_ore");
                 return new MineTask(Set.of(Blocks.IRON_ORE, Blocks.DEEPSLATE_IRON_ORE), gatherRadius(ctx),
                         ctx.level.getMinY(), ctx.level.getMaxY(), ingotsNeeded, true, true,
                         false, checkAround);
@@ -408,7 +418,7 @@ public final class EnsureToolTask implements Task {
         if (material == ToolCatalog.Material.DIAMOND) {
             int diamondsNeeded = materialNeeded - InventoryHelper.count(ctx.player, Items.DIAMOND);
             if (diamondsNeeded > 0) {
-                stepName = "mining diamond";
+                setStep("lune.status.ensure_tool.mining_diamond");
                 // Diamond ore needs an iron pickaxe, which is a whole smelting trip further than
                 // the stone one above. Auto-tool is on, so the miner asks for that upgrade itself
                 // once it has picked the ore it is standing in front of.
@@ -418,7 +428,7 @@ public final class EnsureToolTask implements Task {
             }
         }
 
-        stepName = "making a " + itemName(tool);
+        setStep("lune.status.ensure_tool.making", itemName(tool));
         return CraftTask.of(tool, 1, true)
                 .withTableSearchRadius(tableSearchRadius);
     }
@@ -429,7 +439,7 @@ public final class EnsureToolTask implements Task {
         // a visible dry column first so the shared wood search can actually reach a tree.
         if (ctx.level.dimension() == net.minecraft.world.level.Level.OVERWORLD
                 && SurfaceRecoveryTask.needsDryGroundRecovery(ctx)) {
-            stepName = "returning to dry ground";
+            setStep("lune.status.ensure_tool.returning_dry_ground");
             return new SurfaceRecoveryTask();
         }
         int planks = planks(ctx);
@@ -437,7 +447,7 @@ public final class EnsureToolTask implements Task {
         int logsNeeded = ceilDiv(planksNeeded - planks, PLANKS_PER_LOG);
 
         if (logs < logsNeeded) {
-            stepName = "gathering wood";
+            setStep("lune.status.ensure_tool.gathering_wood");
             Set<Block> wood = woodBlocks();
             // Gather only the minimum number of logs. A tool prerequisite is not a request to
             // climb through every branch of the first tree; stopping after the required drops
@@ -447,7 +457,7 @@ public final class EnsureToolTask implements Task {
                     ctx.level.getMinY(), ctx.level.getMaxY(), limit,
                     false, false, false, checkAround).avoiding(avoidedWoodTargets);
         }
-        stepName = "making planks";
+        setStep("lune.status.sleep.making_planks");
         return CraftTask.ofTag(ItemTags.PLANKS, "planks", planksNeeded, false);
     }
 
@@ -518,14 +528,25 @@ public final class EnsureToolTask implements Task {
         return wood;
     }
 
+    private void setStep(String key, Object... args) {
+        stepKey = key;
+        stepName = Lang.get(key, args);
+    }
+
     private StepKind classify(Task task) {
         if (task instanceof QuickStoneTask) {
             return StepKind.STONE;
         }
         if (task instanceof MineTask) {
-            if (stepName.equals("gathering wood")) return StepKind.WOOD;
-            if (stepName.contains("iron ore")) return StepKind.IRON;
-            if (stepName.contains("diamond")) return StepKind.DIAMOND;
+            if (stepKey.equals("lune.status.ensure_tool.gathering_wood")) {
+                return StepKind.WOOD;
+            }
+            if (stepKey.equals("lune.status.ensure_tool.mining_iron_ore")) {
+                return StepKind.IRON;
+            }
+            if (stepKey.equals("lune.status.ensure_tool.mining_diamond")) {
+                return StepKind.DIAMOND;
+            }
         }
         return StepKind.OTHER;
     }
@@ -554,22 +575,23 @@ public final class EnsureToolTask implements Task {
         if (kind == StepKind.WOOD && woodScoutRounds < MAX_WOOD_SCOUT_ROUNDS) {
             woodScoutRounds++;
             woodScoutPending = true;
-            reconsider("that wood attempt didn't work out; leaving it and scouting nearby");
+            reconsider("lune.status.ensure_tool.wood_attempt_failed");
             return TaskStatus.RUNNING;
         }
         if (kind == StepKind.STONE && stoneAttempts < MAX_STONE_ATTEMPTS) {
-            reconsider("that digging direction isn't working; trying a different side");
+            reconsider("lune.status.ensure_tool.dig_direction_failed");
             return TaskStatus.RUNNING;
         }
-        status = stepName + " made no useful progress";
         if (reason != null && !reason.isBlank()) {
-            status += " - " + reason;
+            status.set("lune.status.ensure_tool.no_useful_progress_because", stepName, reason);
+        } else {
+            status.set("lune.status.ensure_tool.made_no_useful_progress", stepName);
         }
         return TaskStatus.FAILED;
     }
 
-    private void reconsider(String message) {
-        status = message;
+    private void reconsider(String key, Object... args) {
+        status.set(key, args);
         reconsiderTicks = RECONSIDER_TICKS;
     }
 

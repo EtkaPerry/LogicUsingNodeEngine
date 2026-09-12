@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -33,29 +35,35 @@ public final class CollectCraftingTableTask implements Task {
     private int phaseTicks;
     private int dropWaitTicks;
     private boolean collecting;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     @Override
     public String name() {
-        return "Collect table";
+        return Lang.get("lune.task.collect_crafting_table.collect_table");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Collect table");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (InventoryHelper.has(ctx.player, Items.CRAFTING_TABLE, 1)) {
-            status = "has the table";
+            status.set("lune.status.collect_crafting_table.has_table");
             return TaskStatus.SUCCESS;
         }
 
         if (target == null) {
             target = CraftingTableMemory.get().findNearest(ctx, ctx.player.blockPosition(), RADIUS);
             if (target == null) {
-                status = "no table nearby";
+                status.set("lune.status.collect_crafting_table.no_table_nearby");
                 return TaskStatus.SUCCESS;
             }
             phaseTicks = 0;
@@ -77,7 +85,7 @@ public final class CollectCraftingTableTask implements Task {
             }
             if (++phaseTicks > BREAK_TIMEOUT) {
                 breaker.stop(ctx);
-                status = "couldn't finish breaking the table";
+                status.set("lune.status.collect_crafting_table.couldnt_finish_breaking_table");
                 return TaskStatus.FAILED;
             }
             BlockBreaker.Progress progress = breaker.tick(ctx, target);
@@ -85,20 +93,20 @@ public final class CollectCraftingTableTask implements Task {
                 return collectDrop(ctx);
             }
             if (progress == BlockBreaker.Progress.NO_TOOL) {
-                status = "no tool to break the table";
+                status.set("lune.status.collect_crafting_table.no_tool_break_table");
                 return TaskStatus.FAILED;
             }
             if (progress == BlockBreaker.Progress.HAZARD) {
-                status = breaker.getFailureReason();
+                status.set(breaker.getFailureReason());
                 return TaskStatus.FAILED;
             }
-            status = "breaking the table";
+            status.set("lune.status.collect_crafting_table.breaking_table");
             return TaskStatus.RUNNING;
         }
 
         if (++phaseTicks > WALK_TIMEOUT) {
             CraftingTableMemory.get().markUnreachable(target);
-            status = "timed out walking to the table";
+            status.set("lune.status.collect_crafting_table.timed_out_walking_table");
             return TaskStatus.FAILED;
         }
 
@@ -111,10 +119,10 @@ public final class CollectCraftingTableTask implements Task {
             CraftingTableMemory.get().markUnreachable(target);
             approach.stop(ctx);
             approach = null;
-            status = "couldn't reach the table";
+            status.set("lune.status.collect_crafting_table.couldnt_reach_table");
             return TaskStatus.FAILED;
         }
-        status = "walking to the table";
+        status.set("lune.status.collect_crafting_table.walking_table");
         return TaskStatus.RUNNING;
     }
 
@@ -134,7 +142,7 @@ public final class CollectCraftingTableTask implements Task {
             dropWaitTicks = 0;
         }
         if (++phaseTicks > PICKUP_TIMEOUT) {
-            status = "table broke, but its drop couldn't be collected";
+            status.set("lune.status.collect_crafting_table.table_broke_but_drop_couldnt_collected");
             return TaskStatus.FAILED;
         }
 
@@ -144,14 +152,14 @@ public final class CollectCraftingTableTask implements Task {
         }
         TaskStatus result = pickup.tick(ctx);
         if (InventoryHelper.has(ctx.player, Items.CRAFTING_TABLE, 1)) {
-            status = "collected the table";
+            status.set("lune.status.collect_crafting_table.collected_table");
             return TaskStatus.SUCCESS;
         }
         if (result != TaskStatus.RUNNING) {
             if (pickup.unreachableCount() > 0) {
                 pickup.stop(ctx);
                 pickup = null;
-                status = "table drop is unreachable";
+                status.set("lune.status.collect_crafting_table.table_drop_unreachable");
                 return TaskStatus.FAILED;
             }
 
@@ -161,14 +169,14 @@ public final class CollectCraftingTableTask implements Task {
             pickup.stop(ctx);
             pickup = null;
             if (++dropWaitTicks <= DROP_SPAWN_GRACE_TICKS) {
-                status = "waiting for the table drop";
+                status.set("lune.status.collect_crafting_table.waiting_table_drop");
             } else {
-                status = "table broke, but its drop did not appear";
+                status.set("lune.status.collect_crafting_table.table_broke_but_drop_did_not_appear");
                 return TaskStatus.FAILED;
             }
         } else {
             dropWaitTicks = 0;
-            status = "collecting the table - " + pickup.status();
+            status.set("lune.status.collect_crafting_table.collecting_table", pickup.statusLine());
         }
         return TaskStatus.RUNNING;
     }

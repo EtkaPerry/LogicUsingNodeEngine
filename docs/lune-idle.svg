@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"
+     viewBox="24 29 152 152" role="img" aria-labelledby="title desc">
+  <title id="title">Lune</title>
+  <desc id="desc">A dark round spirit shell with small ears, a golden liquid soul, and one
+    vertical eye. Her soul breathes on a loop.</desc>
+  <!--
+    Lune's soul: 8 frames on a 5.76 second loop.
+
+    Each group below is one frame. The <animate> inside it holds that frame for 720 ms
+    and hands the loop to the next, the same eight forms at the same pace she wears in game.
+
+    Every number in the paths is trigonometry worked out at phase = frame / 8 * 2*PI: the
+    drawing and its working, rather than a trace of a picture.
+  -->
+  <defs>
+    <clipPath id="head">
+      <circle cx="100" cy="105" r="68"/>
+    </clipPath>
+  </defs>
+  <path d="M50 68 Q50 30 76 49 L92 72Z"
+        fill="#252033" stroke="#171522" stroke-width="3"/>
+  <path d="M108 72 L124 49 Q150 30 150 68 L108 72Z"
+        fill="#252033" stroke="#171522" stroke-width="3"/>
+  <circle cx="100" cy="105" r="68" fill="#252033"/>
+  <g clip-path="url(#head)">
+    <g opacity="1">
+      <animate attributeName="opacity" calcMode="discrete" values="1;0;0;0;0;0;0;0"
+               dur="5.76s" repeatCount="indefinite"/>
+      <path d="M20 76.00
+                C52 76.00 70 73.60 100 73.60
+                C130 73.60 148 76.00 180 76.00
+                L180 190 L20 190Z" fill="#F4C95D"/>
+    </g>
+    <g opacity="0">
+      <animate attributeName="opacity" calcMode="discrete" values="0;1;0;0;0;0;0;0"
+               dur="5.76s" repeatCount="indefinite"/>
+      <path d="M20 76.15
+                C52 76.15 70 73.57 100 73.57
+                C130 73.57 148 76.15 180 76.15
+                L180 190 L20 190Z" fill="#F4C95D"/>
+    </g>
+    <g opacity="0">
+      <animate attributeName="opacity" calcMode="discrete" values="0;0;1;0;0;0;0;0"
+               dur="5.76s" repeatCount="indefinite"/>
+      <path d="M20 76.21
+                C52 76.21 70 73.21 100 73.21
+                C130 73.21 148 76.21 180 76.21
+                L180 190 L20 190Z" fill="#F4C95D"/>
+    </g>
+    <g opacity="0">
+      <animate attributeName="opacity" calcMode="discrete" values="0;0;0;1;0;0;0;0"
+               dur="5.76s" repeatCount="indefinite"/>
+      <path d="M20 76.15
+                C52 76.15 70 72.72 100 72.72
+                C130 72.72 148 76.15 180 76.15
+                L180 190 L20 190Z" fill="#F4C95D"/>
+    </g>
+    <g opacity="0">
+      <animate attributeName="opacity" calcMode="discrete" values="0;0;0;0;1;0;0;0"
+               dur="5.76s" repeatCount="indefinite"/>
+      <path d="M20 76.00
+                C52 76.00 70 72.40 100 72.40
+                C130 72.40 148 76.00 180 76.00
+                L180 190 L20 190Z" fill="#F4C95D"/>
+    </g>
+    <g opacity="0">
+      <animate attributeName="opacity" calcMode="discrete" values="0;0;0;0;0;1;0;0"
+               dur="5.76s" repeatCount="indefinite"/>
+      <path d="M20 75.85
+                C52 75.85 70 72.43 100 72.43
+                C130 72.43 148 75.85 180 75.85
+                L180 190 L20 190Z" fill="#F4C95D"/>
+    </g>
+    <g opacity="0">
+      <animate attributeName="opacity" calcMode="discrete" values="0;0;0;0;0;0;1;0"
+               dur="5.76s" repeatCount="indefinite"/>
+      <path d="M20 75.79
+                C52 75.79 70 72.79 100 72.79
+                C130 72.79 148 75.79 180 75.79
+                L180 190 L20 190Z" fill="#F4C95D"/>
+    </g>
+    <g opacity="0">
+      <animate attributeName="opacity" calcMode="discrete" values="0;0;0;0;0;0;0;1"
+               dur="5.76s" repeatCount="indefinite"/>
+      <path d="M20 75.85
+                C52 75.85 70 73.28 100 73.28
+                C130 73.28 148 75.85 180 75.85
+                L180 190 L20 190Z" fill="#F4C95D"/>
+    </g>
+  </g>
+  <circle cx="100" cy="105" r="68"
+          fill="none" stroke="#171522" stroke-width="3"/>
+  <ellipse cx="100" cy="100" rx="25" ry="33" fill="#FFF4C7"/>
+  <ellipse cx="100" cy="100" rx="7" ry="25" fill="#3D2B12"/>
+</svg>

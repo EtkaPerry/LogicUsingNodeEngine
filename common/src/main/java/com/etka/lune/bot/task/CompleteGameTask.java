@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -49,15 +51,21 @@ public final class CompleteGameTask implements Task {
     private Task current;
     private Task suspended;
     private BlockPos strongholdPos;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     @Override
     public String name() {
-        return "Complete the Game";
+        return Lang.get("lune.task.complete_game.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName(Lang.get("lune.task.complete_game.name"));
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -75,14 +83,14 @@ public final class CompleteGameTask implements Task {
             return check(ctx);
         }
         if (state == State.DONE) {
-            status = "ender dragon killed";
+            status.set("lune.status.complete_game.ender_dragon_killed");
             return TaskStatus.SUCCESS;
         }
 
         if (current == null) {
             current = createTask(ctx);
             if (current == null) {
-                status = describe() + " failed";
+                status.set("lune.status.hunt_mob.failed", describe());
                 return TaskStatus.FAILED;
             }
             current.start(ctx);
@@ -95,7 +103,7 @@ public final class CompleteGameTask implements Task {
         }
 
         TaskStatus result = current.tick(ctx);
-        status = describe() + " - " + current.status();
+        status.set("lune.status.detail", describe(), current.statusLine());
 
         if (result == TaskStatus.RUNNING) {
             return TaskStatus.RUNNING;
@@ -108,7 +116,7 @@ public final class CompleteGameTask implements Task {
                 suspended = null;
                 return TaskStatus.RUNNING;
             }
-            status = "sustenance failed - " + current.status();
+            status.set("lune.status.complete_game.sustenance_failed", current.statusLine());
             return TaskStatus.FAILED;
         }
 
@@ -117,7 +125,7 @@ public final class CompleteGameTask implements Task {
         current = null;
 
         if (result == TaskStatus.FAILED) {
-            status = describe() + " failed - " + finished.status();
+            status.set("lune.status.speedrun.failed", describe(), finished.statusLine());
             return TaskStatus.FAILED;
         }
 
@@ -140,15 +148,15 @@ public final class CompleteGameTask implements Task {
     private TaskStatus check(BotContext ctx) {
         List<String> missing = new ArrayList<>();
         if (!InventoryHelper.has(ctx.player, Items.ENDER_EYE, 12)) {
-            missing.add("12+ eyes of ender");
+            missing.add(Lang.get("lune.status.complete_game.12_eyes_ender"));
         }
         if (!hasWeapon(ctx)) {
-            missing.add("a weapon");
+            missing.add(Lang.get("lune.status.complete_game.weapon"));
         }
         // A speedrun kit commonly has a shield but no armour. Keep the prepared-world task safe
         // without forcing a full armour detour that does not belong in the route.
         if (!hasArmor(ctx) && !hasShield(ctx)) {
-            missing.add("armor or a shield");
+            missing.add(Lang.get("lune.status.complete_game.armor_or_shield"));
         }
         if (!hasFood(ctx)) {
             missing.add("food");
@@ -159,7 +167,7 @@ public final class CompleteGameTask implements Task {
             return TaskStatus.RUNNING;
         }
 
-        status = "missing: " + String.join(", ", missing);
+        status.set("lune.status.complete_game.missing", String.join(", ", missing));
         return TaskStatus.FAILED;
     }
 
@@ -218,13 +226,13 @@ public final class CompleteGameTask implements Task {
 
     private String describe() {
         return switch (state) {
-            case CHECK -> "checking inventory";
-            case TRAVEL -> "finding stronghold";
-            case DIG -> "digging to stronghold";
-            case PORTAL -> "filling portal";
-            case ENTER -> "entering the End";
-            case FIGHT -> "fighting the dragon";
-            case EXIT -> "leaving the End";
+            case CHECK -> Lang.get("lune.status.complete_game.checking_inventory");
+            case TRAVEL -> Lang.get("lune.status.complete_game.finding_stronghold");
+            case DIG -> Lang.get("lune.status.complete_game.digging_stronghold");
+            case PORTAL -> Lang.get("lune.status.complete_game.filling_portal");
+            case ENTER -> Lang.get("lune.status.complete_game.entering_end");
+            case FIGHT -> Lang.get("lune.status.complete_game.fighting_dragon");
+            case EXIT -> Lang.get("lune.status.complete_game.leaving_end");
             case DONE -> "done";
         };
     }
@@ -236,7 +244,7 @@ public final class CompleteGameTask implements Task {
         private final BlockBreaker breaker = new BlockBreaker();
         private BlockPos target;
         private int ticks;
-        private String status = "";
+        private final StatusText status = new StatusText();
 
         DigDownTask(BlockPos surface) {
             this.surface = surface;
@@ -244,13 +252,13 @@ public final class CompleteGameTask implements Task {
 
         @Override
         public String name() {
-            return "Dig to Stronghold";
+            return Lang.get("lune.status.complete_game.dig_stronghold");
         }
 
         @Override
-        public String status() {
-            return status;
-        }
+        public StatusText statusLine() {
+        return status;
+    }
 
         @Override
         public TaskStatus onTick(BotContext ctx) {
@@ -258,14 +266,18 @@ public final class CompleteGameTask implements Task {
 
             if (approach != null) {
                 TaskStatus r = approach.tick(ctx);
-                status = r == TaskStatus.RUNNING ? "walking to landing site" : approach.status();
+                if (r == TaskStatus.RUNNING) {
+                    status.set("lune.status.complete_game.walking_landing_site");
+                } else {
+                    status.set(approach.statusLine());
+                }
                 if (r == TaskStatus.SUCCESS) {
                     approach.stop(ctx);
                     approach = null;
                 } else if (r == TaskStatus.FAILED) {
                     approach.stop(ctx);
                     approach = null;
-                    status = "cannot reach landing site";
+                    status.set("lune.status.complete_game.cannot_reach_landing_site");
                     return TaskStatus.FAILED;
                 }
                 return TaskStatus.RUNNING;
@@ -280,7 +292,7 @@ public final class CompleteGameTask implements Task {
             BlockPos frame = BlockScanner.findNearest(ctx.level, ctx.player.blockPosition(),
                     Set.of(Blocks.END_PORTAL_FRAME), 64, ctx.level.getMinY(), ctx.level.getMaxY());
             if (frame != null) {
-                status = "reached stronghold";
+                status.set("lune.status.complete_game.reached_stronghold");
                 return TaskStatus.SUCCESS;
             }
 
@@ -291,23 +303,23 @@ public final class CompleteGameTask implements Task {
             }
 
             if (target.getY() < ctx.level.getMinY()) {
-                status = "reached bottom with no portal";
+                status.set("lune.status.complete_game.reached_bottom_with_no_portal");
                 return TaskStatus.FAILED;
             }
 
             BlockState state = ctx.level.getBlockState(target);
             if (state.is(Blocks.END_PORTAL) || state.is(Blocks.END_PORTAL_FRAME)) {
-                status = "reached the portal";
+                status.set("lune.status.complete_game.reached_portal");
                 return TaskStatus.SUCCESS;
             }
 
             BlockBreaker.Progress p = breaker.tick(ctx, target);
             if (p == BlockBreaker.Progress.NO_TOOL) {
-                status = "need a tool";
+                status.set("lune.status.complete_game.need_tool");
                 return TaskStatus.FAILED;
             }
             if (p == BlockBreaker.Progress.HAZARD) {
-                status = breaker.getFailureReason();
+                status.set(breaker.getFailureReason());
                 return TaskStatus.FAILED;
             }
             if (p == BlockBreaker.Progress.FINISHED) {
@@ -315,7 +327,7 @@ public final class CompleteGameTask implements Task {
             }
 
             ticks++;
-            status = "digging to stronghold";
+            status.set("lune.status.complete_game.digging_stronghold");
             return TaskStatus.RUNNING;
         }
 
@@ -338,17 +350,18 @@ public final class CompleteGameTask implements Task {
         private BlockPos frame;
         private int useCooldown;
         private int failCount;
-        private String status = "";
+        private final StatusText status = new StatusText();
 
         @Override
-        public String name() {
-            return "Fill End Portal";
-        }
+        public String name() { return Lang.get("lune.task.nested.fill_end_portal"); }
 
         @Override
-        public String status() {
-            return status;
-        }
+        public String learningId() { return Task.learningName("Fill End Portal"); }
+
+        @Override
+        public StatusText statusLine() {
+        return status;
+    }
 
         @Override
         public TaskStatus onTick(BotContext ctx) {
@@ -371,7 +384,7 @@ public final class CompleteGameTask implements Task {
                         Set.of(Blocks.END_PORTAL_FRAME), 64, ctx.level.getMinY(), ctx.level.getMaxY(),
                         Set.of(), filter);
                 if (frame == null) {
-                    status = "portal filled";
+                    status.set("lune.status.complete_game.portal_filled");
                     return TaskStatus.SUCCESS;
                 }
                 if (approach != null) {
@@ -384,7 +397,7 @@ public final class CompleteGameTask implements Task {
             if (approach != null) {
                 TaskStatus r = approach.tick(ctx);
                 if (r == TaskStatus.RUNNING) {
-                    status = "walking to frame";
+                    status.set("lune.status.complete_game.walking_frame");
                     return TaskStatus.RUNNING;
                 }
                 approach.stop(ctx);
@@ -392,7 +405,7 @@ public final class CompleteGameTask implements Task {
                 if (r == TaskStatus.FAILED) {
                     failCount++;
                     if (failCount > 4) {
-                        status = "cannot reach portal frames";
+                        status.set("lune.status.complete_game.cannot_reach_portal_frames");
                         return TaskStatus.FAILED;
                     }
                     frame = null;
@@ -401,7 +414,7 @@ public final class CompleteGameTask implements Task {
             }
 
             if (InventoryHelper.equip(ctx, stack -> stack.is(Items.ENDER_EYE)) < 0) {
-                status = "out of eyes of ender";
+                status.set("lune.status.ender_eye.out_eyes_ender");
                 return TaskStatus.FAILED;
             }
 
@@ -410,7 +423,7 @@ public final class CompleteGameTask implements Task {
                 useCooldown = 5;
             }
 
-            status = "filling portal frame";
+            status.set("lune.status.complete_game.filling_portal_frame");
             return TaskStatus.RUNNING;
         }
 
@@ -431,22 +444,22 @@ public final class CompleteGameTask implements Task {
         private GotoTask approach;
         private BlockPos portal;
         private int ticks;
-        private String status = "";
+        private final StatusText status = new StatusText();
 
         @Override
         public String name() {
-            return "Enter the End";
+            return Lang.get("lune.status.complete_game.enter_end");
         }
 
         @Override
-        public String status() {
-            return status;
-        }
+        public StatusText statusLine() {
+        return status;
+    }
 
         @Override
         public TaskStatus onTick(BotContext ctx) {
             if (ctx.level.dimension() == Level.END) {
-                status = "in the End";
+                status.set("lune.status.complete_game.end");
                 return TaskStatus.SUCCESS;
             }
 
@@ -454,7 +467,7 @@ public final class CompleteGameTask implements Task {
                 portal = BlockScanner.findNearest(ctx.level, ctx.player.blockPosition(),
                         Set.of(Blocks.END_PORTAL), 64, ctx.level.getMinY(), ctx.level.getMaxY());
                 if (portal == null) {
-                    status = "no End portal found";
+                    status.set("lune.status.complete_game.no_end_portal_found");
                     return TaskStatus.FAILED;
                 }
                 approach = new GotoTask(new Goals.Near(portal, 3), true, false);
@@ -463,14 +476,14 @@ public final class CompleteGameTask implements Task {
 
             if (approach != null) {
                 TaskStatus r = approach.tick(ctx);
-                status = "walking to portal";
+                status.set("lune.status.speedrun.walking_portal");
                 if (r == TaskStatus.RUNNING) {
                     return TaskStatus.RUNNING;
                 }
                 approach.stop(ctx);
                 approach = null;
                 if (r == TaskStatus.FAILED) {
-                    status = "cannot reach portal";
+                    status.set("lune.status.complete_game.cannot_reach_portal");
                     return TaskStatus.FAILED;
                 }
             }
@@ -481,11 +494,11 @@ public final class CompleteGameTask implements Task {
 
             ticks++;
             if (ticks > TIMEOUT) {
-                status = "did not enter portal";
+                status.set("lune.status.complete_game.did_not_enter_portal");
                 return TaskStatus.FAILED;
             }
 
-            status = "entering portal";
+            status.set("lune.status.complete_game.entering_portal");
             return TaskStatus.RUNNING;
         }
 
@@ -513,28 +526,29 @@ public final class CompleteGameTask implements Task {
         private BlockPos approachAim;
         private int bowTicks;
         private int noTargetTicks;
-        private String status = "";
+        private final StatusText status = new StatusText();
 
         @Override
-        public String name() {
-            return "Fight Dragon";
-        }
+        public String name() { return Lang.get("lune.task.nested.fight_dragon"); }
 
         @Override
-        public String status() {
-            return status;
-        }
+        public String learningId() { return Task.learningName("Fight Dragon"); }
+
+        @Override
+        public StatusText statusLine() {
+        return status;
+    }
 
         @Override
         public TaskStatus onTick(BotContext ctx) {
             if (ctx.level.dimension() != Level.END) {
-                status = "not in the End";
+                status.set("lune.status.complete_game.not_end");
                 return TaskStatus.FAILED;
             }
 
             if (target != null && !target.isAlive()) {
                 if (target instanceof EnderDragon) {
-                    status = "ender dragon killed";
+                    status.set("lune.status.complete_game.ender_dragon_killed");
                     return TaskStatus.SUCCESS;
                 }
                 clearApproach(ctx);
@@ -547,10 +561,10 @@ public final class CompleteGameTask implements Task {
                 if (target == null) {
                     noTargetTicks++;
                     if (noTargetTicks > NO_TARGET_TIMEOUT) {
-                        status = "no dragon or crystals";
+                        status.set("lune.status.complete_game.no_dragon_or_crystals");
                         return TaskStatus.FAILED;
                     }
-                    status = "looking for target";
+                    status.set("lune.status.complete_game.looking_target");
                     return TaskStatus.RUNNING;
                 }
                 noTargetTicks = 0;
@@ -609,7 +623,7 @@ public final class CompleteGameTask implements Task {
                     return attackMelee(ctx);
                 }
                 bowTicks = 1;
-                status = "drawing bow";
+                status.set("lune.status.complete_game.drawing_bow");
                 return TaskStatus.RUNNING;
             }
 
@@ -618,7 +632,7 @@ public final class CompleteGameTask implements Task {
                     && ctx.look.isLookingAt(ctx.player, target.getEyePosition(), 15.0F)) {
                 ctx.gameMode.releaseUsingItem(ctx.player);
                 bowTicks = 0;
-                status = "fired at " + target.getType().getDescription().getString();
+                status.set("lune.status.kill.fired", target.getType().getDescription().getString());
                 return TaskStatus.RUNNING;
             }
 
@@ -627,7 +641,7 @@ public final class CompleteGameTask implements Task {
                 bowTicks = 0;
             }
 
-            status = "charging bow";
+            status.set("lune.status.complete_game.charging_bow");
             return TaskStatus.RUNNING;
         }
 
@@ -649,10 +663,10 @@ public final class CompleteGameTask implements Task {
                 if (r == TaskStatus.FAILED) {
                     clearApproach(ctx);
                     target = null;
-                    status = "cannot reach target";
+                    status.set("lune.status.complete_game.cannot_reach_target");
                     return TaskStatus.RUNNING;
                 }
-                status = "chasing " + target.getType().getDescription().getString();
+                status.set("lune.status.kill.chasing", target.getType().getDescription().getString());
                 return TaskStatus.RUNNING;
             }
 
@@ -666,7 +680,7 @@ public final class CompleteGameTask implements Task {
                 ctx.player.swing(InteractionHand.MAIN_HAND);
             }
 
-            status = "melee " + target.getType().getDescription().getString();
+            status.set("lune.status.complete_game.melee", target.getType().getDescription().getString());
             return TaskStatus.RUNNING;
         }
 
@@ -688,22 +702,22 @@ public final class CompleteGameTask implements Task {
         private GotoTask approach;
         private BlockPos portal;
         private int ticks;
-        private String status = "";
+        private final StatusText status = new StatusText();
 
         @Override
         public String name() {
-            return "Exit the End";
+            return Lang.get("lune.status.complete_game.exit_end");
         }
 
         @Override
-        public String status() {
-            return status;
-        }
+        public StatusText statusLine() {
+        return status;
+    }
 
         @Override
         public TaskStatus onTick(BotContext ctx) {
             if (ctx.level.dimension() != Level.END) {
-                status = "returned from the End";
+                status.set("lune.status.complete_game.returned_from_end");
                 return TaskStatus.SUCCESS;
             }
 
@@ -728,9 +742,9 @@ public final class CompleteGameTask implements Task {
                     approach.start(ctx);
                 }
                 TaskStatus r = approach.tick(ctx);
-                status = "walking to the center";
+                status.set("lune.status.complete_game.walking_center");
                 if (r == TaskStatus.FAILED) {
-                    status = "cannot reach the center";
+                    status.set("lune.status.complete_game.cannot_reach_center");
                     return TaskStatus.FAILED;
                 }
                 return TaskStatus.RUNNING;
@@ -743,12 +757,12 @@ public final class CompleteGameTask implements Task {
 
             TaskStatus r = approach.tick(ctx);
             if (r == TaskStatus.RUNNING) {
-                status = "walking to the exit portal";
+                status.set("lune.status.complete_game.walking_exit_portal");
                 return TaskStatus.RUNNING;
             }
 
             if (r == TaskStatus.FAILED) {
-                status = "cannot reach the exit portal";
+                status.set("lune.status.complete_game.cannot_reach_exit_portal");
                 return TaskStatus.FAILED;
             }
 
@@ -761,11 +775,11 @@ public final class CompleteGameTask implements Task {
 
             ticks++;
             if (ticks > TIMEOUT) {
-                status = "did not leave the End";
+                status.set("lune.status.complete_game.did_not_leave_end");
                 return TaskStatus.FAILED;
             }
 
-            status = "jumping into the exit portal";
+            status.set("lune.status.complete_game.jumping_into_exit_portal");
             return TaskStatus.RUNNING;
         }
 

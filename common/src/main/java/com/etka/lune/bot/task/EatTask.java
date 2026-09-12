@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -59,7 +61,7 @@ public final class EatTask implements Task {
     private int noProgressTicks;
     private int lastFoodLevel = -1;
     private boolean holdingUse;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public EatTask() {
         this(stack -> true, HUNGRY_THRESHOLD);
@@ -72,11 +74,17 @@ public final class EatTask implements Task {
 
     @Override
     public String name() {
-        return "Eat";
+        return Lang.get("lune.task.eat.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Eat");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -96,7 +104,7 @@ public final class EatTask implements Task {
 
         if (food >= minimumFood) {
             releaseUse(ctx);
-            status = "food level " + food + " is fine";
+            status.set("lune.status.eat.food_level_fine", food);
             return TaskStatus.SUCCESS;
         }
 
@@ -112,32 +120,32 @@ public final class EatTask implements Task {
         // burns the whole budget. Let the route reach dry ground and try there.
         if (player.isInWater()) {
             releaseUse(ctx);
-            status = "cannot eat while swimming; continue to dry ground";
+            status.set("lune.status.eat.cannot_eat_while_swimming_continue_dry");
             return TaskStatus.FAILED;
         }
 
         // A container screen suppresses handleKeybinds entirely, so no held key would be read.
         if (ctx.mc.screen != null) {
             releaseUse(ctx);
-            status = "cannot eat with a screen open";
+            status.set("lune.status.eat.cannot_eat_with_screen_open");
             return TaskStatus.FAILED;
         }
 
         if (!holdingFood(player)) {
             releaseUse(ctx);
             if (InventoryHelper.equip(ctx, this::edible) < 0) {
-                status = "no food";
+                status.set("lune.status.eat.no_food");
                 return TaskStatus.FAILED;
             }
             settleTicks = 0;
             startTicks = 0;
-            status = "taking out " + heldName(player);
+            status.set("lune.status.eat.taking_out", heldName(player));
             return TaskStatus.RUNNING;
         }
 
         if (settleTicks < SLOT_SYNC_TICKS) {
             settleTicks++;
-            status = "waiting for the server to see the food";
+            status.set("lune.status.eat.waiting_server_see_food");
             return TaskStatus.RUNNING;
         }
 
@@ -146,20 +154,20 @@ public final class EatTask implements Task {
         if (!player.isUsingItem()) {
             if (++startTicks > START_TIMEOUT) {
                 releaseUse(ctx);
-                status = "could not start eating " + heldName(player);
+                status.set("lune.status.eat.could_not_start_eating", heldName(player));
                 return TaskStatus.FAILED;
             }
-            status = "starting to eat " + heldName(player);
+            status.set("lune.status.eat.starting_eat", heldName(player));
             return TaskStatus.RUNNING;
         }
 
         startTicks = 0;
         if (++noProgressTicks > NO_PROGRESS_TIMEOUT) {
             releaseUse(ctx);
-            status = "held the use key but hunger never moved";
+            status.set("lune.status.eat.held_use_key_but_hunger_never_moved");
             return TaskStatus.FAILED;
         }
-        status = "eating " + heldName(player) + " (" + food + "/" + minimumFood + ")";
+        status.set("lune.status.eat.eating", heldName(player), food, minimumFood);
         return TaskStatus.RUNNING;
     }
 

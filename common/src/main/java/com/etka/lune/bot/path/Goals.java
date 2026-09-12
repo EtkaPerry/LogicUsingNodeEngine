@@ -1,5 +1,6 @@
 package com.etka.lune.bot.path;
 
+import com.etka.lune.util.Lang;
 import net.minecraft.core.BlockPos;
 
 import java.util.List;
@@ -41,7 +42,7 @@ public final class Goals {
 
         @Override
         public String describe() {
-            return "block " + target.getX() + ", " + target.getY() + ", " + target.getZ();
+            return Lang.get("lune.goal.block", target.getX(), target.getY(), target.getZ());
         }
     }
 
@@ -61,7 +62,8 @@ public final class Goals {
 
         @Override
         public String describe() {
-            return "within " + radius + " of " + target.getX() + ", " + target.getY() + ", " + target.getZ();
+            return Lang.get("lune.goal.within", radius, target.getX(), target.getY(),
+                    target.getZ());
         }
     }
 
@@ -79,7 +81,7 @@ public final class Goals {
 
         @Override
         public String describe() {
-            return "column " + x + ", " + z;
+            return Lang.get("lune.goal.column", x, z);
         }
     }
 
@@ -99,7 +101,7 @@ public final class Goals {
 
         @Override
         public String describe() {
-            return "within " + radius + " horizontally of " + x + ", " + z;
+            return Lang.get("lune.goal.within_horizontally", radius, x, z);
         }
     }
 
@@ -117,7 +119,7 @@ public final class Goals {
 
         @Override
         public String describe() {
-            return "y = " + y;
+            return Lang.get("lune.goal.y_level", y);
         }
     }
 
@@ -145,7 +147,7 @@ public final class Goals {
 
         @Override
         public String describe() {
-            return "reach of " + target.getX() + ", " + target.getY() + ", " + target.getZ();
+            return Lang.get("lune.goal.reach_of", target.getX(), target.getY(), target.getZ());
         }
     }
 
@@ -172,7 +174,7 @@ public final class Goals {
 
         @Override
         public String describe() {
-            return "any of " + goals.size() + " targets";
+            return Lang.get("lune.goal.any_of", goals.size());
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.etka.lune.task;
 
+import com.etka.lune.util.Lang;
 import java.util.Optional;
 import java.util.Set;
 
@@ -17,7 +18,7 @@ public final class TaskConnectionAudit {
 
         if (task.onWhile != null && task.nodeById(task.onWhile) == null) {
             return Optional.of(new Issue(firstNode(task), "task-while-missing",
-                    "The task's While connection points to something that no longer exists."));
+                    Lang.get("lune.audit.tasks_while_connection_points_something")));
         }
 
         for (TaskNode node : task.nodes) {
@@ -42,13 +43,13 @@ public final class TaskConnectionAudit {
                     .filter(node -> node != null && node.isStartNode())
                     .findFirst().orElse(null);
             return Optional.of(new Issue(first, "multiple-starts",
-                        "This task has more than one START node; keep one entry point."));
+                        Lang.get("lune.audit.task_has_more_than_one_start_node_keep")));
         }
 
         TaskNode explicitStart = TaskWiring.explicitStart(task);
         if (explicitStart != null && explicitStart.onSuccess == null) {
             return Optional.of(new Issue(explicitStart, "start-empty-" + safe(explicitStart.id),
-                        "START has no action connected, so the task has nowhere to begin."));
+                        Lang.get("lune.audit.start_has_action_connected_task_has")));
         }
 
         Set<TaskNode> reachable = TaskWiring.poweredNodes(task);
@@ -57,7 +58,7 @@ public final class TaskConnectionAudit {
                     && !reachable.contains(node)
                     && !TaskWiring.isMonitorOnly(task, node)) {
                 return Optional.of(new Issue(node, "unreachable-" + safe(node.id),
-                        nodeName(node) + " isn't connected to START, Always, or another runnable step."));
+                        Lang.get("lune.audit.isnt_connected_start_always_or_another", nodeName(node))));
             }
         }
         return Optional.empty();
@@ -67,17 +68,17 @@ public final class TaskConnectionAudit {
         if (node.isStartNode()) {
             if (node.onFailure != null || node.onWhile != null) {
                 return Optional.of(new Issue(node, "start-extra-edge-" + safe(node.id),
-                        "START only accepts one Success connection to the first action."));
+                        Lang.get("lune.audit.start_only_accepts_one_success")));
             }
             if (node.onSuccess != null) {
                 TaskNode target = task.nodeById(node.onSuccess);
                 if (target == null) {
                     return Optional.of(new Issue(node, "start-missing-" + safe(node.id),
-                            "START has a Success connection that no longer reaches anything."));
+                            Lang.get("lune.audit.start_has_success_connection_longer")));
                 }
                 if (target != null && target.isSourceNode()) {
                     return Optional.of(new Issue(node, "start-source-target-" + safe(node.id),
-                            "START must connect directly to a runnable action."));
+                            Lang.get("lune.audit.start_must_connect_directly_runnable")));
                 }
             }
             return Optional.empty();
@@ -85,13 +86,12 @@ public final class TaskConnectionAudit {
         if (node.isClockNode()) {
             if (node.alwaysTargets == null || node.alwaysTargets.isEmpty()) {
                 return Optional.of(new Issue(node, "always-empty-" + safe(node.id),
-                        nodeName(node) + " has no action connected, so it cannot send any signals."));
+                        Lang.get("lune.audit.has_action_connected_cannot_send_any", nodeName(node))));
             }
             for (String target : node.alwaysTargets) {
                 if (target == null || target.isBlank() || task.nodeById(target) == null) {
                     return Optional.of(new Issue(node, "always-missing-" + safe(node.id),
-                            "One of " + nodeName(node)
-                                    + "'s connections points to something that no longer exists."));
+                            Lang.get("lune.audit.one_s_connections_points_something", nodeName(node))));
                 }
                 TaskNode targetNode = task.nodeById(target);
                 int targetPort = node.alwaysTargetInputPorts == null
@@ -99,33 +99,32 @@ public final class TaskConnectionAudit {
                 if (targetNode.isSignalRelayNode()
                         && (targetPort < 0 || targetPort >= targetNode.signalInputCount)) {
                     return Optional.of(new Issue(node, "always-relay-input-" + safe(node.id),
-                            nodeName(node)
-                                    + " points to a Signal Relay input that is no longer available."));
+                            Lang.get("lune.audit.points_signal_relay_input_longer", nodeName(node))));
                 }
             }
         }
         if (node.isObserverNode() && (node.observedNodeId == null
                 || task.nodeById(node.observedNodeId) == null)) {
             return Optional.of(new Issue(node, "observer-unwatched-" + safe(node.id),
-                    "Observer has no card wired into its Watch pin, so it has nothing to react to."));
+                    Lang.get("lune.audit.observer_has_card_wired_into_watch_pin")));
         }
         if (node.isPulseNode()) {
             if (node.isEndNode()) {
                 if (node.signalLinks != null && !node.signalLinks.isEmpty()) {
                     return Optional.of(new Issue(node, "end-output-" + safe(node.id),
-                            "End is a pulse sink and cannot have an output connection."));
+                            Lang.get("lune.audit.end_pulse_sink_cannot_have_output")));
                 }
             } else if (node.signalLinks == null || node.signalLinks.isEmpty()) {
                 String label = pulseName(node);
                 return Optional.of(new Issue(node, "pulse-empty-" + safe(node.id),
-                        label + " has no output connected, so its pulses go nowhere."));
+                        Lang.get("lune.audit.has_output_connected_pulses_go_nowhere", label)));
             }
             for (TaskSignalLink link : node.signalLinks == null
                     ? java.util.List.<TaskSignalLink>of() : node.signalLinks) {
                 if (link == null || link.targetNodeId == null
                         || task.nodeById(link.targetNodeId) == null) {
                     return Optional.of(new Issue(node, "relay-target-missing-" + safe(node.id),
-                            "One of " + pulseName(node) + "'s outputs points to something that no longer exists."));
+                            Lang.get("lune.audit.one_s_outputs_points_something_longer", pulseName(node))));
                 }
                 TaskNode target = task.nodeById(link.targetNodeId);
                 if (link.outputPort < 0 || link.outputPort >= node.signalOutputCount
@@ -135,41 +134,41 @@ public final class TaskConnectionAudit {
                         || target.isSignalRelayNode()
                         && (link.targetPort < 0 || link.targetPort >= target.signalInputCount)) {
                     return Optional.of(new Issue(node, "pulse-port-invalid-" + safe(node.id),
-                            pulseName(node) + " has an output wire connected to an invalid port."));
+                            Lang.get("lune.audit.has_output_wire_connected_invalid_port", pulseName(node))));
                 }
             }
         }
         if (node.onSuccess != null && task.nodeById(node.onSuccess) == null) {
             return Optional.of(new Issue(node, "success-missing-" + safe(node.id),
-                    nodeName(node) + " has a success connection that no longer reaches anything."));
+                    Lang.get("lune.audit.has_success_connection_longer_reaches", nodeName(node))));
         }
         if (node.onSuccess != null && task.nodeById(node.onSuccess).isStartNode()) {
             return Optional.of(new Issue(node, "success-start-" + safe(node.id),
-                    nodeName(node) + " cannot send Success back into START."));
+                    Lang.get("lune.audit.cannot_send_success_back_into_start", nodeName(node))));
         }
         if (node.onSuccess != null && task.nodeById(node.onSuccess).isSignalRelayNode()
                 && (node.successInputPort < 0
                 || node.successInputPort >= task.nodeById(node.onSuccess).signalInputCount)) {
             return Optional.of(new Issue(node, "success-relay-input-" + safe(node.id),
-                    nodeName(node) + " sends Success into a Signal Relay input that is unavailable."));
+                    Lang.get("lune.audit.sends_success_into_signal_relay_input", nodeName(node))));
         }
         if (node.onFailure != null && task.nodeById(node.onFailure) == null) {
             return Optional.of(new Issue(node, "failure-missing-" + safe(node.id),
-                    nodeName(node) + " has a failure connection that no longer reaches anything."));
+                    Lang.get("lune.audit.has_failure_connection_longer_reaches", nodeName(node))));
         }
         if (node.onFailure != null && task.nodeById(node.onFailure).isStartNode()) {
             return Optional.of(new Issue(node, "failure-start-" + safe(node.id),
-                    nodeName(node) + " cannot send Fail back into START."));
+                    Lang.get("lune.audit.cannot_send_fail_back_into_start", nodeName(node))));
         }
         if (node.onFailure != null && task.nodeById(node.onFailure).isSignalRelayNode()
                 && (node.failureInputPort < 0
                 || node.failureInputPort >= task.nodeById(node.onFailure).signalInputCount)) {
             return Optional.of(new Issue(node, "failure-relay-input-" + safe(node.id),
-                    nodeName(node) + " sends Fail into a Signal Relay input that is unavailable."));
+                    Lang.get("lune.audit.sends_fail_into_signal_relay_input", nodeName(node))));
         }
         if (node.onWhile != null && task.nodeById(node.onWhile) == null) {
             return Optional.of(new Issue(node, "while-missing-" + safe(node.id),
-                    nodeName(node) + " has a While connection that no longer reaches anything."));
+                    Lang.get("lune.audit.has_while_connection_longer_reaches", nodeName(node))));
         }
         return Optional.empty();
     }
@@ -184,20 +183,20 @@ public final class TaskConnectionAudit {
             if (link == null || link.sourceNodeId == null || link.sourceNodeId.isBlank()) {
                 return Optional.of(new Issue(destination,
                         "data-source-empty-" + safe(destination.id) + "-" + safe(parameter),
-                        nodeName(destination) + " has a data input with no source connected."));
+                        Lang.get("lune.audit.has_data_input_with_source_connected", nodeName(destination))));
             }
             if (parameter == null || parameter.isBlank()
                     || destination.exposedInputs == null
                     || !destination.exposedInputs.contains(parameter)) {
                 return Optional.of(new Issue(destination,
                         "data-input-missing-" + safe(destination.id) + "-" + safe(parameter),
-                        nodeName(destination) + " has a data wire into an input it no longer has."));
+                        Lang.get("lune.audit.has_data_wire_into_input_longer_has", nodeName(destination))));
             }
             TaskNode source = task.nodeById(link.sourceNodeId);
             if (source == null) {
                 return Optional.of(new Issue(destination,
                         "data-node-missing-" + safe(destination.id) + "-" + safe(parameter),
-                        nodeName(destination) + " reads data from a card that no longer exists."));
+                        Lang.get("lune.audit.reads_data_from_card_longer_exists", nodeName(destination))));
             }
             if (link.sourcePort == null || link.sourcePort.isBlank()
                     || source.exposedOutputs == null
@@ -205,8 +204,7 @@ public final class TaskConnectionAudit {
                     || !hasOutputValue(source, link.sourcePort)) {
                 return Optional.of(new Issue(destination,
                         "data-output-missing-" + safe(destination.id) + "-" + safe(parameter),
-                        nodeName(destination) + " needs data from " + nodeName(source)
-                                + ", but that output is not connected."));
+                        Lang.get("lune.audit.needs_data_from_but_output_connected", nodeName(destination), nodeName(source))));
             }
         }
         return Optional.empty();
@@ -223,7 +221,7 @@ public final class TaskConnectionAudit {
 
     private static String nodeName(TaskNode node) {
         if (node == null) {
-            return "This card";
+            return Lang.get("lune.audit.card");
         }
         if (node.isClockNode()) {
             return node.isPulseSourceNode() ? "Pulse" : "Always";
@@ -241,7 +239,7 @@ public final class TaskConnectionAudit {
 
     private static String commandName(String commandId) {
         if (commandId == null || commandId.isBlank()) {
-            return "This card";
+            return Lang.get("lune.audit.card");
         }
         return switch (commandId) {
             case TaskNode.START_COMMAND -> "START";

@@ -1,9 +1,12 @@
 package com.etka.lune.client;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.Constants;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.client.gui.LuneScreen;
+import com.etka.lune.client.gui.TermsScreen;
 import com.etka.lune.config.BotConfig;
+import com.etka.lune.config.Terms;
 import com.etka.lune.platform.BuildFeatures;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -68,36 +71,35 @@ public final class LuneKeybinds {
     public static void clientTick(Minecraft mc) {
         if (mc.player != null) {
             while (OPEN.consumeClick()) {
-                mc.setScreen(new LuneScreen());
+                // Reaching for the panel is the first moment the terms are anyone's business, and
+                // the only one: nothing is put in front of a player who has not asked for Lune yet.
+                mc.setScreen(Terms.accepted() ? new LuneScreen()
+                        : new TermsScreen(null, () -> mc.setScreen(new LuneScreen())));
             }
             while (PAUSE.consumeClick()) {
                 boolean shift = GLFW.glfwGetKey(mc.getWindow().handle(), GLFW.GLFW_KEY_LEFT_SHIFT) == GLFW.GLFW_PRESS
                         || GLFW.glfwGetKey(mc.getWindow().handle(), GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
                 if (shift) {
                     BotEngine.get().stopAll();
-                    mc.player.sendOverlayMessage(Component.literal("[Lune] Stopped"));
+                    mc.player.sendOverlayMessage(Component.literal(Lang.get("lune.gui.lune_keybinds.lune_stopped")));
                 } else {
                     BotEngine engine = BotEngine.get();
                     engine.setPaused(!engine.isPaused());
-                    mc.player.sendOverlayMessage(Component.literal(
-                            "[Lune] " + (engine.isPaused() ? "Paused" : "Resumed")));
+                    mc.player.sendOverlayMessage(Component.literal(Lang.get("lune.gui.bot_context.lune", (engine.isPaused() ? "Paused" : "Resumed"))));
                 }
             }
             while (TOGGLE_DEBUG.consumeClick()) {
                 BotConfig config = BotConfig.get();
                 config.showDebug = !config.showDebug;
                 config.save();
-                mc.player.sendOverlayMessage(Component.literal(
-                        "[Lune] Debug overlay " + (config.showDebug ? "on" : "off")));
+                mc.player.sendOverlayMessage(Component.literal(Lang.get("lune.gui.lune_keybinds.lune_debug_overlay", (config.showDebug ? "on" : "off"))));
             }
             if (BuildFeatures.approvalFeedback()) {
                 while (LEARNING_GOOD.consumeClick()) {
-                    mc.player.sendOverlayMessage(Component.literal("[Lune] "
-                            + BotEngine.get().recordLearningFeedback(true)));
+                    mc.player.sendOverlayMessage(Component.literal(Lang.get("lune.gui.bot_context.lune", BotEngine.get().recordLearningFeedback(true))));
                 }
                 while (LEARNING_BAD.consumeClick()) {
-                    mc.player.sendOverlayMessage(Component.literal("[Lune] "
-                            + BotEngine.get().recordLearningFeedback(false)));
+                    mc.player.sendOverlayMessage(Component.literal(Lang.get("lune.gui.bot_context.lune", BotEngine.get().recordLearningFeedback(false))));
                 }
             }
         }

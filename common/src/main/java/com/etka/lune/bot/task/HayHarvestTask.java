@@ -1,6 +1,8 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.util.InventoryHelper;
@@ -39,7 +41,7 @@ public final class HayHarvestTask implements Task {
     private int startingHay;
     private int stepFailures;
     private boolean hoeConsidered;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public HayHarvestTask() {
         this(DEFAULT_RADIUS);
@@ -51,11 +53,17 @@ public final class HayHarvestTask implements Task {
 
     @Override
     public String name() {
-        return "Harvest hay";
+        return Lang.get("lune.task.hay_harvest.harvest_hay");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Harvest hay");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -66,14 +74,14 @@ public final class HayHarvestTask implements Task {
         stepFailures = 0;
         hoeConsidered = false;
         startingHay = hay(ctx);
-        status = "looking for hay";
+        status.set("lune.status.hay_harvest.looking_hay");
     }
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (current != null) {
             TaskStatus result = current.tick(ctx);
-            status = currentLabel + " - " + current.status();
+            status.set("lune.status.detail", currentLabel, current.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
@@ -83,7 +91,7 @@ public final class HayHarvestTask implements Task {
             if (result == TaskStatus.FAILED) {
                 ctx.debug.recordFailure(name(), reason);
                 if (++stepFailures >= MAX_STEP_FAILURES) {
-                    status = "gave up on the hay: " + reason;
+                    status.set("lune.status.hay_harvest.gave_up_hay", reason);
                     return TaskStatus.FAILED;
                 }
             }
@@ -98,12 +106,13 @@ public final class HayHarvestTask implements Task {
         if (carriedHay > 0) {
             return start(ctx, CraftTask.of(Items.WHEAT,
                             wheat + carriedHay * VillagePolicy.WHEAT_PER_HAY, false),
-                    "unpacking " + carriedHay + " hay into wheat");
+                    "lune.status.hay_harvest.unpacking", carriedHay);
         }
         if (wheat >= VillagePolicy.WHEAT_PER_BREAD) {
             int loaves = InventoryHelper.count(ctx.player, Items.BREAD)
                     + wheat / VillagePolicy.WHEAT_PER_BREAD;
-            return start(ctx, CraftTask.of(Items.BREAD, loaves, true), "baking " + loaves + " bread");
+            return start(ctx, CraftTask.of(Items.BREAD, loaves, true),
+                    "lune.status.hay_harvest.baking", loaves);
         }
 
         int visible = visibleHay(ctx);
@@ -111,7 +120,11 @@ public final class HayHarvestTask implements Task {
         if (wanted <= 0) {
             dropHoeIfCrowded(ctx);
             int taken = Math.max(0, startingHay - hay(ctx));
-            status = visible <= 0 ? "no hay in sight" : "took what the farm was worth";
+            if (visible <= 0) {
+                status.set("lune.status.hay_harvest.no_hay_sight");
+            } else {
+                status.set("lune.status.hay_harvest.took_what_farm_worth");
+            }
             return taken > 0 || InventoryHelper.count(ctx.player, Items.BREAD) > 0
                     ? TaskStatus.SUCCESS : TaskStatus.FAILED;
         }
@@ -122,7 +135,8 @@ public final class HayHarvestTask implements Task {
                     InventoryHelper.count(ctx.player, stack -> stack.is(ItemTags.PLANKS)),
                     InventoryHelper.count(ctx.player, Items.STICK))) {
                 ctx.debug.decide("make a hoe first: " + wanted + " bales is worth the two planks");
-                return start(ctx, new EnsureToolTask(Items.WOODEN_HOE, true), "making a hoe");
+                return start(ctx, new EnsureToolTask(Items.WOODEN_HOE, true),
+                        "lune.status.hay_harvest.making_hoe");
             }
         }
 
@@ -130,7 +144,7 @@ public final class HayHarvestTask implements Task {
                 + " bread once baked");
         return start(ctx, new MineTask(Set.of(Blocks.HAY_BLOCK), radius,
                         ctx.level.getMinY(), ctx.level.getMaxY(), wanted, true, false),
-                "taking " + wanted + " hay bales");
+                "lune.status.hay_harvest.taking_bales", wanted);
     }
 
     @Override
@@ -150,11 +164,11 @@ public final class HayHarvestTask implements Task {
         ctx.input.reset();
     }
 
-    private TaskStatus start(BotContext ctx, Task task, String label) {
+    private TaskStatus start(BotContext ctx, Task task, String key, Object... args) {
         current = task;
-        currentLabel = label;
+        currentLabel = Lang.get(key, args);
         current.start(ctx);
-        status = label;
+        status.set(key, args);
         return TaskStatus.RUNNING;
     }
 

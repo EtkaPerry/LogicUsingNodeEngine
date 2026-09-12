@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -21,15 +23,21 @@ public final class SurfaceRecoveryTask implements Task {
     private BlockPos target;
     private GotoTask route;
     private boolean recovered;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     @Override
     public String name() {
-        return "Return to Surface";
+        return Lang.get("lune.task.surface_recovery.return_surface");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Return to Surface");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -44,23 +52,23 @@ public final class SurfaceRecoveryTask implements Task {
         route = null;
         recovered = false;
         if (target == null) {
-            status = "no nearby walkable surface";
+            status.set("lune.status.surface_recovery.no_nearby_walkable_surface");
             return;
         }
         route = new GotoTask(new Goals.Block(target), true, true);
         route.start(ctx);
-        status = "leaving the pocket for " + target.toShortString();
+        status.set("lune.status.surface_recovery.leaving_pocket_2", target.toShortString());
     }
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (target == null || route == null) {
-            status = "no nearby walkable surface";
+            status.set("lune.status.surface_recovery.no_nearby_walkable_surface");
             return TaskStatus.FAILED;
         }
 
         TaskStatus result = route.tick(ctx);
-        status = "leaving the pocket - " + route.status();
+        status.set("lune.status.surface_recovery.leaving_pocket", route.statusLine());
         if (result == TaskStatus.RUNNING) {
             return TaskStatus.RUNNING;
         }
@@ -69,12 +77,14 @@ public final class SurfaceRecoveryTask implements Task {
         route = null;
         if (result == TaskStatus.SUCCESS && reconnected(ctx, ctx.player.blockPosition())) {
             recovered = true;
-            status = "reached walkable surface";
+            status.set("lune.status.surface_recovery.reached_walkable_surface");
             return TaskStatus.SUCCESS;
         }
-        status = result == TaskStatus.FAILED
-                ? "could not reconnect to walkable surface"
-                : "route ended before reaching walkable surface";
+        if (result == TaskStatus.FAILED) {
+            status.set("lune.status.surface_recovery.could_not_reconnect_walkable_surface");
+        } else {
+            status.set("lune.status.surface_recovery.route_ended_before_reaching_walkable");
+        }
         return TaskStatus.FAILED;
     }
 

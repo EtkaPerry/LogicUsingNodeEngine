@@ -24,15 +24,30 @@ public final class TaskSafety {
             Map.entry("protect_lava", "true"),
             Map.entry("protect_fall", "true"),
             Map.entry("fall_threshold", "10"),
+            Map.entry("clutch_water", "true"),
+            Map.entry("clutch_boat", "true"),
+            Map.entry("clutch_cushion", "true"),
             Map.entry("protect_monsters", "true"),
             Map.entry("monster_compare", "At most"),
             Map.entry("monster_distance", "8"),
+            Map.entry("protect_fireballs", "true"),
+            Map.entry("build_cover", "true"),
             Map.entry("protect_health", "true"),
             Map.entry("health_compare", "At most"),
             Map.entry("health_value", "8")
     );
 
     private TaskSafety() {}
+
+    /**
+     * What an offered guard is configured with.
+     *
+     * <p>Exposed so the check that it still names every parameter the command declares can be
+     * written: a tactic switch missing from here is one the offered card silently cannot hold.
+     */
+    public static Map<String, String> defaultParams() {
+        return DEFAULT_PARAMS;
+    }
 
     /**
      * True when the task already protects itself, however the player wired it.

@@ -1,5 +1,6 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -22,7 +23,13 @@ public final class TimerTask implements Task {
 
     @Override
     public String name() {
-        return "Timer";
+        return Lang.get("lune.gui.tasks.timer");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Timer");
     }
 
     @Override
@@ -49,6 +56,6 @@ public final class TimerTask implements Task {
     @Override
     public TaskProgress progress() {
         int total = Math.max(1, seconds * 20);
-        return new TaskProgress(total - Math.min(total, remainingTicks), total, "ticks");
+        return new TaskProgress(total - Math.min(total, remainingTicks), total, Lang.get("lune.unit.ticks"));
     }
 }

@@ -56,6 +56,14 @@ public final class AStarPathfinder {
      * caller uses to decide whether to try swimming or digging next.
      */
     private static final int MIN_NODE_BUDGET = 2_500;
+    /**
+     * A returned route this short is not a leg of a journey, it is a bot standing still.
+     *
+     * <p>Healthy partial paths in a measured run were 43 to 94 nodes; the ones the frozen bot kept
+     * getting back were a handful, and it reported "no movable path yet" five hundred times over.
+     * The gap between those two is wide enough that this does not need to be a close call.</p>
+     */
+    private static final int STUCK_PATH_NODES = 8;
     /** Effectively "go round" unless the detour is enormous. */
     private static final double LAVA_PROXIMITY_COST = 40.0;
     /** Digging a riverbed/bank is a last resort after open swimming has failed. */
@@ -75,12 +83,14 @@ public final class AStarPathfinder {
      */
     private static final double DIG_DOWN_COST = 4.0;
     /**
-     * Blocks of empty gap the search will plan to jump across.
+     * Blocks of empty gap the search will plan to jump across, and how far a landing may drop.
      *
-     * <p>Two. A running jump clears more, but the search cannot know whether there will be room to
-     * build up speed, and the cost of being wrong is a fall rather than a slower route.
+     * <p>Shared with {@link PathExecutor} through {@link GapJumpPolicy} rather than restated here.
+     * The two used to hold their own copies of this, and disagreed about the drop for as long as the
+     * move existed - see that class for what the disagreement cost.
      */
-    private static final int MAX_GAP_JUMP = 2;
+    private static final int MAX_GAP_JUMP = GapJumpPolicy.MAX_GAP;
+    private static final int MAX_GAP_DROP = GapJumpPolicy.MAX_DROP;
 
     /** Horizontal neighbour offsets: 4 cardinals then 4 diagonals. */
     private static final int[][] HORIZONTAL = {
@@ -188,7 +198,87 @@ public final class AStarPathfinder {
         }
     }
 
+    /**
+     * Runs the search, and runs it again at full budget if the scaled one came up short.
+     *
+     * <p>The scaling below sizes a walking search by how far away the goal <em>looks</em>. Search
+     * cost is not a function of that: a tree ten blocks off across a ravine needs the long way
+     * round, and the way round is not ten blocks of search. So exhausting a budget that was scaled
+     * down is not the evidence the caller takes it for - it says the route is longer than the
+     * search was allowed to look, not that no route exists.</p>
+     *
+     * <p>That distinction is what a snowy-taiga run spent 175 seconds on, motionless at one block:
+     * a spruce in plain sight, "no movable path yet" and "route search budget exhausted" five
+     * hundred times over, on a 2500-node allowance it never had a chance of finishing inside. The
+     * retry costs a second search only in the case that has already failed - and that case
+     * currently costs minutes.</p>
+     */
     private static Result search(BlockGetter level, BlockPos start, Goal goal, Settings settings) {
+        int allowance = scaledBudget(goal, start, settings);
+        Result scaled = search(level, start, goal, settings, allowance);
+        // Only a search that cannot move is worth paying for twice.
+        //
+        // Retrying every partial path doubled the cost of the common case for nothing: a partial
+        // that still hands back forty blocks of route is a perfectly good next leg, and the bot
+        // re-plans when it gets there anyway. Doing it unconditionally took the median search from
+        // about 1 ms to 13, roughly a seventh of the run spent in A*, and cost more wood than the
+        // freeze it was fixing. What actually freezes is the search that comes back with nowhere
+        // to go, and that is the only one retried now.
+        if (scaled.reachedGoal() || scaled.path().size() > STUCK_PATH_NODES
+                || allowance >= settings.nodeBudget()) {
+            return scaled;
+        }
+        Result full = search(level, start, goal, settings, settings.nodeBudget());
+        // Keep whichever got further. A second miss still returns the better partial rather than
+        // discarding the work, and a search that was genuinely bounded by terrain returns the same
+        // answer both times.
+        return full.reachedGoal() || full.path().size() > scaled.path().size() ? full : scaled;
+    }
+
+    /**
+     * How far this node may drop, which depends on how near the goal is.
+     *
+     * <p>{@code maxFall} is the largest drop the bot survives, and near the goal it needs all of it:
+     * a tree stands on ground the bot has to get down onto, and refusing the drop leaves it circling
+     * a trunk it can see. Far from the goal the same allowance is a liability. A planned drop is not
+     * where the bot lands - it leaves the block with walking momentum and comes down further along
+     * and further below - so a three-block plan arrives as four or five, and a chain of them is a
+     * staircase down a ravine face.</p>
+     *
+     * <p>Both halves were measured, one run each. Clamping every walking drop to one fixed travel -
+     * fall damage over a whole run went from twelve to nothing, the route from 1.6x the straight
+     * line to 1.3x, and the seed that had killed the bot three times out of three came home. It
+     * also cost a snowy-taiga chop run two thirds of its harvest, 81 logs down to 34, four minutes
+     * of it frozen on "arrived at that Spruce Log 8 times without moving": with no drop available
+     * the approach goal was satisfied while the bot was never beside the tree.</p>
+     *
+     * <p>So it is not one number. Distance to the goal is what tells the two cases apart, because
+     * that is the actual difference between them: a chop approach is a few blocks and a travel leg
+     * is dozens.</p>
+     */
+    private static int dropLimit(Goal goal, BlockPos from, Settings settings) {
+        if (settings.allowBreak() || goal.heuristic(from) <= CLOSING_ON_GOAL) {
+            return settings.maxFall();
+        }
+        return Math.min(settings.maxFall(), TRAVELLING_MAX_FALL);
+    }
+
+    /** Within this of the goal, the search is arriving rather than travelling. */
+    private static final int CLOSING_ON_GOAL = 24;
+    /** What a drop may cost while still on the way. One block down is an ordinary walking step. */
+    private static final int TRAVELLING_MAX_FALL = 1;
+
+    /** The walking allowance for this request; a digging search is deliberately left uncapped. */
+    private static int scaledBudget(Goal goal, BlockPos start, Settings settings) {
+        if (settings.allowBreak()) {
+            return settings.nodeBudget();
+        }
+        return Math.max(MIN_NODE_BUDGET,
+                Math.min(settings.nodeBudget(), (int) (goal.heuristic(start) * NODES_PER_BLOCK)));
+    }
+
+    private static Result search(BlockGetter level, BlockPos start, Goal goal, Settings settings,
+                                 int budget) {
         long startNanos = System.nanoTime();
         Map<Long, Node> nodes = new HashMap<>();
         PriorityQueue<Node> open = new PriorityQueue<>((a, b) -> Double.compare(a.f, b.f));
@@ -211,16 +301,11 @@ public final class AStarPathfinder {
         // what happened, and since one repath runs the dry, swimming and digging tiers in turn it
         // cost three full searches - well over a hundred milliseconds - every attempt.
         //
-        // Only walking is capped. A walking search is bounded by the terrain, so exhausting it is
-        // real information: no route exists and the caller should try the next tier. A digging
-        // search has no such bound - it can tunnel in any direction, so it always reaches its cap,
-        // and capping it low made every route report "no dry or swimming route from here" while
-        // standing next to the target. That was a straight loss of capability.
-        int budget = settings.allowBreak()
-                ? settings.nodeBudget()
-                : Math.max(MIN_NODE_BUDGET, Math.min(settings.nodeBudget(),
-                        (int) (bestHeuristic * NODES_PER_BLOCK)));
-
+        // Only walking is capped. A digging search has no terrain bound - it can tunnel in any
+        // direction, so it always reaches its cap, and capping it low made every route report "no
+        // dry or swimming route from here" while standing next to the target. That was a straight
+        // loss of capability. The allowance itself is chosen by the caller above, which also
+        // decides whether a short one that ran out deserves a second look at full size.
         int expanded = 0;
         while (!open.isEmpty() && expanded < budget) {
             Node current = open.poll();
@@ -285,7 +370,7 @@ public final class AStarPathfinder {
             if (!clear) {
                 continue;
             }
-            for (int drop = 0; drop <= 1; drop++) {
+            for (int drop = 0; drop <= MAX_GAP_DROP; drop++) {
                 BlockPos landing = pos.offset(dx * distance, -drop, dz * distance);
                 if (MovementHelper.canStandAt(level, landing, settings.allowSwim())) {
                     relax(level, current, landing,
@@ -405,10 +490,10 @@ public final class AStarPathfinder {
                 relaxGapJumps(level, current, dx, dz, goal, settings, nodes, open);
             }
 
-            // Walk off an edge and fall, up to the configured limit.
+            // Walk off an edge and fall, up to the limit for this part of the journey.
             if (MovementHelper.hasBodyClearance(level, flat)) {
                 if (settings.allowJump()) {
-                    for (int drop = 1; drop <= settings.maxFall(); drop++) {
+                    for (int drop = 1; drop <= dropLimit(goal, flat, settings); drop++) {
                         BlockPos landing = flat.below(drop);
                         if (MovementHelper.canStandAt(level, landing, settings.allowSwim())) {
                             relax(level, current, landing,

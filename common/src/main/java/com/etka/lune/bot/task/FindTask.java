@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -51,7 +53,7 @@ public final class FindTask implements Task {
     private final boolean prospect;
     private final boolean checkAround;
 
-    private String status = "";
+    private final StatusText status = new StatusText();
     private Task prospectTask;
     private int prospectAttempts;
     private Direction prospectBaseDirection;
@@ -65,6 +67,14 @@ public final class FindTask implements Task {
     private int prospectStepsSinceStart;
     private BlockPos scanOrigin;
     private final HeadScanner headScanner = new HeadScanner();
+    /**
+     * Whether this run actually found something.
+     *
+     * <p>Was read back out of the status line by looking for the word "found", which
+     * is a sentence the player is meant to read and not a value the task should be
+     * parsing - and which stops saying "found" the moment anyone translates it.</p>
+     */
+    private boolean foundSomething;
     private final TargetIndex index = new TargetIndex();
 
     public FindTask(Set<Block> targets, int radius) {
@@ -99,21 +109,28 @@ public final class FindTask implements Task {
 
     @Override
     public String name() {
-        return "Find";
+        return Lang.get("lune.task.find.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Find");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
     @Override
     public boolean madeProgress() {
-        return status != null && status.startsWith("found") && !status.contains("0");
+        return foundSomething;
     }
 
     @Override
     public void onStart(BotContext ctx) {
+        foundSomething = false;
         prospectAttempts = 0;
         prospectBaseDirection = ctx.player.getDirection();
         prospectRejected.clear();
@@ -130,7 +147,7 @@ public final class FindTask implements Task {
         }
 
         if (targets.isEmpty()) {
-            status = "no blocks selected";
+            status.set("lune.status.find.no_blocks_selected");
             return TaskStatus.FAILED;
         }
 
@@ -157,28 +174,26 @@ public final class FindTask implements Task {
         if (memory != null) {
             Block block = ctx.level.getBlockState(memory).getBlock();
             int distance = (int) Math.sqrt(memory.distSqr(ctx.player.blockPosition()));
-            status = "remembered " + block.getName().getString() + " at "
-                    + memory.getX() + ", " + memory.getY() + ", " + memory.getZ()
-                    + " (" + distance + " blocks away)";
-            ctx.chat(status);
+            status.set("lune.status.find.remembered_blocks_away", block.getName().getString(), memory.getX(), memory.getY(), memory.getZ(), distance);
+            ctx.chat(status.text());
             return TaskStatus.SUCCESS;
         }
 
-        status = "nothing within " + radius + " blocks";
-        ctx.chat(status);
+        status.set("lune.status.find.nothing_within_blocks", radius);
+        ctx.chat(status.text());
         return TaskStatus.SUCCESS;
     }
 
     private TaskStatus findEntity(BotContext ctx) {
         if (entityTargets.isEmpty()) {
-            status = "no mobs selected";
+            status.set("lune.status.find.no_mobs_selected");
             return TaskStatus.FAILED;
         }
 
         if (checkAround && !Vision.isPanoramic()
                 && (headScanner.isTurning() || headScanner.isVerticalGlance())) {
             if (!headScanner.tickTurn(ctx)) {
-                status = headScanner.status().replace("target blocks", "mobs");
+                status.set(headScanner.statusLine());
                 return TaskStatus.RUNNING;
             }
         }
@@ -187,20 +202,21 @@ public final class FindTask implements Task {
         if (found != null) {
             int distance = (int) Math.sqrt(found.distanceToSqr(ctx.player));
             String description = found.getType().getDescription().getString();
-            ctx.chat(description + " at " + found.blockPosition().getX() + ", "
-                    + found.blockPosition().getY() + ", " + found.blockPosition().getZ()
-                    + " (" + distance + " blocks away)");
-            status = "found 1 " + description;
+            ctx.chat(Lang.get("lune.chat.find.found_at", description,
+                    found.blockPosition().getX(), found.blockPosition().getY(),
+                    found.blockPosition().getZ(), distance));
+            foundSomething = true;
+            status.set("lune.status.find.found_1_2", description);
             return TaskStatus.SUCCESS;
         }
 
         if (checkAround && !Vision.isPanoramic() && headScanner.advance()) {
-            status = headScanner.status().replace("target blocks", "mobs");
+            status.set(headScanner.statusLine());
             return TaskStatus.RUNNING;
         }
 
-        status = "nothing visible within " + radius + " blocks";
-        ctx.chat(status);
+        status.set("lune.status.find.nothing_visible_within_blocks", radius);
+        ctx.chat(status.text());
         return TaskStatus.SUCCESS;
     }
 
@@ -233,7 +249,7 @@ public final class FindTask implements Task {
         if (checkAround && !ctx.omniscientMining() && !Vision.isPanoramic()
                 && (headScanner.isTurning() || headScanner.isVerticalGlance())) {
             if (!headScanner.tickTurn(ctx)) {
-                status = headScanner.status().replace("target blocks", "blocks");
+                status.set(headScanner.statusLine());
                 return ScanResult.SEARCHING;
             }
         }
@@ -256,16 +272,16 @@ public final class FindTask implements Task {
             int distance = (int) Math.sqrt(hit.distSqr(origin));
             Block found = ctx.level.getBlockState(hit).getBlock();
             BlockMemory.get().remember(hit, found);
-            ctx.chat(found.getName().getString()
-                    + " at " + hit.getX() + ", " + hit.getY() + ", " + hit.getZ()
-                    + " (" + distance + " blocks away)");
-            status = "found 1";
+            ctx.chat(Lang.get("lune.chat.find.found_at", found.getName().getString(),
+                    hit.getX(), hit.getY(), hit.getZ(), distance));
+            foundSomething = true;
+            status.set("lune.status.find.found_1");
             return ScanResult.FOUND;
         }
 
         if (checkAround && !ctx.omniscientMining() && !Vision.isPanoramic()
                 && headScanner.advance()) {
-            status = headScanner.status().replace("target blocks", "blocks");
+            status.set(headScanner.statusLine());
             return ScanResult.SEARCHING;
         }
         return ScanResult.EXHAUSTED;
@@ -274,17 +290,15 @@ public final class FindTask implements Task {
     private TaskStatus continueProspecting(BotContext ctx) {
         if (prospectTask == null) {
             if (prospectAttempts >= PROSPECT_MAX_ATTEMPTS) {
-                status = "nothing within " + radius + " blocks after " + PROSPECT_MAX_ATTEMPTS
-                        + " staircase segments";
-                ctx.chat(status);
+                status.set("lune.status.find.nothing_within_blocks_after_staircase", radius, PROSPECT_MAX_ATTEMPTS);
+                ctx.chat(status.text());
                 return TaskStatus.SUCCESS;
             }
             forgetRejectionsAfterMoving(ctx);
             Direction direction = nextProspectDirection(ctx);
             if (direction == null || prospectRefusals >= MAX_PROSPECT_REFUSALS) {
-                status = "nothing within " + radius
-                        + " blocks; no diggable stair direction from here";
-                ctx.chat(status);
+                status.set("lune.status.find.nothing_within_blocks_no_diggable_stair", radius);
+                ctx.chat(status.text());
                 return TaskStatus.SUCCESS;
             }
             int targetY = OreKnowledge.prospectYFor(ctx, targets);
@@ -297,12 +311,12 @@ public final class FindTask implements Task {
                 // Already at the ore layer. Branch horizontally to expose blocks before giving up.
                 prospectTask = new TunnelTask(direction, null, PROSPECT_STAIR_STEPS, 2);
                 prospectTask.start(ctx);
-                status = "branching at y " + targetY + " toward " + direction.getName();
+                status.set("lune.status.find.branching_y_toward", targetY, com.etka.lune.bot.command.Param.Choice.optionLabel(direction.getName()));
             } else {
                 prospectTask = new StaircaseProspectTask(direction,
                         Math.min(PROSPECT_STAIR_STEPS, available));
                 prospectTask.start(ctx);
-                status = "digging prospecting stairs " + direction.getName();
+                status.set("lune.status.find.digging_prospecting_stairs", com.etka.lune.bot.command.Param.Choice.optionLabel(direction.getName()));
             }
         }
 
@@ -330,8 +344,7 @@ public final class FindTask implements Task {
                 prospectRejected.add(attempted);
             }
             prospectRefusals++;
-            status = "stairs " + (attempted == null ? "here" : attempted.getName())
-                    + " refused (" + segmentStatus + "); trying another heading";
+            status.set("lune.status.find.stairs_refused_trying_another_heading", (attempted == null ? Lang.get("lune.status.find.here") : com.etka.lune.bot.command.Param.Choice.optionLabel(attempted.getName())), segmentStatus);
             return TaskStatus.RUNNING;
         }
 

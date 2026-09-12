@@ -1,5 +1,6 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -54,7 +55,8 @@ public final class DirectionalGotoTask implements Task {
     @Override
     public String status() {
         if (delegate == null) {
-            return target == null ? "choosing destination" : "heading to " + describe(target);
+            return target == null ? Lang.get("lune.status.directional_goto.choosing_destination")
+                : Lang.get("lune.status.directional_goto.heading_to", describe(target));
         }
         String detail = delegate.status();
         return "heading " + direction.toLowerCase() + " to " + describe(target)

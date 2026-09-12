@@ -1,6 +1,8 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.knowledge.BiomeScout;
@@ -88,7 +90,7 @@ public final class ExploreTask implements Task {
     private BlockPos found;
     /** The last indexed match, even when it was behind a visible blocker. */
     private BlockPos lastCandidate;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     /** The heading currently being followed, or null before the first choice. */
     private Float committedYaw;
@@ -96,7 +98,9 @@ public final class ExploreTask implements Task {
     private Float previousYaw;
     private Float olderYaw;
     private int stepsOnHeading;
-    private String headingReason = "";
+    private final StatusText headingReason = new StatusText();
+    /** Rebuilt per ask; the heading line is derived, never stored. */
+    private final StatusText travel = new StatusText();
     /** Force one geometric alternative after a route/waypoint was unusable. */
     private boolean tryAlternateHeading;
     /** The last two headings whose routes failed, so the next choice does not re-pick them. */
@@ -150,11 +154,17 @@ public final class ExploreTask implements Task {
 
     @Override
     public String name() {
-        return "Explore";
+        return Lang.get("lune.task.explore.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Explore");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -200,7 +210,7 @@ public final class ExploreTask implements Task {
         previousYaw = null;
         olderYaw = null;
         stepsOnHeading = 0;
-        headingReason = "";
+        headingReason.clear();
         tryAlternateHeading = false;
         blockedYaw = null;
         olderBlockedYaw = null;
@@ -216,7 +226,7 @@ public final class ExploreTask implements Task {
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (targets.isEmpty()) {
-            status = "no targets selected";
+            status.set("lune.status.explore.no_targets_selected");
             return TaskStatus.FAILED;
         }
 
@@ -231,15 +241,15 @@ public final class ExploreTask implements Task {
             BlockPos enRoute = visibleTarget(ctx, TRAVEL_RESCAN_DISTANCE, TRAVEL_SIGHT_CHECKS);
             if (enRoute != null) {
                 stopWalk(ctx);
-                return spotted(ctx, enRoute, "spotted while walking");
+                return spotted(ctx, enRoute, Lang.get("lune.reason.spotted_while_walking"));
             }
 
             TaskStatus result = walk.tick(ctx);
-            status = travelStatus() + " - " + walk.status();
+            status.set("lune.status.detail", travelStatus(), walk.statusLine());
             ctx.debug.intent = "walking to the next " + targetNames() + " scan point";
             ctx.debug.searchAttempt = attempts;
             ctx.debug.searchLimit = maxAttempts;
-            ctx.debug.searchHeading = travelStatus();
+            ctx.debug.searchHeading = travelStatus().text();
             ctx.debug.giveUp = "search stops " + attempts + "/" + maxAttempts;
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
@@ -274,8 +284,7 @@ public final class ExploreTask implements Task {
                 // report the failure now and let the caller pick a different approach entirely,
                 // which is where the boat gets chosen.
                 if (++consecutiveBlocked >= BLOCKED_ROUTES_BEFORE_GIVING_UP) {
-                    status = "blocked " + consecutiveBlocked
-                            + " ways out of here; this needs a different approach";
+                    status.set("lune.status.explore.blocked_ways_out_here_needs_different", consecutiveBlocked);
                     ctx.debug.decide("give up: every way out of this spot is blocked");
                     return TaskStatus.FAILED;
                 }
@@ -287,18 +296,18 @@ public final class ExploreTask implements Task {
             resetScan(ctx);
 
             if (attempts >= maxAttempts) {
-                status = "searched " + attempts + " stops, found nothing";
+                status.set("lune.status.explore.searched_stops_found_nothing", attempts);
                 ctx.debug.decide("give up: search stop limit reached");
                 return TaskStatus.FAILED;
             }
 
-            status = "stopping to look around";
+            status.set("lune.status.explore.stopping_look_around");
             return TaskStatus.RUNNING;
         }
 
         BlockPos seen = findTarget(ctx);
         if (seen != null) {
-            return spotted(ctx, seen, "spotted");
+            return spotted(ctx, seen, Lang.get("lune.reason.spotted"));
         }
 
         if (!scanDone) {
@@ -344,7 +353,7 @@ public final class ExploreTask implements Task {
         ctx.debug.target(name, seen, Vision.inspect(ctx, seen).verdict());
         ctx.debug.intent = "approaching the visible target";
         ctx.debug.decide("target found; stop scanning and approach it");
-        status = how + " " + name + " at " + seen.getX() + ", " + seen.getY() + ", " + seen.getZ();
+        status.set("lune.status.explore.at", how, name, seen.getX(), seen.getY(), seen.getZ());
         return TaskStatus.SUCCESS;
     }
 
@@ -410,7 +419,7 @@ public final class ExploreTask implements Task {
 
     private TaskStatus startWalk(BotContext ctx) {
         if (attempts >= maxAttempts) {
-            status = "searched " + attempts + " stops, found nothing";
+            status.set("lune.status.explore.searched_stops_found_nothing", attempts);
             ctx.debug.decide("give up: search stop limit reached");
             return TaskStatus.FAILED;
         }
@@ -434,7 +443,7 @@ public final class ExploreTask implements Task {
             attempts++;
             tryAlternateHeading = true;
             resetScan(ctx);
-            status = "that way is water; choosing another walkable direction";
+            status.set("lune.status.explore.way_water_choosing_another_walkable");
             return TaskStatus.RUNNING;
         }
 
@@ -445,11 +454,11 @@ public final class ExploreTask implements Task {
         ctx.debug.intent = "walking a committed search heading";
         ctx.debug.searchAttempt = attempts;
         ctx.debug.searchLimit = maxAttempts;
-        ctx.debug.searchHeading = travelStatus();
+        ctx.debug.searchHeading = travelStatus().text();
         ctx.debug.giveUp = "search stops " + attempts + "/" + maxAttempts;
-        ctx.debug.decide("walk " + travelStatus() + "; rescan after reaching "
+        ctx.debug.decide("walk " + travelStatus().text() + "; rescan after reaching "
                 + goalPos.toShortString());
-        status = travelStatus();
+        status.set(travelStatus());
         return TaskStatus.RUNNING;
     }
 
@@ -482,7 +491,7 @@ public final class ExploreTask implements Task {
                     ExplorePolicy.avoidBlocked(Mth.wrapDegrees(base + 90.0F),
                             blockedYaw, olderBlockedYaw),
                     previousYaw, olderYaw));
-            headingReason = "previous route blocked; trying another way";
+            headingReason.set("lune.status.explore.previous_route_blocked");
             stepsOnHeading = 1;
             return committedYaw;
         }
@@ -506,7 +515,7 @@ public final class ExploreTask implements Task {
             committedYaw = rememberHeading(ExplorePolicy.avoidDoublingBack(
                     ExplorePolicy.avoidBlocked(heading.yaw(), blockedYaw, olderBlockedYaw),
                     previousYaw, olderYaw));
-            headingReason = heading.reason();
+            headingReason.set(heading.reason());
             stepsOnHeading = 1;
             return committedYaw;
         }
@@ -518,17 +527,20 @@ public final class ExploreTask implements Task {
         committedYaw = rememberHeading(ExplorePolicy.avoidDoublingBack(
                 ExplorePolicy.avoidBlocked(direction.toYRot(), blockedYaw, olderBlockedYaw),
                 previousYaw, olderYaw));
-        headingReason = "";
+        headingReason.clear();
         stepsOnHeading = 1;
         return committedYaw;
     }
 
-    private String travelStatus() {
+    private StatusText travelStatus() {
         if (committedYaw == null) {
-            return "exploring";
+            return travel.set("lune.status.explore.exploring");
         }
-        String where = "heading " + BiomeScout.compass(committedYaw);
-        return headingReason.isEmpty() ? where : where + " - " + headingReason;
+        String where = BiomeScout.compassKey(committedYaw);
+        return headingReason.isBlank()
+                ? travel.set("lune.status.explore.heading", Lang.get(where))
+                : travel.set("lune.status.explore.heading_because", Lang.get(where),
+                        headingReason);
     }
 
     private BlockPos findTarget(BotContext ctx) {
@@ -541,7 +553,7 @@ public final class ExploreTask implements Task {
         if (areaCheck && !Vision.isPanoramic()
                 && (headScanner.isTurning() || headScanner.isVerticalGlance())) {
             settled = headScanner.tickTurn(ctx);
-            status = headScanner.status();
+            status.set(headScanner.statusLine());
         }
 
         ctx.debug.intent = "scanning loaded blocks for " + targetNames();
@@ -575,7 +587,7 @@ public final class ExploreTask implements Task {
                 Vec3 aim = Vision.blockAimPoint(ctx, candidate);
                 headScanner.finish();
                 ctx.look.lookAt(ctx.player, aim);
-                status = "turning toward " + targetNames() + " behind the current view";
+                status.set("lune.status.explore.turning_toward_behind_current_view", targetNames());
                 ctx.debug.decide("candidate is out of view; turning toward it before widening scan");
                 return null;
             }
@@ -592,14 +604,14 @@ public final class ExploreTask implements Task {
         }
 
         if (areaCheck && !Vision.isPanoramic() && headScanner.advance()) {
-            status = headScanner.status();
+            status.set(headScanner.statusLine());
             return null;
         }
 
         // This look found nothing. Widen it - check the sides, then behind - before giving up on
         // this spot and walking somewhere else, which is the expensive option.
         if (areaCheck && !Vision.isPanoramic() && headScanner.escalate(ctx.player)) {
-            status = "nothing ahead, taking a proper look around";
+            status.set("lune.status.explore.nothing_ahead_taking_proper_look_around");
             return null;
         }
 

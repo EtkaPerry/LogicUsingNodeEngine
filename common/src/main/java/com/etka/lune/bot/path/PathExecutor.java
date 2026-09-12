@@ -1,6 +1,7 @@
 package com.etka.lune.bot.path;
 
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.util.BlockBreaker;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -27,8 +28,6 @@ import java.util.Set;
  */
 public final class PathExecutor {
 
-    /** Must match the pathfinder's own gap reach; a longer hop was never planned. */
-    private static final int MAX_GAP_JUMP = 2;
     /** How many nodes ahead an arrival check may jump, to absorb overshoot and corner-cutting. */
     private static final int LOOKAHEAD = 4;
     /** Ticks without getting closer to the current node before declaring the bot stuck. */
@@ -39,8 +38,6 @@ public final class PathExecutor {
     private static final double CENTRE_RADIUS_SQR = 0.25;
     /** Squared horizontal distance within which we count as standing in the node's column. */
     private static final double COLUMN_RADIUS_SQR = 0.36;
-    /** Only sprint when roughly aimed the way we're travelling. */
-    private static final double SPRINT_MAX_ANGLE = 30.0;
     /** How steeply to aim below the horizon to get the eyes under and start the swim. */
     private static final double DIVE_SLOPE = 0.75;
     /** A normal jump has less than this much fall distance; beyond it, a route has lost its floor. */
@@ -73,8 +70,7 @@ public final class PathExecutor {
     private int noProgressTicks;
     private int fallRecoveryTicks;
     private double bestDistanceToTarget = Double.MAX_VALUE;
-    private double lastRelativeAngle;
-    private String blockedBy = "";
+    private final StatusText blockedBy = new StatusText();
     private boolean unexpectedWaterRecovery;
 
     public PathExecutor(List<BlockPos> path) {
@@ -126,7 +122,8 @@ public final class PathExecutor {
     }
 
     /** Name of the block that triggered {@link Status#NO_TOOL}, for the failure message. */
-    public String getBlockedBy() {
+    /** Why the route stopped, keyed so the owning task keeps the meaning. */
+    public StatusText getBlockedBy() {
         return blockedBy;
     }
 
@@ -135,7 +132,7 @@ public final class PathExecutor {
         if (WaterEscape.tick(ctx)) {
             breaker.stop(ctx);
             noProgressTicks = 0;
-            blockedBy = "escaping to breathable air";
+            blockedBy.set("lune.status.route.escaping_to_air");
             return Status.RUNNING;
         }
         if (path.size() <= 1) {
@@ -148,20 +145,20 @@ public final class PathExecutor {
         if (!allowSwim && player.isInWater()) {
             if (!WaterEscape.hasBreathableExit(ctx.level, player.blockPosition())) {
                 breaker.stop(ctx);
-                blockedBy = "dry route entered water with no safe exit";
+                blockedBy.set("lune.status.route.water_no_safe_exit");
                 return Status.HAZARD;
             }
             WaterEscape.tickToAir(ctx);
             breaker.stop(ctx);
             noProgressTicks = 0;
             unexpectedWaterRecovery = true;
-            blockedBy = "dry route entered water - escaping";
+            blockedBy.set("lune.status.route.water_escaping");
             return Status.RUNNING;
         }
         if (unexpectedWaterRecovery) {
             unexpectedWaterRecovery = false;
             breaker.stop(ctx);
-            blockedBy = "escaped unexpected water - replanning";
+            blockedBy.set("lune.status.route.escaped_water_replanning");
             return Status.REPLAN;
         }
 
@@ -184,7 +181,7 @@ public final class PathExecutor {
         ctx.debug.obstructionPos = null;
         if (routeFluidChanged(ctx)) {
             breaker.stop(ctx);
-            blockedBy = "fluid entered the route - replanning";
+            blockedBy.set("lune.status.route.fluid_replanning");
             return Status.REPLAN;
         }
         Vec3 centre = Vec3.atCenterOf(target);
@@ -206,7 +203,7 @@ public final class PathExecutor {
             steer(player, ctx, recoveryCentre);
             ctx.input.sprint = false;
             ctx.input.jump = false;
-            blockedBy = "unexpected fall; returning to the last safe route block";
+            blockedBy.set("lune.status.route.unexpected_fall");
             if (fallRecoveryTicks++ >= FALL_RECOVERY_TICKS) {
                 return Status.REPLAN;
             }
@@ -236,35 +233,37 @@ public final class PathExecutor {
             }
             if (obstruction != null && !allowBreak) {
                 breaker.stop(ctx);
-                blockedBy = "route blocked by "
-                        + ctx.level.getBlockState(obstruction).getBlock().getName().getString();
+                blockedBy.set("lune.status.route.blocked_by",
+                        ctx.level.getBlockState(obstruction).getBlock().getName().getString());
                 ctx.debug.decide("route blocked; replanning without digging");
                 return Status.REPLAN;
             }
             if (obstruction != null && !allowSwim
                     && MovementHelper.wouldOpenWater(ctx.level, obstruction)) {
                 breaker.stop(ctx);
-                blockedBy = "refusing to open water into a dry route";
+                blockedBy.set("lune.status.route.refusing_open_water");
                 return Status.HAZARD;
             }
             if (obstruction != null && MovementHelper.nearLava(ctx.level, obstruction)
                     && !ctx.player.isInLava()) {
                 breaker.stop(ctx);
-                blockedBy = "refusing to dig beside lava";
+                blockedBy.set("lune.status.route.refusing_dig_beside_lava");
                 return Status.HAZARD;
             }
             if (obstruction != null && !breaker.isOutOfReach(ctx, obstruction)) {
                 BlockBreaker.Progress progress = breaker.tick(ctx, obstruction, true);
                 if (progress == BlockBreaker.Progress.NO_TOOL) {
-                    blockedBy = ctx.level.getBlockState(obstruction).getBlock().getName().getString();
-                    ctx.debug.breaking(obstruction, blockedBy, "no suitable tool");
-                    ctx.debug.decide("cannot clear " + blockedBy + "; route needs a better tool");
+                    blockedBy.set("lune.status.route.needs_better_tool",
+                            ctx.level.getBlockState(obstruction).getBlock().getName().getString());
+                    ctx.debug.breaking(obstruction, blockedBy.text(), "no suitable tool");
+                    ctx.debug.decide("cannot clear " + blockedBy.text()
+                            + "; route needs a better tool");
                     return Status.NO_TOOL;
                 }
                 if (progress == BlockBreaker.Progress.HAZARD) {
-                    blockedBy = breaker.getFailureReason();
-                    ctx.debug.breaking(obstruction, ctx.debug.breakBlock, blockedBy);
-                    ctx.debug.decide("stopped breaking: " + blockedBy);
+                    blockedBy.set(breaker.getFailureReason());
+                    ctx.debug.breaking(obstruction, ctx.debug.breakBlock, blockedBy.text());
+                    ctx.debug.decide("stopped breaking: " + blockedBy.text());
                     return Status.HAZARD;
                 }
                 if (progress == BlockBreaker.Progress.WORKING) {
@@ -319,8 +318,7 @@ public final class PathExecutor {
         Vec3 lookCentre = Vec3.atCenterOf(path.get(Math.min(index + 1, path.size() - 1)));
         look(ctx, diveAim(player, lookCentre), player.isInWater());
 
-        lastRelativeAngle = steer(player, ctx, steerTarget);
-        boolean moving = ctx.input.forward || ctx.input.backward || ctx.input.left || ctx.input.right;
+        steer(player, ctx, steerTarget);
 
         boolean headroom = MovementHelper.isPassable(ctx.level, feet.above())
                 && MovementHelper.isPassable(ctx.level, feet.above(2));
@@ -332,15 +330,26 @@ public final class PathExecutor {
         if (allowJump && player.onGround() && !descending && headroom && climbing) {
             ctx.input.jump = true;
         }
-        // Clearing a gap. The pathfinder can now plan a jump across a hole, but the node on the far
-        // side is at the same height as this one, so none of the tests above press anything and the
-        // bot would simply walk into the hole. A node more than one block away horizontally is only
-        // ever reachable by jumping, so treat the distance itself as the instruction - and sprint,
-        // because a standing jump does not clear two blocks.
-        if (allowJump && player.onGround() && !descending && headroom
-                && isGapJump(ctx, feet, target)) {
+        // Clearing a gap. The pathfinder can plan a jump across a hole, but the node on the far side
+        // is at the same height as this one or lower, so none of the tests above press anything and
+        // the bot would simply walk into the hole. A node more than one block away horizontally is
+        // only ever reachable by jumping, so treat the distance itself as the instruction.
+        //
+        // `descending` is deliberately not consulted here. The search plans gap jumps that land a
+        // block low as well as level ones - see AStarPathfinder.relaxGapJumps, which tries drop 0
+        // and drop 1 - and gating this on `!descending` meant the executor pressed nothing for
+        // exactly the half of them that drop. The bot walked into the hole it had planned to jump,
+        // every time, which is why a two-block gap looked like something it could not do.
+        // isGapJump does its own vertical check, so nothing here needs to repeat it.
+        boolean gapJump = isGapJump(ctx, feet, target);
+        // A standing jump does not clear two blocks; a sprinting one does. But pressing sprint on
+        // the take-off tick is not the same as arriving with speed - the boost vanilla adds is
+        // proportional to nothing, it is the run-up that carries you - so wait a tick or two for the
+        // run rather than committing to a hop that was always going to come up short. Steering
+        // continues meanwhile, which is what builds the speed being waited for.
+        if (GapJumpPolicy.shouldTakeOff(allowJump, player.onGround(), headroom, gapJump,
+                horizontalSpeed(player))) {
             ctx.input.jump = true;
-            ctx.input.sprint = true;
         }
         if (allowJump && onClimbable && climbing) {
             ctx.input.jump = true;
@@ -370,16 +379,14 @@ public final class PathExecutor {
         // happens on the way in - and then keeps it for as long as the body is in water, so the
         // bot goes on swimming properly even once the jump above has brought it back to the
         // surface. Refusing to sprint in water gave up that speed on every crossing.
-        // A swimmer can keep the crawl stroke while turning. Applying the land steering-angle
-        // gate here drops sprint at the edge of a river exactly when the route is still trying to
-        // settle its heading, leaving only diagonal paddling against the bank and making a valid
-        // water route look stalled. Deliberate water routes should keep sprint through that turn;
-        // the look controller still eases the yaw and the waypoint check still decides progress.
+        //
+        // The rule itself lives in SprintPolicy; all that happens here is reading the situation off
+        // the player and the route.
         boolean waterTravel = player.isInWater() || MovementHelper.isWater(ctx.level, target);
-        ctx.input.sprint = allowSprint && moving
-                && (player.onGround() || player.isInWater())
-                && !climbing && !descending
-                && (waterTravel || Math.abs(lastRelativeAngle) < SPRINT_MAX_ANGLE);
+        int dropAhead = Math.max(0, feetY - target.getY());
+        ctx.input.sprint = SprintPolicy.shouldSprint(new SprintPolicy.Movement(
+                allowSprint, ctx.input.forward, player.onGround(), player.isInWater(), waterTravel,
+                onClimbable && !player.onGround(), climbing, descending, dropAhead, 0.0));
 
         updateProgress(player, centre);
         return noProgressTicks > STUCK_TICKS ? Status.STUCK : Status.RUNNING;
@@ -426,6 +433,12 @@ public final class PathExecutor {
         }
     }
 
+    /** Ground speed only; the vertical component says nothing about clearing a gap. */
+    private static double horizontalSpeed(LocalPlayer player) {
+        Vec3 velocity = player.getDeltaMovement();
+        return Math.hypot(velocity.x, velocity.z);
+    }
+
     private static boolean unexpectedFall(LocalPlayer player, BlockPos target, int feetY) {
         return !player.onGround()
                 && !player.isInWater()
@@ -459,28 +472,13 @@ public final class PathExecutor {
     private static boolean isGapJump(BotContext ctx, BlockPos feet, BlockPos target) {
         int dx = target.getX() - feet.getX();
         int dz = target.getZ() - feet.getZ();
-        int distance = Math.abs(dx) + Math.abs(dz);
-        // Far enough to need a jump, close enough to be one the search actually planned.
-        //
-        // Distance alone is not enough: a bot that has stalled or drifted off its route is also
-        // "far from the next node", and treating that as a jump makes it hop on the spot - which
-        // is what a journal showed as y bobbing between 62 and 65 with waypoint stalls, and looks
-        // exactly like pointless digging on a hillside.
-        if (distance <= 1 || distance > MAX_GAP_JUMP + 1
-                || target.getY() > feet.getY()
-                || (dx != 0 && dz != 0)) {
-            return false;
-        }
-        // And there has to be a real hole. If the ground between is solid this is ordinary walking,
-        // however far away the node is.
         int stepX = Integer.signum(dx);
         int stepZ = Integer.signum(dz);
-        for (int step = 1; step < distance; step++) {
-            if (MovementHelper.isSolidFloor(ctx.level, feet.offset(stepX * step, -1, stepZ * step))) {
-                return false;
-            }
-        }
-        return true;
+        // The shape of the move is GapJumpPolicy's to decide, so that what the executor acts on and
+        // what the search plans cannot drift apart again. All this supplies is the world lookup.
+        return GapJumpPolicy.isGap(dx, target.getY() - feet.getY(), dz,
+                step -> MovementHelper.isSolidFloor(ctx.level,
+                        feet.offset(stepX * step, -1, stepZ * step)));
     }
 
     private static Vec3 diveAim(LocalPlayer player, Vec3 lookCentre) {
@@ -564,34 +562,9 @@ public final class PathExecutor {
     /**
      * Presses the key combination that moves toward {@code target} in world space, regardless of
      * facing.
-     *
-     * @return the target's bearing relative to the player, in degrees; 0 is straight ahead
      */
-    private static double steer(LocalPlayer player, BotContext ctx, Vec3 target) {
-        double dx = target.x - player.getX();
-        double dz = target.z - player.getZ();
-        if (dx * dx + dz * dz < 1.0E-4) {
-            // Already on the spot horizontally. Pressing anything here would be a guess.
-            return 0.0;
-        }
-
-        // Minecraft yaw: 0 faces +Z, and increasing yaw turns right.
-        float desiredYaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
-        double relative = Mth.wrapDegrees(desiredYaw - player.getYRot());
-
-        if (Math.abs(relative) < 67.5) {
-            ctx.input.forward = true;
-        }
-        if (Math.abs(relative) > 112.5) {
-            ctx.input.backward = true;
-        }
-        if (relative >= 22.5 && relative <= 157.5) {
-            ctx.input.right = true;
-        }
-        if (relative <= -22.5 && relative >= -157.5) {
-            ctx.input.left = true;
-        }
-        return relative;
+    private static void steer(LocalPlayer player, BotContext ctx, Vec3 target) {
+        ctx.input.steerToward(player, target);
     }
 
     /**

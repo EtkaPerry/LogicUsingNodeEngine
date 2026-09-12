@@ -1,6 +1,7 @@
 package com.etka.lune.client.gui.widget;
 
 import com.etka.lune.config.BotConfig;
+import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.task.TaskNode;
 
 import java.util.Map;
@@ -95,6 +96,8 @@ public final class NodePalette {
      */
     // Resolved once. This is asked for on every card and every chip of every frame, and both the
     // accent table and the shaded border and header used to be built fresh on each of those calls.
+    private static final int[] ORANGE = {
+            LuneScreen.ACCENT_HOVER, LuneScreen.ACCENT, 0xFFE46F00, 0xFFB85F1A};
     private static final int[] SLATE = {0xFFE0A83C, 0xFF57A8E0, 0xFFA07BD8, 0xFF8FA0B4};
     private static final int[] BLUE = {0xFF7FC4FF, 0xFF57A8E0, 0xFF4E8CC4, 0xFF6E93B8};
     private static final int[] PURPLE = {0xFFCBAAFF, 0xFFA07BD8, 0xFF8A64C4, 0xFF9186B8};
@@ -102,6 +105,7 @@ public final class NodePalette {
     private static final int[] GREEN = {0xFFA8E5BC, 0xFF6FBF87, 0xFF4F9E68, 0xFF86B394};
 
     private static final Map<String, Colours[]> THEMES = Map.of(
+            BotConfig.THEME_ORANGE, build(ORANGE),
             BotConfig.THEME_SLATE, build(SLATE),
             BotConfig.THEME_BLUE, build(BLUE),
             BotConfig.THEME_PURPLE, build(PURPLE),
@@ -118,8 +122,8 @@ public final class NodePalette {
     }
 
     public static Colours of(Role role, String theme) {
-        Colours[] resolved = THEMES.getOrDefault(theme == null ? BotConfig.THEME_SLATE : theme,
-                THEMES.get(BotConfig.THEME_SLATE));
+        Colours[] resolved = THEMES.getOrDefault(theme == null ? BotConfig.THEME_ORANGE : theme,
+                THEMES.get(BotConfig.THEME_ORANGE));
         return resolved[switch (role) {
             case SOURCE -> 0;
             case LOGIC -> 1;

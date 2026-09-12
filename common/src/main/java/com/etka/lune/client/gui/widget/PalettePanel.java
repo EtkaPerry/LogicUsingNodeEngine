@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.widget;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.command.CommandDef;
 import com.etka.lune.bot.command.CommandRegistry;
 import com.etka.lune.client.gui.LuneScreen;
@@ -22,6 +23,9 @@ import java.util.function.Consumer;
  * <p>
  * Commands are grouped into collapsible folders and blueprints have their own folder. This keeps
  * the palette usable as the command library grows without changing how a node is inserted.
+ * <p>
+ * While a training puzzle is open the whole library is replaced by that lesson's three cards. The
+ * restriction is the puzzle: offered everything, "which card is missing" is a search problem.
  */
 public class PalettePanel extends AbstractWidget {
 
@@ -33,6 +37,29 @@ public class PalettePanel extends AbstractWidget {
     private static final int FOLDER_BG = 0xFF343440;
     private static final int COMMAND_BG = 0xFF1E1E24;
     private static final int BLUEPRINT_BG = 0xFF2A2A35;
+    /**
+     * The one folder shown while a puzzle is open.
+     *
+     * <p>A method rather than a constant: a constant is built at class-load, before the language
+     * file exists, and would freeze whatever it read then. Everything that names this folder and
+     * everything that recognises it go through here, so the two always agree.</p>
+     */
+    /**
+     * What a folder is called on screen.
+     *
+     * <p>Folders are grouped by their name and the registry hands that name back in English, so
+     * the name stays as it is and only the drawing is looked up. A folder nobody has written a
+     * line for reads as its own name.</p>
+     */
+    private static String sectionTitle(String name) {
+        return Lang.getOr("lune.gui.section."
+                + name.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]+", "_")
+                        .replaceAll("^_+|_+$", ""), name);
+    }
+
+    private static String puzzleSection() {
+        return Lang.get("lune.gui.palette.puzzle_section");
+    }
 
     public interface Item {}
 
@@ -42,12 +69,23 @@ public class PalettePanel extends AbstractWidget {
 
     private record Section(String name, List<Item> items) {}
 
+    /**
+     * One drawn row - a folder header or a tile - with the rectangle it occupies.
+     *
+     * <p>Drawing and hit-testing both walk this. They used to each compute the same running y from
+     * the same four constants, which meant any change to the layout had to be made twice and a
+     * missed one would land every click in the folder on the row above it.</p>
+     */
+    private record Row(Section section, Item item, int top, int height) {}
+
     private final List<Section> sections = new ArrayList<>();
     private final List<Section> filteredSections = new ArrayList<>();
     private final Map<String, Boolean> expanded = new LinkedHashMap<>();
     private final Consumer<Item> onSelect;
     /** Called when a tile is dropped outside the palette, with the screen point it landed on. */
     private final DropTarget onDrop;
+    /** While a puzzle is open, the only command ids the palette will offer. Null the rest of the time. */
+    private List<String> puzzleChoices;
     private int scroll;
     private String filter = "";
     /** The tile the pointer picked up, kept until the button comes back up. */
@@ -67,6 +105,22 @@ public class PalettePanel extends AbstractWidget {
         this.onSelect = onSelect;
         this.onDrop = onDrop;
         rebuild();
+    }
+
+    /**
+     * Narrows the palette to one lesson's three cards, or restores the full library when given null.
+     *
+     * <p>The restriction is the puzzle. Offered the whole library, "which card is missing" is a
+     * search problem; offered three, it is the question the lesson meant to ask.</p>
+     */
+    public void setPuzzleChoices(List<String> commandIds) {
+        puzzleChoices = commandIds == null ? null : List.copyOf(commandIds);
+        scroll = 0;
+        applyFilter();
+    }
+
+    public boolean inPuzzle() {
+        return puzzleChoices != null;
     }
 
     private void rebuild() {
@@ -89,20 +143,20 @@ public class PalettePanel extends AbstractWidget {
             List<Item> fromRegistry = grouped.remove(name);
             List<Item> groupedItems = "General".equals(name)
                     ? List.<Item>of(
-                    new General(TaskNode.START_COMMAND, "START",
-                            "Explicit task entry; connect it to the first action"),
-                    new General(TaskNode.ALWAYS_COMMAND, "Always",
-                            "Keep the connected branch powered, every tick"),
-                    new General(TaskNode.PULSE_COMMAND, "Pulse",
-                            "Send one pulse every few seconds, like a clock"),
-                    new General(TaskNode.SIGNAL_RELAY_COMMAND, "Signal Relay",
-                            "Forward an incoming pulse through configurable numbered outputs"),
-                    new General(TaskNode.OBSERVER_COMMAND, "Observer",
-                            "Watch a card and pulse whenever its power changes"),
-                    new General(TaskNode.BUTTON_COMMAND, "Button",
-                            "Send one manual pulse from the editor"),
-                    new General(TaskNode.END_COMMAND, "End",
-                            "Consume a pulse and finish that circuit"))
+                    new General(TaskNode.START_COMMAND, Lang.get("lune.gui.tasks.start"),
+                            Lang.get("lune.gui.palette.explicit_task_entry_connect_first_action")),
+                    new General(TaskNode.ALWAYS_COMMAND, Lang.get("lune.gui.tasks.always"),
+                            Lang.get("lune.gui.palette.keep_connected_branch_powered_every_tick")),
+                    new General(TaskNode.PULSE_COMMAND, Lang.get("lune.gui.tasks.pulse"),
+                            Lang.get("lune.gui.palette.send_one_pulse_every_few_seconds_like")),
+                    new General(TaskNode.SIGNAL_RELAY_COMMAND, Lang.get("lune.gui.tasks.signal_relay"),
+                            Lang.get("lune.gui.palette.forward_incoming_pulse_through")),
+                    new General(TaskNode.OBSERVER_COMMAND, Lang.get("lune.gui.palette.observer"),
+                            Lang.get("lune.gui.palette.watch_card_pulse_whenever_power_changes")),
+                    new General(TaskNode.BUTTON_COMMAND, Lang.get("lune.gui.tasks.button"),
+                            Lang.get("lune.gui.palette.send_one_manual_pulse_from_editor")),
+                    new General(TaskNode.END_COMMAND, Lang.get("lune.gui.palette.end"),
+                            Lang.get("lune.gui.palette.consume_pulse_finish_circuit")))
                     : fromRegistry;
             if (groupedItems != null && !groupedItems.isEmpty()) {
                 sections.add(new Section(name, groupedItems));
@@ -138,6 +192,21 @@ public class PalettePanel extends AbstractWidget {
     private void applyFilter() {
         filteredSections.clear();
 
+        if (puzzleChoices != null) {
+            // The lesson's own order is kept: it is deliberately not "answer first".
+            List<Item> offered = new ArrayList<>();
+            for (String id : puzzleChoices) {
+                Item item = itemById(id);
+                if (item != null) {
+                    offered.add(item);
+                }
+            }
+            if (!offered.isEmpty()) {
+                filteredSections.add(new Section(puzzleSection(), offered));
+            }
+            return;
+        }
+
         if (!filter.isEmpty()) {
             // Search is represented as one folder so the accordion rule remains true even when
             // matching nodes belong to several normal folders.
@@ -150,7 +219,7 @@ public class PalettePanel extends AbstractWidget {
                 }
             }
             if (!matchingItems.isEmpty()) {
-                filteredSections.add(new Section("Search results", matchingItems));
+                filteredSections.add(new Section(Lang.get("lune.gui.block.search_results"), matchingItems));
             }
             return;
         }
@@ -166,6 +235,19 @@ public class PalettePanel extends AbstractWidget {
         }
     }
 
+    /** Finds an already-built tile by its command id, so a puzzle reuses the library's own wording. */
+    private Item itemById(String id) {
+        for (Section section : sections) {
+            for (Item item : section.items()) {
+                if (item instanceof Command command && command.id().equals(id)
+                        || item instanceof General general && general.id().equals(id)) {
+                    return item;
+                }
+            }
+        }
+        return null;
+    }
+
     private boolean matches(Item item) {
         String label = item instanceof Command c
                 ? c.name() + " " + c.id() + " " + c.description()
@@ -175,8 +257,43 @@ public class PalettePanel extends AbstractWidget {
         return label.toLowerCase().contains(filter);
     }
 
+    /**
+     * Two folders open themselves: the one holding search results, and the one holding a puzzle's
+     * three candidate cards.
+     *
+     * <p>Compared against the same expression that named them rather than against the English
+     * those expressions happen to produce. A literal here would quietly stop matching the first
+     * time somebody played in another language, and the folder would open closed.</p>
+     */
     private boolean isExpanded(Section section) {
-        return expanded.getOrDefault(section.name(), "Search results".equals(section.name()));
+        return expanded.getOrDefault(section.name(),
+                Lang.get("lune.gui.block.search_results").equals(section.name())
+                        || puzzleSection().equals(section.name()));
+    }
+
+    // --- layout --------------------------------------------------------------
+
+    /** The y the folder list stops at. */
+    private int contentBottom() {
+        return getY() + getHeight() - PADDING;
+    }
+
+    /** Every folder header and tile, in draw order, positioned for the current scroll. */
+    private List<Row> rows() {
+        List<Row> rows = new ArrayList<>();
+        int y = getY() + PADDING + 14 - scroll;
+        for (Section section : filteredSections) {
+            rows.add(new Row(section, null, y, FOLDER_H));
+            y += FOLDER_H + GAP;
+            if (!isExpanded(section)) {
+                continue;
+            }
+            for (Item item : section.items()) {
+                rows.add(new Row(section, item, y, TILE_H));
+                y += TILE_H + GAP;
+            }
+        }
+        return rows;
     }
 
     private int contentHeight() {
@@ -200,111 +317,109 @@ public class PalettePanel extends AbstractWidget {
         return Math.max(0, contentHeight() - getHeight());
     }
 
+    // --- drawing -------------------------------------------------------------
+
     @Override
     protected void extractWidgetRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float partialTick) {
         extractor.enableScissor(getX(), getY(), getX() + getWidth(), getY() + getHeight());
         var text = extractor.textRenderer();
         text.accept(getX() + PADDING, getY() + PADDING,
-                Component.literal("Click a node to add").withColor(LuneScreen.ACCENT));
+                Component.literal(Lang.get(inPuzzle() ? "lune.gui.palette.puzzle_hint" : "lune.gui.palette.add_hint"))
+                        .withColor(LuneScreen.ACCENT));
 
-        int contentTop = getY() + PADDING + 14;
-        int y = contentTop - scroll;
-        for (Section section : filteredSections) {
-            int folderTop = Math.max(y, getY() + PADDING);
-            int folderBottom = Math.min(y + FOLDER_H, getY() + getHeight() - PADDING);
-            if (folderTop < folderBottom) {
-                boolean hovered = mouseX >= getX() + PADDING && mouseX < getX() + getWidth() - PADDING
-                        && mouseY >= y && mouseY < y + FOLDER_H;
-                int bg = hovered ? TILE_HOVER : FOLDER_BG;
-                extractor.fill(getX() + PADDING, folderTop, getX() + getWidth() - PADDING, folderBottom, bg);
-                extractor.fill(getX() + PADDING, folderTop, getX() + getWidth() - PADDING,
-                        folderTop + 1, LuneScreen.PANEL_BORDER);
-                String marker = isExpanded(section) ? "v " : "> ";
-                text.accept(getX() + PADDING + 5, y + 6,
-                        Component.literal(marker + section.name() + " (" + section.items().size() + ")")
-                                .withColor(LuneScreen.ACCENT));
-            }
-            y += FOLDER_H + GAP;
-
-            if (!isExpanded(section)) {
+        int left = getX() + PADDING;
+        int right = getX() + getWidth() - PADDING;
+        for (Row row : rows()) {
+            int top = Math.max(row.top(), getY() + PADDING);
+            int bottom = Math.min(row.top() + row.height(), contentBottom());
+            if (top >= bottom) {
                 continue;
             }
-            for (Item item : section.items()) {
-                int tileTop = Math.max(y, getY() + PADDING);
-                int tileBottom = Math.min(y + TILE_H, getY() + getHeight() - PADDING);
-                if (tileTop < tileBottom) {
-                    boolean hovered = mouseX >= getX() + PADDING && mouseX < getX() + getWidth() - PADDING
-                            && mouseY >= y && mouseY < y + TILE_H;
-                    int bg = item instanceof Blueprint ? BLUEPRINT_BG : COMMAND_BG;
-                    if (item instanceof General) {
-                        bg = 0xFF51431E;
-                    }
-                    if (hovered) {
-                        bg = TILE_HOVER;
-                    }
-
-                    extractor.fill(getX() + PADDING, tileTop, getX() + getWidth() - PADDING, tileBottom, bg);
-                    extractor.fill(getX() + PADDING, tileTop, getX() + getWidth() - PADDING,
-                            tileTop + 1, LuneScreen.PANEL_BORDER);
-                    extractor.fill(getX() + PADDING, tileBottom - 1, getX() + getWidth() - PADDING,
-                            tileBottom, LuneScreen.PANEL_BORDER);
-
-                    String label = item instanceof Command c ? c.name()
-                            : item instanceof General g ? g.name() : ((Blueprint) item).name();
-                    int colour = item instanceof Blueprint ? 0xFFFF9DE7
-                            : item instanceof General ? 0xFFFFD15C : LuneScreen.TEXT;
-                    int textY = y + 6;
-                    if (textY >= getY() + PADDING && textY + 8 <= getY() + getHeight() - PADDING) {
-                        text.accept(getX() + PADDING + 5, textY,
-                                Component.literal(label).withColor(colour));
-                    }
-                }
-                y += TILE_H + GAP;
-                if (y - scroll > getY() + getHeight()) {
-                    break;
-                }
-            }
-            if (y - scroll > getY() + getHeight()) {
-                break;
+            boolean hovered = mouseX >= left && mouseX < right
+                    && mouseY >= row.top() && mouseY < row.top() + row.height()
+                    && mouseY >= getY() + PADDING && mouseY < contentBottom();
+            if (row.item() == null) {
+                drawFolder(extractor, text, row, left, right, top, bottom, hovered);
+            } else {
+                drawTile(extractor, text, row, left, right, top, bottom, hovered);
             }
         }
+
         extractor.disableScissor();
     }
 
+    private void drawFolder(GuiGraphicsExtractor extractor, net.minecraft.client.gui.ActiveTextCollector text,
+                            Row row, int left, int right, int top, int bottom, boolean hovered) {
+        extractor.fill(left, top, right, bottom, hovered ? TILE_HOVER : FOLDER_BG);
+        extractor.fill(left, top, right, top + 1, LuneScreen.PANEL_BORDER);
+        String marker = isExpanded(row.section()) ? "v " : "> ";
+        int textY = row.top() + 6;
+        if (textY >= getY() + PADDING && textY + 8 <= contentBottom()) {
+            text.accept(left + 5, textY,
+                    Component.literal(marker + sectionTitle(row.section().name())
+                            + " (" + row.section().items().size() + ")").withColor(LuneScreen.ACCENT));
+        }
+    }
+
+    private void drawTile(GuiGraphicsExtractor extractor, net.minecraft.client.gui.ActiveTextCollector text,
+                          Row row, int left, int right, int top, int bottom, boolean hovered) {
+        Item item = row.item();
+        int bg = item instanceof Blueprint ? BLUEPRINT_BG : COMMAND_BG;
+        if (item instanceof General) {
+            bg = 0xFF51431E;
+        }
+        if (hovered) {
+            bg = TILE_HOVER;
+        }
+        extractor.fill(left, top, right, bottom, bg);
+        extractor.fill(left, top, right, top + 1, LuneScreen.PANEL_BORDER);
+        extractor.fill(left, bottom - 1, right, bottom, LuneScreen.PANEL_BORDER);
+
+        String label = item instanceof Command c ? c.name()
+                : item instanceof General g ? g.name() : ((Blueprint) item).name();
+        int colour = item instanceof Blueprint ? 0xFFFF9DE7
+                : item instanceof General ? 0xFFFFD15C : LuneScreen.TEXT;
+        int textY = row.top() + 6;
+        if (textY >= getY() + PADDING && textY + 8 <= contentBottom()) {
+            text.accept(left + 5, textY, Component.literal(label).withColor(colour));
+        }
+    }
+
+    // --- input ---------------------------------------------------------------
+
     @Override
     public void onClick(MouseButtonEvent event, boolean doubleClick) {
-        int y = getY() + PADDING + 14 - scroll;
-        for (Section section : filteredSections) {
-            if (event.y() >= y && event.y() < y + FOLDER_H
-                    && event.x() >= getX() + PADDING && event.x() < getX() + getWidth() - PADDING) {
-                if (filter.isEmpty()) {
+        int left = getX() + PADDING;
+        int right = getX() + getWidth() - PADDING;
+        if (event.x() < left || event.x() >= right) {
+            return;
+        }
+        if (event.y() < getY() + PADDING || event.y() >= contentBottom()) {
+            return;
+        }
+
+        for (Row row : rows()) {
+            if (event.y() < row.top() || event.y() >= row.top() + row.height()) {
+                continue;
+            }
+            if (row.item() == null) {
+                if (filter.isEmpty() && !inPuzzle()) {
                     // Accordion behavior: selecting a folder makes it the only open folder. The
                     // selected folder stays open even when it was already open.
                     expanded.replaceAll((name, ignored) -> false);
-                    expanded.put(section.name(), true);
+                    expanded.put(row.section().name(), true);
                     scroll = Math.clamp(scroll, 0, maxScroll());
-                    return;
                 }
-                // Search results are intentionally kept in one open folder.
+                // Search results and the puzzle folder are intentionally kept open.
                 return;
             }
-            y += FOLDER_H + GAP;
-            if (!isExpanded(section)) {
-                continue;
-            }
-            for (Item item : section.items()) {
-                if (event.y() >= y && event.y() < y + TILE_H
-                        && event.x() >= getX() + PADDING && event.x() < getX() + getWidth() - PADDING) {
-                    // Picked up rather than added straight away: whether this is a click or a drag
-                    // is not known until the button comes back up.
-                    dragging = item;
-                    dragX = (int) event.x();
-                    dragY = (int) event.y();
-                    dragMoved = false;
-                    return;
-                }
-                y += TILE_H + GAP;
-            }
+            // Picked up rather than added straight away: whether this is a click or a drag
+            // is not known until the button comes back up.
+            dragging = row.item();
+            dragX = (int) event.x();
+            dragY = (int) event.y();
+            dragMoved = false;
+            return;
         }
     }
 

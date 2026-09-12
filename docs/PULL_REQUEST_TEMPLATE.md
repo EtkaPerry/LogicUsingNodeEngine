@@ -16,7 +16,7 @@ Fixes #<!-- issue number, or delete this line -->
 - [ ] Bug fix — the bot did the wrong thing and now does the right thing
 - [ ] Behaviour change — the bot did something reasonable and now does something better
 - [ ] New task or command
-- [ ] Routine / node editor change
+- [ ] Task / node editor change
 - [ ] Interface (panel, tabs, mascot, overlay)
 - [ ] Performance — the same behaviour, cheaper
 - [ ] Refactor — no behaviour change at all
@@ -34,7 +34,7 @@ Fixes #<!-- issue number, or delete this line -->
 - [ ] Vision, scanning and target choice (`bot/util`, `bot/catalog`)
 - [ ] Knowledge and memory (`bot/knowledge`, `bot/memory`)
 - [ ] Learning (`bot/learning`, `lune-learning.json`)
-- [ ] Routines (`routine`)
+- [ ] Tasks (`Task`)
 - [ ] Interface (`client/gui`)
 - [ ] Config (`config`)
 - [ ] Waypoints (`waypoint`)
@@ -88,7 +88,7 @@ Minecraft version: <!-- e.g. 26.1.2 -->
 
 ## Compatibility
 
-- [ ] Existing configs, routines, waypoints and learning profiles still load
+- [ ] Existing configs, Tasks, waypoints and learning profiles still load
 - [ ] This changes a saved format <!-- if so, say what happens to an old file -->
 
 ## Anything you are unsure about

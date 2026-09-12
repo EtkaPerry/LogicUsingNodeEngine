@@ -1,5 +1,7 @@
 package com.etka.lune.client.gui;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.client.gui.tab.AboutTab;
 import com.etka.lune.client.gui.tab.ConfigTab;
 import com.etka.lune.client.gui.tab.MainTab;
 import com.etka.lune.client.gui.tab.TasksTab;
@@ -7,7 +9,10 @@ import com.etka.lune.client.gui.tab.WaypointsTab;
 import com.etka.lune.client.gui.mascot.MascotAdvisor;
 import com.etka.lune.client.gui.mascot.MascotWidget;
 import com.etka.lune.client.gui.widget.BlockPicker;
+import com.etka.lune.client.gui.widget.NamePrompt;
+import com.etka.lune.client.gui.widget.RecipePicker;
 import com.etka.lune.client.gui.widget.InventoryPicker;
+import com.etka.lune.client.gui.widget.TrainingScreen;
 import com.mojang.blaze3d.platform.Window;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -37,7 +42,15 @@ public class LuneScreen extends Screen {
     public static final int PANEL_BORDER = 0xFF3A3A42;
     public static final int TEXT = 0xFFE0E0E0;
     public static final int TEXT_DIM = 0xFF8A8A94;
-    public static final int ACCENT = 0xFF4C9EFF;
+    /** The default Lune primary colour: #ff8811. */
+    public static final int ACCENT = 0xFFFF8811;
+    /** A lighter primary shade for selected outlines and high-emphasis states. */
+    public static final int ACCENT_HOVER = 0xFFFFB866;
+    /** A dark primary shade for hover surfaces that need contrast with the accent. */
+    public static final int ACCENT_DARK = 0xFFC86400;
+    /** Transparent primary shades used for selected rows and splitter glows. */
+    public static final int ACCENT_SELECTION = 0x50FF8811;
+    public static final int ACCENT_GLOW = 0x18FF8811;
 
     private final TabManager tabManager = new TabManager(this::addRenderableWidget, this::removeWidget);
 
@@ -45,12 +58,23 @@ public class LuneScreen extends Screen {
     private final TasksTab tasksTab = new TasksTab();
     private final ConfigTab configTab = new ConfigTab();
     private final WaypointsTab waypointsTab = new WaypointsTab();
+    private final AboutTab aboutTab = new AboutTab();
 
     private final BlockPicker blockPicker = new BlockPicker();
     private final InventoryPicker inventoryPicker = new InventoryPicker(0, 0, 10, 10);
+    private final RecipePicker recipePicker = new RecipePicker();
+    private final NamePrompt namePrompt = new NamePrompt();
+    private final TrainingScreen trainingScreen = new TrainingScreen();
     private final MascotWidget mascot = new MascotWidget();
 
     private TabNavigationBar navBar;
+
+    /**
+     * Where the pointer is said to be while a popup covers the panel. Far enough outside any
+     * widget that every bounds check answers no, rather than a flag each of them would have to
+     * remember to consult.
+     */
+    private static final int POINTER_AWAY = -10_000;
 
     /** Scale the menu draws at, and the two conversions derived from it. */
     private int menuScale = 1;
@@ -60,7 +84,7 @@ public class LuneScreen extends Screen {
     private double menuPixelsPerGamePixel = 1.0;
 
     public LuneScreen() {
-        super(Component.literal("Lune"));
+        super(Component.literal(Lang.get("lune.gui.lune.title")));
     }
 
     @Override
@@ -69,14 +93,20 @@ public class LuneScreen extends Screen {
         // Register first for pointer priority; rendering is manual so Lune still appears above tabs.
         addWidget(mascot);
         navBar = addRenderableWidget(TabNavigationBar.builder(tabManager, this.width)
-                .addTabs(mainTab, tasksTab, waypointsTab, configTab)
+                .addTabs(mainTab, tasksTab, waypointsTab, configTab, aboutTab)
                 .build());
         mainTab.setTaskEditorOpener(this::openTaskEditor);
         navBar.selectTab(0, false);
         addRenderableWidget(blockPicker);
         addRenderableWidget(inventoryPicker);
+        addRenderableWidget(recipePicker);
+        addRenderableWidget(namePrompt);
+        addRenderableWidget(trainingScreen);
         tasksTab.setBlockPicker(blockPicker);
         tasksTab.setInventoryPicker(inventoryPicker);
+        tasksTab.setRecipePicker(recipePicker);
+        tasksTab.setNamePrompt(namePrompt);
+        tasksTab.setTrainingScreen(trainingScreen);
         repositionElements();
     }
 
@@ -142,16 +172,37 @@ public class LuneScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float partialTick) {
         int menuMouseX = (int) toMenu(mouseX);
         int menuMouseY = (int) toMenu(mouseY);
+        // A popup owns the pointer. Everything under it is drawn as though the mouse were nowhere,
+        // because hover is recomputed from the coordinates every frame: hand the panel behind the
+        // real ones and its rows light up under the popup, and its tooltips draw on top of it.
+        boolean covered = popupOpen();
+        int behindX = covered ? POINTER_AWAY : menuMouseX;
+        int behindY = covered ? POINTER_AWAY : menuMouseY;
         var pose = extractor.pose();
         pose.pushMatrix();
         pose.scale(menuPixelSize, menuPixelSize);
-        super.extractRenderState(extractor, menuMouseX, menuMouseY, partialTick);
+        super.extractRenderState(extractor, behindX, behindY, partialTick);
         if (tabManager.getCurrentTab() instanceof LuneTab tab) {
-            tab.extractTabRenderState(extractor, menuMouseX, menuMouseY, partialTick);
+            tab.extractTabRenderState(extractor, behindX, behindY, partialTick);
         }
-        mascot.renderOverlay(extractor, menuMouseX, menuMouseY, partialTick);
+        mascot.renderOverlay(extractor, behindX, behindY, partialTick);
         if (blockPicker.isOpen()) {
             blockPicker.render(extractor, menuMouseX, menuMouseY, partialTick);
+        }
+        if (inventoryPicker.isOpen()) {
+            inventoryPicker.render(extractor, menuMouseX, menuMouseY, partialTick);
+        }
+        if (recipePicker.isOpen()) {
+            recipePicker.render(extractor, menuMouseX, menuMouseY, partialTick);
+        }
+        if (namePrompt.isOpen()) {
+            namePrompt.render(extractor, menuMouseX, menuMouseY, partialTick);
+        }
+        // Last, so the course map covers the tab and the mascot rather than sharing the screen
+        // with them. It never coexists with a picker: opening one closes the panel it was opened
+        // from.
+        if (trainingScreen.isOpen()) {
+            trainingScreen.render(extractor, menuMouseX, menuMouseY, partialTick);
         }
         pose.popMatrix();
     }
@@ -167,13 +218,20 @@ public class LuneScreen extends Screen {
             tab.tick();
         }
         MascotAdvisor.Surface surface = tabManager.getCurrentTab() == tasksTab
-                ? MascotAdvisor.Surface.TASKS
+                ? tasksTab.inTraining() ? MascotAdvisor.Surface.TRAINING : MascotAdvisor.Surface.TASKS
                 : tabManager.getCurrentTab() == waypointsTab
                 ? MascotAdvisor.Surface.WAYPOINTS
                 : tabManager.getCurrentTab() == configTab
                 ? MascotAdvisor.Surface.CONFIG
+                : tabManager.getCurrentTab() == aboutTab
+                ? MascotAdvisor.Surface.ABOUT
                 : MascotAdvisor.Surface.MAIN;
         mascot.setSurface(surface);
+        mascot.setTrainingLine(tasksTab.trainingLine());
+        mascot.setTrainingHelp(surface == MascotAdvisor.Surface.TRAINING
+                        && tasksTab.trainingHelpVisible() ? tasksTab::showHint : null,
+                surface == MascotAdvisor.Surface.TRAINING
+                        && tasksTab.trainingHelpVisible() ? tasksTab::showAnswer : null);
         mascot.tick();
     }
 
@@ -181,6 +239,12 @@ public class LuneScreen extends Screen {
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    /** True while one of the modal popups is up and owns the pointer. */
+    private boolean popupOpen() {
+        return blockPicker.isOpen() || inventoryPicker.isOpen() || recipePicker.isOpen()
+                || namePrompt.isOpen() || trainingScreen.isOpen();
     }
 
     /** Settings and tasks are edited live; persisting on close avoids writing every tick. */
@@ -199,8 +263,30 @@ public class LuneScreen extends Screen {
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         MouseButtonEvent menuEvent = toMenu(event);
+        if (trainingScreen.isOpen()) {
+            trainingScreen.handleScreenMouseClick(menuEvent.x(), menuEvent.y(), menuEvent.button());
+            return true;
+        }
         if (blockPicker.isOpen()) {
             blockPicker.handleScreenMouseClick(menuEvent.x(), menuEvent.y(), menuEvent.button());
+            return true;
+        }
+        if (namePrompt.isOpen()) {
+            namePrompt.handleScreenMouseClick(menuEvent.x(), menuEvent.y(), menuEvent.button());
+            return true;
+        }
+        if (recipePicker.isOpen()) {
+            recipePicker.handleScreenMouseClick(menuEvent.x(), menuEvent.y(), menuEvent.button());
+            return true;
+        }
+        // The inventory picker used to rely on ordinary widget dispatch, which only covers clicks
+        // inside its own rectangle - so a click beside it reached the panel it was covering.
+        if (inventoryPicker.isOpen()) {
+            if (inventoryPicker.isMouseOver(menuEvent.x(), menuEvent.y())) {
+                inventoryPicker.onClick(menuEvent, doubleClick);
+            } else {
+                inventoryPicker.close();
+            }
             return true;
         }
         return super.mouseClicked(menuEvent, doubleClick);
@@ -208,7 +294,13 @@ public class LuneScreen extends Screen {
 
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
-        return super.mouseReleased(toMenu(event));
+        MouseButtonEvent menuEvent = toMenu(event);
+        // The recipe grid is filled by dragging, so it needs the other half of the click.
+        if (recipePicker.isOpen()) {
+            recipePicker.handleScreenMouseRelease(menuEvent.x(), menuEvent.y(), menuEvent.button());
+            return true;
+        }
+        return super.mouseReleased(menuEvent);
     }
 
     @Override
@@ -225,16 +317,33 @@ public class LuneScreen extends Screen {
     public boolean mouseScrolled(double mouseX, double mouseY, double deltaX, double deltaY) {
         double menuMouseX = toMenu(mouseX);
         double menuMouseY = toMenu(mouseY);
+        if (trainingScreen.isOpen()) {
+            return trainingScreen.mouseScrolled(menuMouseX, menuMouseY, deltaX, deltaY);
+        }
         if (blockPicker.isOpen()) {
             return blockPicker.mouseScrolled(menuMouseX, menuMouseY, deltaX, deltaY);
+        }
+        if (recipePicker.isOpen()) {
+            return recipePicker.mouseScrolled(menuMouseX, menuMouseY, deltaX, deltaY);
+        }
+        if (inventoryPicker.isOpen()) {
+            return inventoryPicker.mouseScrolled(menuMouseX, menuMouseY, deltaX, deltaY);
         }
         return super.mouseScrolled(menuMouseX, menuMouseY, deltaX, deltaY);
     }
 
     @Override
     public boolean charTyped(CharacterEvent event) {
+        if (namePrompt.isOpen()) {
+            namePrompt.handleScreenCharTyped(event.codepoint());
+            return true;
+        }
         if (blockPicker.isOpen()) {
             blockPicker.handleScreenCharTyped(event.codepoint());
+            return true;
+        }
+        if (recipePicker.isOpen()) {
+            recipePicker.handleScreenCharTyped(event.codepoint());
             return true;
         }
         return super.charTyped(event);
@@ -242,8 +351,20 @@ public class LuneScreen extends Screen {
 
     @Override
     public boolean keyPressed(KeyEvent event) {
+        if (trainingScreen.isOpen()) {
+            trainingScreen.handleScreenKeyPressed(event.key(), 0, event.modifiers());
+            return true;
+        }
+        if (namePrompt.isOpen()) {
+            namePrompt.handleScreenKeyPressed(event.key(), 0, event.modifiers());
+            return true;
+        }
         if (blockPicker.isOpen()) {
             blockPicker.handleScreenKeyPressed(event.key(), 0, event.modifiers());
+            return true;
+        }
+        if (recipePicker.isOpen()) {
+            recipePicker.handleScreenKeyPressed(event.key(), 0, event.modifiers());
             return true;
         }
         return super.keyPressed(event);

@@ -23,6 +23,27 @@ public final class TaskCableRoute {
         }
     }
 
+    /** A return wire leaves the right pin, passes below the cards, then enters from the left. */
+    public static TaskCableRoute returning(int x1, int y1, int x2, int y2, int bottom, int lane) {
+        return returning(x1, y1, x2, y2, bottom, lane, 0);
+    }
+
+    /**
+     * The last approach can be offset above or below the input. This keeps several return wires
+     * readable even though they share the same logical In pin.
+     */
+    public static TaskCableRoute returning(int x1, int y1, int x2, int y2, int bottom,
+                                           int lane, int entryOffset) {
+        int clearance = 28 + lane;
+        int gutter = Math.max(bottom, Math.max(y1, y2)) + clearance;
+        TaskCableRoute route = new TaskCableRoute();
+        route.points.add(new TaskCableAnchor(x1 + clearance, y1));
+        route.points.add(new TaskCableAnchor(x1 + clearance + 12, gutter));
+        route.points.add(new TaskCableAnchor(x2 - clearance - 12, gutter));
+        route.points.add(new TaskCableAnchor(x2 - clearance, y2 + entryOffset));
+        return route;
+    }
+
     /** Inserts a point into the segment that was pulled, clamping stale indices safely. */
     public void insertPoint(int segmentIndex, TaskCableAnchor point) {
         if (point == null) {

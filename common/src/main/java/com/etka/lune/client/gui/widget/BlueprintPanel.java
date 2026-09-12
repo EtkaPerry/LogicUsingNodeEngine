@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.widget;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.command.CommandDef;
@@ -9,6 +10,8 @@ import com.etka.lune.bot.task.TaskRunner;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.UiScale;
 import com.etka.lune.task.TaskCableAnchor;
+import com.etka.lune.task.TaskCablePath;
+import com.etka.lune.task.TaskCanvas;
 import com.etka.lune.task.TaskCableRoute;
 import com.etka.lune.task.TaskGraph;
 import com.etka.lune.task.TaskDataLink;
@@ -26,6 +29,7 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -40,8 +44,8 @@ import java.util.function.Consumer;
  */
 public final class BlueprintPanel extends AbstractWidget {
 
-    private static final int NODE_W = 124;
-    private static final int NODE_H = 72;
+    private static final int NODE_W = TaskCanvas.CARD_WIDTH;
+    private static final int NODE_H = TaskCanvas.CARD_HEIGHT;
     private static final int WHILE_ROW_HEIGHT = 15;
     private static final int NODE_H_WITHOUT_WHILE = NODE_H - WHILE_ROW_HEIGHT;
     private static final int HEADER_H = 16;
@@ -53,7 +57,7 @@ public final class BlueprintPanel extends AbstractWidget {
 
     private static final int GRID_COLOUR = 0x242F3038;
     private static final int NODE_BORDER = 0xFF4A4B55;
-    private static final int NODE_SELECTED = 0xFF79AFFF;
+    private static final int NODE_SELECTED = LuneScreen.ACCENT_HOVER;
     private static final int NODE_ACTIVE = 0xFF76FF9F;
     private static final int NODE_ACTIVE_GLOW = 0x5058FF88;
     private static final int NODE_FAILED = 0xFFE15B64;
@@ -73,8 +77,6 @@ public final class BlueprintPanel extends AbstractWidget {
     private static final int EDGE_PAN_MAX = 14;
 
     private static final int LIVE_WIRE_SPARK = 0xFFFFFFFF;
-    private static final long SPARK_PERIOD_MS = 900;
-    private static final double SPARK_LENGTH = 0.07;
 
     private static final int WIRE_SUCCESS = 0;
     private static final int WIRE_FAILURE = 1;
@@ -137,14 +139,45 @@ public final class BlueprintPanel extends AbstractWidget {
     public BlueprintPanel(int x, int y, int width, int height, Consumer<TaskNode> onSelect,
                           Runnable onChanged, Consumer<String> onMessage,
                           Consumer<List<TaskNode>> onDelete) {
-        super(x, y, width, height, Component.literal("Task Blueprint canvas"));
+        super(x, y, width, height, Component.literal(Lang.get("lune.gui.blueprint.task_blueprint_canvas")));
         this.onSelect = onSelect;
         this.onChanged = onChanged;
         this.onMessage = onMessage;
         this.onDelete = onDelete;
     }
 
+    private final java.util.Map<String, TaskCableRoute> automaticCableRoutes = new java.util.LinkedHashMap<>();
+    private com.etka.lune.training.TrainingPreview trainingPreview;
+    private final java.util.Map<String, Integer> previewCounters = new java.util.LinkedHashMap<>();
+    private long previewStarted;
+    private boolean previewFailure;
+    private boolean trainingSolved;
+    private double previewSpark = -1;
+
+    public void setTrainingSolved(boolean solved) {
+        trainingSolved = solved;
+    }
+
+    public void sendTrainingPulse(boolean failure) {
+        trainingPreview = com.etka.lune.training.TrainingPreview.trace(task, failure, previewCounters);
+        previewStarted = System.currentTimeMillis();
+        previewFailure = failure;
+    }
+
+    public void stopTrainingPulse() {
+        trainingPreview = null;
+        previewCounters.clear();
+        previewSpark = -1;
+    }
+
+    private boolean liveWire(TaskNode from, int kind, int port, TaskNode to) {
+        previewSpark = trainingPreview == null ? power.wireProgress(from, kind, port, to) : trainingPreview.wireProgress(
+                from, kind, port, to, System.currentTimeMillis() - previewStarted);
+        return trainingPreview == null ? power.isLiveWire(from, kind, port, to) : previewSpark >= 0;
+    }
+
     public void setTask(TaskGraph task) {
+        if (this.task != task) stopTrainingPulse();
         this.task = task;
         dragged = null;
         wireSource = null;
@@ -305,11 +338,22 @@ public final class BlueprintPanel extends AbstractWidget {
             return;
         }
         applyGridLayout();
+        resetView();
+        onChanged.run();
+        onMessage.accept(Lang.get("lune.gui.blueprint.blueprint_layout_reset_into_2d_grid_task"));
+    }
+
+    /**
+     * Puts the camera back at the origin without moving a single card.
+     *
+     * <p>Separate from {@link #autoLayout()} because the two are usually wanted apart: a graph laid
+     * out deliberately - a seeded job, a training puzzle whose empty column is the question - wants
+     * the view brought back to it, and would be destroyed by the grid.</p>
+     */
+    public void resetView() {
         panX = 0;
         panY = 0;
         zoom = 1.0f;
-        onChanged.run();
-        onMessage.accept("Blueprint layout reset into a 2D grid; task logic was unchanged");
     }
 
     private void applyGridLayout() {
@@ -390,14 +434,14 @@ public final class BlueprintPanel extends AbstractWidget {
         drawGrid(extractor);
         if (task == null) {
             extractor.textRenderer().accept(10, 9,
-                    Component.literal("Pick a task on the left").withColor(LuneScreen.TEXT_DIM));
+                    Component.literal(Lang.get("lune.gui.blueprint.pick_task_left")).withColor(LuneScreen.TEXT_DIM));
             pose.popMatrix();
             extractor.disableScissor();
             return;
         }
         if (task.nodes.isEmpty()) {
             extractor.textRenderer().accept(10, 9,
-                    Component.literal("Choose a command from the palette").withColor(LuneScreen.TEXT_DIM));
+                    Component.literal(Lang.get("lune.gui.blueprint.choose_command_from_palette")).withColor(LuneScreen.TEXT_DIM));
             pose.popMatrix();
             extractor.disableScissor();
             return;
@@ -406,6 +450,7 @@ public final class BlueprintPanel extends AbstractWidget {
         int canvasMouseX = canvasX(mouseX);
         int canvasMouseY = canvasY(mouseY);
 
+        automaticCableRoutes.clear();
         drawLegacyAlwaysSource(extractor);
 
         // Only explicit edges are drawn. A null success edge still means fall-through in the
@@ -422,7 +467,7 @@ public final class BlueprintPanel extends AbstractWidget {
                                             source.alwaysTargetInputPorts == null
                                                     ? 0 : source.alwaysTargetInputPorts.getOrDefault(target.id, 0)),
                                     pinWhile,
-                                    power.isLiveWire(source, TaskPower.ALWAYS, 0, target),
+                                    liveWire(source, TaskPower.ALWAYS, 0, target),
                                     anchorFor(TaskCableAnchor.key("always", source.id, target.id)));
                         }
                     }
@@ -433,7 +478,7 @@ public final class BlueprintPanel extends AbstractWidget {
                 drawWire(extractor, outputX(source), successY(source), inputX(successTarget),
                         targetInputY(successTarget, successTarget.isPulseNode()
                                 ? source.successInputPort : -1), pinSuccess,
-                        power.isLiveWire(source, TaskPower.SUCCESS, 0, successTarget),
+                        liveWire(source, TaskPower.SUCCESS, 0, successTarget),
                         anchorFor(TaskCableAnchor.key("success", source.id, successTarget.id)));
             }
             TaskNode failureTarget = task.nodeById(source.onFailure);
@@ -441,7 +486,7 @@ public final class BlueprintPanel extends AbstractWidget {
                 drawWire(extractor, outputX(source), failureY(source), inputX(failureTarget),
                         targetInputY(failureTarget, failureTarget.isPulseNode()
                                 ? source.failureInputPort : -1), pinFailure,
-                        power.isLiveWire(source, TaskPower.FAILURE, 0, failureTarget),
+                        liveWire(source, TaskPower.FAILURE, 0, failureTarget),
                         anchorFor(TaskCableAnchor.key("failure", source.id, failureTarget.id)));
             }
             if (!source.isClockNode() && source.whileVisible) {
@@ -450,7 +495,7 @@ public final class BlueprintPanel extends AbstractWidget {
                     drawWire(extractor, outputX(source), whileY(source), inputX(whileTarget),
                             targetInputY(whileTarget, whileTarget.isPulseNode()
                                     ? source.whileInputPort : -1), pinWhile,
-                            power.isLiveWire(source, TaskPower.WHILE, 0, whileTarget),
+                            liveWire(source, TaskPower.WHILE, 0, whileTarget),
                             anchorFor(TaskCableAnchor.key("while", source.id, whileTarget.id)));
                 }
             }
@@ -463,7 +508,7 @@ public final class BlueprintPanel extends AbstractWidget {
                     if (target != null) {
                         drawWire(extractor, outputX(source), signalOutputY(source, link.outputPort),
                                 inputX(target), targetInputY(target, link.targetPort), pinSignal,
-                                power.isLiveWire(source, TaskPower.SIGNAL, link.outputPort, target),
+                                liveWire(source, TaskPower.SIGNAL, link.outputPort, target),
                                 anchorFor(TaskCableAnchor.key("signal", source.id,
                                         String.valueOf(link.outputPort), target.id,
                                         String.valueOf(link.targetPort))));
@@ -504,6 +549,17 @@ public final class BlueprintPanel extends AbstractWidget {
         for (int i = task.nodes.size() - 1; i >= 0; i--) {
             drawNode(extractor, task.nodes.get(i), canvasMouseX, canvasMouseY);
         }
+        if (trainingPreview != null) {
+            for (TaskNode node : task.nodes) {
+                String note = trainingPreview.notes().get(node.id);
+                if (note == null) continue;
+                int x = nodeX(node);
+                int y = nodeY(node) + nodeHeight(node) + 5;
+                extractor.fill(x, y - 2, x + Minecraft.getInstance().font.width(note) + 8, y + 12, 0xF0182230);
+                extractor.textRenderer().accept(x + 4, y + 1,
+                        Component.literal(note).withColor(LuneScreen.TEXT));
+            }
+        }
         drawCableRoutePoints(extractor);
 
         // Last, and outside the card loop: the chips sit above their card and would otherwise be
@@ -520,13 +576,25 @@ public final class BlueprintPanel extends AbstractWidget {
         if (minimapVisible) {
             drawMinimap(extractor);
         }
+        if (trainingSolved || trainingPreview != null) {
+            String status = trainingSolved ? Lang.get("lune.gui.blueprint.step_complete_next_step_unlocked") : Lang.get("lune.gui.blueprint.wiring_preview");
+            if (trainingPreview != null) {
+                boolean ended = trainingPreview.finished(System.currentTimeMillis() - previewStarted);
+                status += trainingPreview.nodes().isEmpty() ? Lang.get("lune.gui.blueprint.source_connected")
+                        : ended ? Lang.get("lune.gui.blueprint.preview_ended") : "  |  " + (previewFailure ? Lang.get("lune.gui.tasks.path_fail") : Lang.get("lune.gui.tasks.path_success"));
+            }
+            int bannerWidth = Math.min(getWidth() - 60, Minecraft.getInstance().font.width(status) + 16);
+            extractor.fill(getX() + 4, getY() + 3, getX() + 4 + bannerWidth, getY() + 22,
+                    trainingSolved ? 0xF023513B : 0xF0233045);
+            extractor.textRenderer().accept(getX() + 10, getY() + 9,
+                    Component.literal(Minecraft.getInstance().font.plainSubstrByWidth(status, bannerWidth - 12))
+                            .withColor(trainingSolved ? 0xFF9AF0B5 : LuneScreen.TEXT));
+        }
 
         extractor.textRenderer().accept(getX() + 7, getY() + getHeight() - 11,
-                Component.literal(draggedCableKey == null
-                                ? "Pull cable to add a point • drag white point to move • right-click point to remove • right-click line to cut"
-                                : draggedCablePointIndex >= 0
-                                ? "Release to move this white point • Esc cancels"
-                                : "Release to add a routing point • pull again for another • Esc cancels")
+                Component.literal(Lang.get(draggedCableKey == null ? "lune.gui.blueprint.cable_idle_hint"
+                : draggedCablePointIndex >= 0 ? "lune.gui.blueprint.cable_move_hint"
+                : "lune.gui.blueprint.cable_add_hint"))
                         .withColor(LuneScreen.TEXT_DIM));
         extractor.textRenderer().accept(getX() + getWidth() - 45, getY() + 7,
                 Component.literal(Math.round(zoom * 100) + "%").withColor(LuneScreen.TEXT_DIM));
@@ -616,13 +684,13 @@ public final class BlueprintPanel extends AbstractWidget {
         String name = def == null ? node.commandId : def.name();
         var text = extractor.textRenderer();
         text.accept(x + 7, y + 5, Component.literal(name).withColor(0xFFFFFFFF));
-        text.accept(x + 9, y + 23, Component.literal("In").withColor(LuneScreen.TEXT_DIM));
+        text.accept(x + 9, y + 23, Component.literal(Lang.get("lune.gui.blueprint.in")).withColor(LuneScreen.TEXT_DIM));
         text.accept(x + 8, y + height - 14,
                 Component.literal(node.describeRepeat()).withColor(LuneScreen.TEXT_DIM));
-        text.accept(x + NODE_W - 46, y + 25, Component.literal("Success").withColor(pinSuccess));
-        text.accept(x + NODE_W - 31, y + 40, Component.literal("Fail").withColor(pinFailure));
+        text.accept(x + NODE_W - 46, y + 25, Component.literal(Lang.get("lune.gui.blueprint.success")).withColor(pinSuccess));
+        text.accept(x + NODE_W - 31, y + 40, Component.literal(Lang.get("lune.gui.blueprint.fail")).withColor(pinFailure));
         if (node.whileVisible) {
-            text.accept(x + NODE_W - 38, y + 55, Component.literal("While").withColor(pinWhile));
+            text.accept(x + NODE_W - 38, y + 55, Component.literal(Lang.get("lune.gui.blueprint.while")).withColor(pinWhile));
         }
 
         drawPin(extractor, inputX(node), inputY(node), pinExec);
@@ -660,9 +728,9 @@ public final class BlueprintPanel extends AbstractWidget {
         boolean pulse = node.isPulseSourceNode();
         drawCardShell(extractor, node);
         var text = extractor.textRenderer();
-        text.accept(x + 7, y + 5, Component.literal(pulse ? "Pulse" : "Always")
+        text.accept(x + 7, y + 5, Component.literal(Lang.get(pulse ? "lune.gui.tasks.pulse" : "lune.gui.tasks.always"))
                 .withColor(0xFFFFFFFF));
-        text.accept(x + 8, y + 23, Component.literal(pulse ? "clock source" : "pulse source")
+        text.accept(x + 8, y + 23, Component.literal(Lang.get(pulse ? "lune.gui.blueprint.clock_source" : "lune.gui.blueprint.pulse_source"))
                 .withColor(NodePalette.of(node).accent()));
         // The rate sits bottom-right, opposite the repeat count every other card puts bottom-left.
         // It is the only number on a Pulse card and the reason the card exists, so it stays on
@@ -682,8 +750,8 @@ public final class BlueprintPanel extends AbstractWidget {
         int height = nodeHeight(node);
         drawCardShell(extractor, node);
         var text = extractor.textRenderer();
-        text.accept(x + 7, y + 5, Component.literal("START").withColor(0xFFFFFFFF));
-        text.accept(x + 8, y + 23, Component.literal("entry point").withColor(NodePalette.of(node).accent()));
+        text.accept(x + 7, y + 5, Component.literal(Lang.get("lune.gui.tasks.start")).withColor(0xFFFFFFFF));
+        text.accept(x + 8, y + 23, Component.literal(Lang.get("lune.gui.blueprint.entry_point")).withColor(NodePalette.of(node).accent()));
         drawPin(extractor, outputX(node), successY(node), pinSuccess);
         if (contains(node, mouseX, mouseY) && !selectedNodes.contains(node)) {
             extractor.fill(x + 1, y + 1, x + NODE_W - 1, y + height - 1, 0x10FFFFFF);
@@ -697,17 +765,17 @@ public final class BlueprintPanel extends AbstractWidget {
         int height = nodeHeight(node);
         drawCardShell(extractor, node);
         var text = extractor.textRenderer();
-        text.accept(x + 7, y + 5, Component.literal("Signal Relay").withColor(0xFFFFFFFF));
-        text.accept(x + 8, y + 19, Component.literal("pulse junction").withColor(NodePalette.of(node).accent()));
+        text.accept(x + 7, y + 5, Component.literal(Lang.get("lune.gui.tasks.signal_relay")).withColor(0xFFFFFFFF));
+        text.accept(x + 8, y + 19, Component.literal(Lang.get("lune.gui.blueprint.pulse_junction")).withColor(NodePalette.of(node).accent()));
         for (int i = 0; i < node.signalInputCount; i++) {
             int portY = signalInputY(node, i);
-            text.accept(x + 8, portY - 3, Component.literal("In " + (i + 1)).withColor(pinSignal));
+            text.accept(x + 8, portY - 3, Component.literal(Lang.get("lune.gui.blueprint.in_2", (i + 1))).withColor(pinSignal));
             drawPin(extractor, inputX(node), portY, pinSignal);
         }
         for (int i = 0; i < node.signalOutputCount; i++) {
             int portY = signalOutputY(node, i);
             text.accept(x + NODE_W - 39, portY - 3,
-                    Component.literal("Out " + (i + 1)).withColor(pinSignal));
+                    Component.literal(Lang.get("lune.gui.blueprint.out", (i + 1))).withColor(pinSignal));
             drawPin(extractor, outputX(node), portY, pinSignal);
         }
         if (contains(node, mouseX, mouseY) && !selectedNodes.contains(node)) {
@@ -722,12 +790,12 @@ public final class BlueprintPanel extends AbstractWidget {
         int height = nodeHeight(node);
         drawCardShell(extractor, node);
         var text = extractor.textRenderer();
-        text.accept(x + 7, y + 5, Component.literal("Timer").withColor(0xFFFFFFFF));
-        text.accept(x + 8, y + 19, Component.literal("pulse delay").withColor(NodePalette.of(node).accent()));
+        text.accept(x + 7, y + 5, Component.literal(Lang.get("lune.gui.tasks.timer")).withColor(0xFFFFFFFF));
+        text.accept(x + 8, y + 19, Component.literal(Lang.get("lune.gui.blueprint.pulse_delay")).withColor(NodePalette.of(node).accent()));
         text.accept(x + 8, signalInputY(node, 0) - 3,
-                Component.literal("In").withColor(pinSignal));
+                Component.literal(Lang.get("lune.gui.blueprint.in")).withColor(pinSignal));
         text.accept(x + NODE_W - 31, signalOutputY(node, 0) - 3,
-                Component.literal("Out").withColor(pinSignal));
+                Component.literal(Lang.get("lune.gui.blueprint.out_2")).withColor(pinSignal));
         text.accept(x + 8, y + height - 14,
                 Component.literal(node.describeRepeat()).withColor(LuneScreen.TEXT_DIM));
         drawPin(extractor, inputX(node), signalInputY(node, 0), pinSignal);
@@ -739,7 +807,7 @@ public final class BlueprintPanel extends AbstractWidget {
 
     private void drawCounterNode(GuiGraphicsExtractor extractor, TaskNode node,
                                  int mouseX, int mouseY) {
-        drawPulseCard(extractor, node, "Counter", "pulse counter", "In", "Out", pinSignal,
+        drawPulseCard(extractor, node, Lang.get("lune.gui.tasks.counter"), Lang.get("lune.gui.blueprint.pulse_counter"), Lang.get("lune.gui.blueprint.in"), Lang.get("lune.gui.blueprint.out_2"), pinSignal,
                 mouseX, mouseY, true);
     }
 
@@ -750,9 +818,9 @@ public final class BlueprintPanel extends AbstractWidget {
         int height = nodeHeight(node);
         drawCardShell(extractor, node);
         var text = extractor.textRenderer();
-        text.accept(x + 7, y + 5, Component.literal("End").withColor(0xFFFFFFFF));
-        text.accept(x + 8, y + 19, Component.literal("pulse sink").withColor(NodePalette.of(node).accent()));
-        text.accept(x + 8, signalInputY(node, 0) - 3, Component.literal("In").withColor(pinFailure));
+        text.accept(x + 7, y + 5, Component.literal(Lang.get("lune.gui.palette.end")).withColor(0xFFFFFFFF));
+        text.accept(x + 8, y + 19, Component.literal(Lang.get("lune.gui.blueprint.pulse_sink")).withColor(NodePalette.of(node).accent()));
+        text.accept(x + 8, signalInputY(node, 0) - 3, Component.literal(Lang.get("lune.gui.blueprint.in")).withColor(pinFailure));
         drawPin(extractor, inputX(node), signalInputY(node, 0), pinFailure);
         if (contains(node, mouseX, mouseY) && !selectedNodes.contains(node)) {
             extractor.fill(x + 1, y + 1, x + NODE_W - 1, y + height - 1, 0x10FFFFFF);
@@ -766,14 +834,14 @@ public final class BlueprintPanel extends AbstractWidget {
         int height = nodeHeight(node);
         drawCardShell(extractor, node);
         var text = extractor.textRenderer();
-        text.accept(x + 7, y + 5, Component.literal("Observer").withColor(0xFFFFFFFF));
+        text.accept(x + 7, y + 5, Component.literal(Lang.get("lune.gui.palette.observer")).withColor(0xFFFFFFFF));
         TaskNode watched = task == null || node.observedNodeId == null
                 ? null : task.nodeById(node.observedNodeId);
-        text.accept(x + 8, y + 19, Component.literal(watched == null
-                ? "watch nothing yet" : "watches " + nodeName(watched)).withColor(NodePalette.of(node).accent()));
-        text.accept(x + 8, signalInputY(node, 0) - 3, Component.literal("Watch").withColor(pinSignal));
+        text.accept(x + 8, y + 19, watched == null ? Component.literal(Lang.get("lune.gui.blueprint.watch_nothing"))
+                : Component.literal(Lang.get("lune.gui.blueprint.watches", nodeName(watched))).withColor(NodePalette.of(node).accent()));
+        text.accept(x + 8, signalInputY(node, 0) - 3, Component.literal(Lang.get("lune.gui.blueprint.watch")).withColor(pinSignal));
         text.accept(x + NODE_W - 31, signalOutputY(node, 0) - 3,
-                Component.literal("Out").withColor(pinSignal));
+                Component.literal(Lang.get("lune.gui.blueprint.out_2")).withColor(pinSignal));
         drawPin(extractor, inputX(node), signalInputY(node, 0), pinSignal);
         drawPin(extractor, outputX(node), signalOutputY(node, 0), pinSignal);
         if (contains(node, mouseX, mouseY) && !selectedNodes.contains(node)) {
@@ -783,7 +851,7 @@ public final class BlueprintPanel extends AbstractWidget {
 
     private void drawButtonNode(GuiGraphicsExtractor extractor, TaskNode node,
                                 int mouseX, int mouseY) {
-        drawSourcePulseCard(extractor, node, "Button", "manual source", pinSuccess, mouseX, mouseY);
+        drawSourcePulseCard(extractor, node, Lang.get("lune.gui.tasks.button"), Lang.get("lune.gui.blueprint.manual_source"), pinSuccess, mouseX, mouseY);
     }
 
     private void drawPulseCard(GuiGraphicsExtractor extractor, TaskNode node, String title,
@@ -802,7 +870,7 @@ public final class BlueprintPanel extends AbstractWidget {
                 Component.literal(outputLabel).withColor(colour));
         if (footer) {
             text.accept(x + 8, y + height - 14,
-                    Component.literal("every " + node.params.getOrDefault("count", "3") + " pulses")
+                    Component.literal(Lang.get("lune.gui.blueprint.every_pulses", node.params.getOrDefault("count", "3")))
                             .withColor(LuneScreen.TEXT_DIM));
         }
         drawPin(extractor, inputX(node), signalInputY(node, 0), colour);
@@ -824,7 +892,7 @@ public final class BlueprintPanel extends AbstractWidget {
         text.accept(x + 8, y + 23, Component.literal(subtitle)
                 .withColor(NodePalette.of(node).accent()));
         text.accept(x + NODE_W - 31, signalOutputY(node, 0) - 3,
-                Component.literal("Out").withColor(colour));
+                Component.literal(Lang.get("lune.gui.blueprint.out_2")).withColor(colour));
         drawPin(extractor, outputX(node), signalOutputY(node, 0), colour);
         if (contains(node, mouseX, mouseY) && !selectedNodes.contains(node)) {
             extractor.fill(x + 1, y + 1, x + NODE_W - 1, y + height - 1, 0x10FFFFFF);
@@ -837,16 +905,14 @@ public final class BlueprintPanel extends AbstractWidget {
             return;
         }
         String logic = node.isStartNode()
-                ? "Send one signal to the connected Success target to start this circuit."
+                ? Lang.get("lune.gui.blueprint.send_one_signal_connected_success_target")
                 : node.isClockNode()
-                ? "Send a new signal to each connected target " + node.describeAlwaysInterval()
-                + ". Each target is an independent circuit; " + nodeName(node)
-                + " does not need START."
+                ? Lang.get("lune.gui.blueprint.send_new_signal_each_connected_target", node.describeAlwaysInterval(), nodeName(node))
                 : node.isSignalRelayNode()
-                ? "Forward a pulse arriving at any input through every connected output."
+                ? Lang.get("lune.gui.blueprint.forward_pulse_arriving_any_input_through")
                 : logicDescription(node);
         extractor.setComponentTooltipForNextFrame(Minecraft.getInstance().font,
-                List.of(Component.literal("Logic").withColor(LuneScreen.ACCENT),
+                List.of(Component.literal(Lang.get("lune.gui.param.logic")).withColor(LuneScreen.ACCENT),
                         Component.literal(logic).withColor(LuneScreen.TEXT)),
                 UiScale.toGamePixels(pointerX), UiScale.toGamePixels(pointerY));
     }
@@ -854,7 +920,7 @@ public final class BlueprintPanel extends AbstractWidget {
     private String logicDescription(TaskNode node) {
         CommandDef def = CommandRegistry.byId(node.commandId);
         return def == null
-                ? "This node is unavailable. Success follows Success; failure follows Fail."
+                ? Lang.get("lune.gui.blueprint.node_unavailable_success_follows_success")
                 : def.logicDescription(node.repeat);
     }
 
@@ -865,7 +931,8 @@ public final class BlueprintPanel extends AbstractWidget {
     }
 
     private boolean isActiveNode(TaskNode candidate) {
-        return power.isLive(candidate);
+        return trainingPreview == null ? power.isLive(candidate)
+                : trainingPreview.nodeLit(candidate, System.currentTimeMillis() - previewStarted);
     }
 
     private boolean isFailedNode(TaskNode candidate) {
@@ -890,7 +957,7 @@ public final class BlueprintPanel extends AbstractWidget {
     private static final int CHIP_GAP = 2;
     private static final int CHIP_LIFT = 5;
     private static final int CHIP_BG = 0xF0262832;
-    private static final int CHIP_HOVER = 0xF04C6E9C;
+    private static final int CHIP_HOVER = 0xF0C86400;
     private static final int CHIP_DANGER = 0xF09C4C50;
     private static final int CHIP_TEXT = 0xFFE8E8EE;
     private static final int CHIP_EDIT = 0xF0203A56;
@@ -900,7 +967,7 @@ public final class BlueprintPanel extends AbstractWidget {
     private static final int CONTEXT_SUB_W = 72;
     private static final int CONTEXT_GAP = 2;
     private static final int CONTEXT_BG = 0xF01A1A20;
-    private static final int CONTEXT_HOVER = 0xF04C6E9C;
+    private static final int CONTEXT_HOVER = 0xF0C86400;
     private static final int CONTEXT_TEXT = 0xFFE8E8EE;
     private static final int CONTEXT_DISABLED = 0xFF777783;
     private static final int CONTEXT_DANGER = 0xFFFF9B9B;
@@ -1122,18 +1189,18 @@ public final class BlueprintPanel extends AbstractWidget {
 
     private String chipHelp(TaskNode node, int chip) {
         if (chip == chipCount(node) - 1) {
-            return "Delete this card (or press Delete)";
+            return Lang.get("lune.gui.blueprint.delete_card_or_press_delete");
         }
         if (hasForeverChip(node) && chip == chipCount(node) - 2) {
-            return "Run forever";
+            return Lang.get("lune.gui.blueprint.run_forever");
         }
         boolean clock = node.isPulseSourceNode();
         return switch (chip) {
-            case CHIP_MINUS -> clock ? "One second less (Shift: ten)" : "One run fewer (Shift: ten)";
-            case CHIP_PLUS -> clock ? "One second more (Shift: ten)" : "One run more (Shift: ten)";
+            case CHIP_MINUS -> clock ? Lang.get("lune.gui.blueprint.one_second_less_shift_ten") : Lang.get("lune.gui.blueprint.one_run_fewer_shift_ten");
+            case CHIP_PLUS -> clock ? Lang.get("lune.gui.blueprint.one_second_more_shift_ten") : Lang.get("lune.gui.blueprint.one_run_more_shift_ten");
             default -> clock
-                    ? "Seconds between pulses - click to type one; 0 means every tick"
-                    : "How many times this card runs - click to type a number";
+                    ? Lang.get("lune.gui.blueprint.seconds_between_pulses_click_type_one_0")
+                    : Lang.get("lune.gui.blueprint.how_many_times_card_runs_click_type");
         };
     }
 
@@ -1156,7 +1223,7 @@ public final class BlueprintPanel extends AbstractWidget {
         if (hasForeverChip(node) && chip == last - 1) {
             node.repeat = 0;
             onChanged.run();
-            onMessage.accept(nodeName(node) + " runs " + node.describeRepeat());
+            onMessage.accept(nodeName(node) + Lang.get("lune.gui.blueprint.runs") + node.describeRepeat());
             return true;
         }
         int magnitude = shiftDown() ? 10 : 1;
@@ -1166,14 +1233,14 @@ public final class BlueprintPanel extends AbstractWidget {
             node.alwaysIntervalSeconds = Math.clamp(seconds,
                     TaskNode.MIN_ALWAYS_INTERVAL_SECONDS, TaskNode.MAX_ALWAYS_INTERVAL_SECONDS);
             onChanged.run();
-            onMessage.accept("Pulse now fires " + node.describeAlwaysInterval());
+            onMessage.accept(Lang.get("lune.gui.blueprint.pulse_now_fires", node.describeAlwaysInterval()));
             return true;
         }
         // Stepping down from forever lands on a real number rather than staying at zero.
         int base = node.repeat == 0 ? 1 : node.repeat;
         node.repeat = Math.clamp(base + (chip == CHIP_PLUS ? magnitude : -magnitude), 1, MAX_REPEAT);
         onChanged.run();
-        onMessage.accept(nodeName(node) + " runs " + node.describeRepeat());
+        onMessage.accept(nodeName(node) + Lang.get("lune.gui.blueprint.runs") + node.describeRepeat());
         return true;
     }
 
@@ -1203,10 +1270,10 @@ public final class BlueprintPanel extends AbstractWidget {
         if (node.isPulseSourceNode()) {
             node.alwaysIntervalSeconds = Math.clamp(typed,
                     TaskNode.MIN_ALWAYS_INTERVAL_SECONDS, TaskNode.MAX_ALWAYS_INTERVAL_SECONDS);
-            onMessage.accept("Pulse now fires " + node.describeAlwaysInterval());
+            onMessage.accept(Lang.get("lune.gui.blueprint.pulse_now_fires", node.describeAlwaysInterval()));
         } else {
             node.repeat = Math.clamp(typed, 0, MAX_REPEAT);
-            onMessage.accept(nodeName(node) + " runs " + node.describeRepeat());
+            onMessage.accept(nodeName(node) + Lang.get("lune.gui.blueprint.runs") + node.describeRepeat());
         }
         onChanged.run();
     }
@@ -1264,7 +1331,7 @@ public final class BlueprintPanel extends AbstractWidget {
                 contextNode.whileVisible = !contextNode.whileVisible;
                 onChanged.run();
                 onMessage.accept((contextNode.whileVisible
-                        ? "While output shown for " : "While output hidden for ")
+                        ? Lang.get("lune.gui.blueprint.while_output_shown") : Lang.get("lune.gui.blueprint.while_output_hidden"))
                         + nodeName(contextNode));
             }
             closeContextMenu();
@@ -1305,18 +1372,18 @@ public final class BlueprintPanel extends AbstractWidget {
                 CONTEXT_MAIN_W, deleteHovered);
         var text = extractor.textRenderer();
         text.accept(contextMenuX + 7, contextMenuY + 5,
-                Component.literal("Show").withColor(CONTEXT_TEXT));
+                Component.literal(Lang.get("lune.gui.blueprint.show")).withColor(CONTEXT_TEXT));
         text.accept(contextMenuX + CONTEXT_MAIN_W - 12, contextMenuY + 5,
                 Component.literal("> ").withColor(LuneScreen.TEXT_DIM));
         text.accept(contextMenuX + 7, contextMenuY + CONTEXT_ROW_H + 5,
-                Component.literal("Delete").withColor(CONTEXT_DANGER));
+                Component.literal(Lang.get("lune.gui.tasks.delete_2")).withColor(CONTEXT_DANGER));
 
         if (contextSubmenuOpen) {
             int x = contextSubmenuX();
             drawContextPanel(extractor, x, contextMenuY, CONTEXT_SUB_W, CONTEXT_ROW_H);
             drawContextRow(extractor, x, contextMenuY, CONTEXT_SUB_W, submenuHovered);
             text.accept(x + 7, contextMenuY + 5,
-                    Component.literal("While").withColor(supportsWhilePort(contextNode)
+                    Component.literal(Lang.get("lune.gui.blueprint.while")).withColor(supportsWhilePort(contextNode)
                             ? contextNode.whileVisible ? LuneScreen.ACCENT : CONTEXT_TEXT
                             : CONTEXT_DISABLED));
             if (contextNode.whileVisible && supportsWhilePort(contextNode)) {
@@ -1390,10 +1457,12 @@ public final class BlueprintPanel extends AbstractWidget {
 
     /** Tiny white handles show exactly where each released cable point is stored. */
     private void drawCableRoutePoints(GuiGraphicsExtractor extractor) {
-        if (task == null || task.cableAnchors == null) {
+        if (task == null) {
             return;
         }
-        task.cableAnchors.forEach((key, savedRoute) -> {
+        java.util.Map<String, TaskCableRoute> routes = new java.util.LinkedHashMap<>(automaticCableRoutes);
+        if (task.cableAnchors != null) routes.putAll(task.cableAnchors);
+        routes.forEach((key, savedRoute) -> {
             TaskCableRoute route = key != null && key.equals(draggedCableKey) && cableMoved
                     ? draggedCablePreview : savedRoute;
             if (route == null || route.points == null) {
@@ -1404,7 +1473,9 @@ public final class BlueprintPanel extends AbstractWidget {
                     continue;
                 }
                 extractor.fill(point.x - 3, point.y - 3, point.x + 4, point.y + 4, 0xFF15151C);
-                extractor.fill(point.x - 2, point.y - 2, point.x + 3, point.y + 3, 0xFFFFFFFF);
+                int colour = task.cableAnchors != null && task.cableAnchors.containsKey(key)
+                        ? 0xFFFFFFFF : 0xFF9CCBFF;
+                extractor.fill(point.x - 2, point.y - 2, point.x + 3, point.y + 3, colour);
             }
         });
     }
@@ -1424,41 +1495,54 @@ public final class BlueprintPanel extends AbstractWidget {
      * smooth section, so the cable can be shaped freely over repeated pulls.
      *
      * <p>A live wire is drawn thicker and gets a bright spark travelling along it, so the canvas
-     * shows where the signal came from as well as where it is now. The spark's position comes from
-     * wall-clock time rather than a tick counter: the panel renders while the game is paused, and a
-     * dead wire and a stalled animation should not look the same.</p>
+     * shows where the signal came from as well as where it is now. Each emitted pulse travels once
+     * from its own timestamp; an old signal never loops just because its target is still busy.</p>
      */
     private void drawWire(GuiGraphicsExtractor extractor, int x1, int y1, int x2, int y2,
                           int colour, boolean live, TaskCableRoute route) {
+        double spark = live ? previewSpark : -1;
+        previewSpark = -1;
         if (!wireCouldBeVisible(x1, y1, x2, y2, route)) {
             // Whole-wire cull. The per-point check below still had to walk every sample of a wire
             // that was nowhere near the screen, which on a large task is most of them.
             return;
         }
-        int distance = wireLength(x1, y1, x2, y2, route);
-        // Sampled by how long the wire is *on screen*, not on the canvas. The dots are two pixels
-        // across, so anything finer than one sample per two screen pixels draws quads on top of
-        // quads: at the old flat 180 a task with thirty edges spent five thousand of them per frame
-        // to no visible effect.
-        int samples = Math.clamp(Math.round(distance * zoom / 2f), 8, 96);
-        double spark = live ? (System.currentTimeMillis() % SPARK_PERIOD_MS) / (double) SPARK_PERIOD_MS : -1;
-        for (int i = 0; i <= samples; i++) {
-            double t = i / (double) samples;
-            WirePoint point = wirePoint(x1, y1, x2, y2, route, t);
+        // Built once per cable rather than once per sample: the old sampler re-walked the routing
+        // points for every one of its ninety-six steps.
+        TaskCablePath path = TaskCablePath.of(x1, y1, x2, y2, route);
+        // Join curve samples with solid strokes. A fixed number of isolated dots leaves gaps
+        // on long wires and even on short wires where the cubic tangent runs fastest.
+        int samples = Math.clamp((int) Math.ceil(path.length() * zoom / 6), 12, 256);
+        int thickness = Math.max(2, (int) Math.ceil(1.5 / zoom));
+        TaskCablePath.Point previous = path.at(0);
+        for (int i = 1; i <= samples; i++) {
+            TaskCablePath.Point point = path.at(i / (double) samples);
+            // A dark outline separates crossing Success and Fail cables from each other.
+            cableStroke(extractor, previous, point, thickness + 2, 0xFF10151E);
+            cableStroke(extractor, previous, point, thickness, colour);
+            previous = point;
+        }
+        if (spark >= 0) {
+            TaskCablePath.Point point = path.at(spark);
             int px = (int) Math.round(point.x());
             int py = (int) Math.round(point.y());
-            if (!inside(px, py)) {
-                continue;
-            }
-            if (!live) {
-                extractor.fill(px, py, px + 2, py + 2, colour);
-                continue;
-            }
-            // One quad, not two: a live wire is drawn a pixel wider and a shade brighter rather
-            // than having a separate halo laid over every point of it.
-            extractor.fill(px - 1, py - 1, px + 2, py + 2,
-                    Math.abs(t - spark) < SPARK_LENGTH ? LIVE_WIRE_SPARK : colour);
+            extractor.fill(px - 3, py - 3, px + 4, py + 4, colour);
+            extractor.fill(px - 1, py - 1, px + 2, py + 2, LIVE_WIRE_SPARK);
         }
+    }
+
+    /** Rotated rectangles join every sample, including at fractional canvas zoom. */
+    private void cableStroke(GuiGraphicsExtractor extractor, TaskCablePath.Point from,
+                             TaskCablePath.Point to, int width, int colour) {
+        double dx = to.x() - from.x();
+        double dy = to.y() - from.y();
+        var pose = extractor.pose();
+        pose.pushMatrix();
+        pose.translate((float) from.x(), (float) from.y());
+        pose.rotate((float) Math.atan2(dy, dx));
+        extractor.fill(0, -width / 2, (int) Math.ceil(Math.hypot(dx, dy)) + 1,
+                width - width / 2, colour);
+        pose.popMatrix();
     }
 
     private TaskCableRoute anchorFor(String key) {
@@ -1468,69 +1552,55 @@ public final class BlueprintPanel extends AbstractWidget {
         if (key.equals(draggedCableKey) && cableMoved) {
             return draggedCablePreview;
         }
-        return task == null || task.cableAnchors == null ? null : task.cableAnchors.get(key);
-    }
-
-    private double curveTangent(int x1, int x2) {
-        return Math.max(28, Math.abs(x2 - x1) * 0.45);
-    }
-
-    private int wireLength(int x1, int y1, int x2, int y2, TaskCableRoute route) {
-        if (route == null || route.points == null || route.points.isEmpty()) {
-            return Math.max(12, Math.abs(x2 - x1) + Math.abs(y2 - y1));
-        }
-        int length = 0;
-        int previousX = x1;
-        int previousY = y1;
-        for (TaskCableAnchor point : route.points) {
-            if (point == null) {
-                continue;
+        if (task == null) return null;
+        TaskCableRoute saved = task.cableAnchors == null ? null : task.cableAnchors.get(key);
+        if (saved != null) return saved;
+        String[] parts = key.split("\\|", -1);
+        if (parts.length != 3 && parts.length != 5) return null;
+        TaskNode source = task.nodeById(parts[1]);
+        TaskNode target = task.nodeById(parts[parts.length == 3 ? 2 : 3]);
+        if (source == null || target == null || outputX(source) < inputX(target)) return null;
+        int sy = switch (parts[0]) {
+            case "failure" -> failureY(source);
+            case "while", "always" -> whileY(source);
+            case "signal" -> signalOutputY(source, Integer.parseInt(parts[2]));
+            case "observe" -> nodeY(source) + HEADER_H / 2;
+            case "data" -> dataOutputY(source, exposedOutputs(source).indexOf(parts[2]));
+            default -> successY(source);
+        };
+        int ty = switch (parts[0]) {
+            case "data" -> dataInputY(target, exposedInputs(target).indexOf(parts[4]));
+            case "signal" -> targetInputY(target, Integer.parseInt(parts[4]));
+            case "success" -> targetInputY(target, source.successInputPort);
+            case "failure" -> targetInputY(target, source.failureInputPort);
+            case "while" -> targetInputY(target, source.whileInputPort);
+            case "always" -> targetInputY(target, source.alwaysTargetInputPorts == null ? 0
+                    : source.alwaysTargetInputPorts.getOrDefault(target.id, 0));
+            default -> targetInputY(target, 0);
+        };
+        int bottom = Math.max(nodeY(source) + nodeHeight(source), nodeY(target) + nodeHeight(target));
+        // Include cards in this row between the endpoints. Lower rows keep their own space.
+        for (TaskNode obstacle : task.nodes) {
+            if (nodeX(obstacle) <= outputX(source) && outputX(obstacle) >= inputX(target)
+                    && nodeY(obstacle) <= bottom) {
+                bottom = Math.max(bottom, nodeY(obstacle) + nodeHeight(obstacle));
             }
-            length += Math.abs(point.x - previousX) + Math.abs(point.y - previousY);
-            previousX = point.x;
-            previousY = point.y;
         }
-        length += Math.abs(x2 - previousX) + Math.abs(y2 - previousY);
-        return Math.max(12, length);
-    }
-
-    private WirePoint wirePoint(int x1, int y1, int x2, int y2,
-                                TaskCableRoute route, double t) {
-        if (route == null || route.points == null || route.points.isEmpty()) {
-            return curvedPoint(x1, y1, x2, y2, t);
-        }
-        double total = wireLength(x1, y1, x2, y2, route);
-        double remaining = Math.clamp(t, 0.0, 1.0) * total;
-        int previousX = x1;
-        int previousY = y1;
-        for (TaskCableAnchor point : route.points) {
-            if (point == null) {
-                continue;
-            }
-            double segment = Math.abs(point.x - previousX) + Math.abs(point.y - previousY);
-            if (segment > 0 && remaining <= segment) {
-                return curvedPoint(previousX, previousY, point.x, point.y,
-                        remaining / segment);
-            }
-            remaining -= segment;
-            previousX = point.x;
-            previousY = point.y;
-        }
-        double finalSegment = Math.abs(x2 - previousX) + Math.abs(y2 - previousY);
-        if (finalSegment == 0) {
-            return new WirePoint(x2, y2);
-        }
-        return curvedPoint(previousX, previousY, x2, y2,
-                Math.clamp(remaining / finalSegment, 0.0, 1.0));
-    }
-
-    private WirePoint curvedPoint(int x1, int y1, int x2, int y2, double t) {
-        double tangent = curveTangent(x1, x2);
-        double u = 1.0 - t;
-        return new WirePoint(
-                u * u * u * x1 + 3 * u * u * t * (x1 + tangent)
-                        + 3 * u * t * t * (x2 - tangent) + t * t * t * x2,
-                u * u * u * y1 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y2);
+        int lane = switch (parts[0]) {
+            case "failure" -> 14;
+            case "while", "always" -> 28;
+            default -> 0;
+        };
+        int entryOffset = switch (parts[0]) {
+            case "failure" -> 9;
+            case "while", "always" -> -9;
+            case "signal" -> (Integer.parseInt(parts[2]) % 2 == 0) ? -7 : 7;
+            default -> 0;
+        };
+        TaskCableRoute route = TaskCableRoute.returning(outputX(source), sy, inputX(target), ty,
+                bottom, lane, entryOffset);
+        automaticCableRoutes.put(key, route);
+        return route;
     }
 
     /** True when any part of a wire's path could land inside the visible canvas. */
@@ -1540,7 +1610,7 @@ public final class BlueprintPanel extends AbstractWidget {
         double top = -panY / zoom;
         double right = (getWidth() - panX) / zoom;
         double bottom = (getHeight() - panY) / zoom;
-        double tangent = curveTangent(x1, x2);
+        double tangent = TaskCablePath.pinTangent(x1, x2);
         double minX = Math.min(x1, x2) - tangent - 2;
         double maxX = Math.max(x1, x2) + tangent + 2;
         double minY = Math.min(y1, y2) - 2;
@@ -1552,7 +1622,7 @@ public final class BlueprintPanel extends AbstractWidget {
                 if (point == null) {
                     continue;
                 }
-                tangent = Math.max(tangent, curveTangent(previousX, point.x));
+                tangent = Math.max(tangent, TaskCablePath.pinTangent(previousX, point.x));
                 minX = Math.min(minX, Math.min(previousX, point.x) - tangent - 2);
                 maxX = Math.max(maxX, Math.max(previousX, point.x) + tangent + 2);
                 minY = Math.min(minY, Math.min(previousY, point.y) - 2);
@@ -1561,15 +1631,13 @@ public final class BlueprintPanel extends AbstractWidget {
                 previousY = point.y;
             }
         }
-        tangent = Math.max(tangent, curveTangent(previousX, x2));
+        tangent = Math.max(tangent, TaskCablePath.pinTangent(previousX, x2));
         minX = Math.min(minX, Math.min(previousX, x2) - tangent - 2);
         maxX = Math.max(maxX, Math.max(previousX, x2) + tangent + 2);
         minY = Math.min(minY, Math.min(previousY, y2) - 2);
         maxY = Math.max(maxY, Math.max(previousY, y2) + 2);
         return maxX >= left && minX <= right && maxY >= top && minY <= bottom;
     }
-
-    private record WirePoint(double x, double y) {}
 
     private record CableHit(String key, int insertionIndex) {}
 
@@ -1890,8 +1958,7 @@ public final class BlueprintPanel extends AbstractWidget {
 
     private void beginCableDrag(CableHit hit, int x, int y) {
         draggedCableKey = hit.key();
-        TaskCableRoute stored = task.cableAnchors == null ? null
-                : task.cableAnchors.get(draggedCableKey);
+        TaskCableRoute stored = anchorFor(draggedCableKey);
         draggedCableBase = stored == null ? new TaskCableRoute() : stored.copy();
         draggedCablePreview = draggedCableBase.copy();
         draggedCablePointIndex = -1;
@@ -1900,13 +1967,12 @@ public final class BlueprintPanel extends AbstractWidget {
         cableDragStartX = x;
         cableDragStartY = y;
         cableMoved = false;
-        onMessage.accept("Drag the cable and release to add a routing point");
+        onMessage.accept(Lang.get("lune.gui.blueprint.drag_cable_release_add_routing_point"));
     }
 
     private void beginCablePointDrag(CablePointHit hit, int x, int y) {
         draggedCableKey = hit.key();
-        TaskCableRoute stored = task.cableAnchors == null ? null
-                : task.cableAnchors.get(draggedCableKey);
+        TaskCableRoute stored = anchorFor(draggedCableKey);
         draggedCableBase = stored == null ? new TaskCableRoute() : stored.copy();
         draggedCablePreview = draggedCableBase.copy();
         draggedCablePointIndex = Math.clamp(hit.pointIndex(), 0,
@@ -1915,7 +1981,7 @@ public final class BlueprintPanel extends AbstractWidget {
         cableDragStartX = x;
         cableDragStartY = y;
         cableMoved = false;
-        onMessage.accept("Drag the white point and release to move it");
+        onMessage.accept(Lang.get("lune.gui.blueprint.drag_white_point_release_move"));
     }
 
     private void finishCableDrag() {
@@ -1929,7 +1995,7 @@ public final class BlueprintPanel extends AbstractWidget {
             task.cableAnchors.put(draggedCableKey, draggedCablePreview);
             onChanged.run();
             onMessage.accept(draggedCablePointIndex >= 0
-                    ? "Cable routing point moved" : "Cable routing point added");
+                    ? Lang.get("lune.gui.blueprint.cable_routing_point_moved") : Lang.get("lune.gui.blueprint.cable_routing_point_added"));
         }
         draggedCableKey = null;
         draggedCableBase = null;
@@ -1950,10 +2016,12 @@ public final class BlueprintPanel extends AbstractWidget {
 
     /** Finds the saved white handle nearest the pointer, before ordinary cable hit-testing. */
     private CablePointHit cablePointAt(int x, int y) {
-        if (task == null || task.cableAnchors == null) {
+        if (task == null) {
             return null;
         }
-        for (java.util.Map.Entry<String, TaskCableRoute> entry : task.cableAnchors.entrySet()) {
+        java.util.Map<String, TaskCableRoute> routes = new java.util.LinkedHashMap<>(automaticCableRoutes);
+        if (task.cableAnchors != null) routes.putAll(task.cableAnchors);
+        for (java.util.Map.Entry<String, TaskCableRoute> entry : routes.entrySet()) {
             int pointIndex = cablePointAt(entry.getKey(), x, y);
             if (pointIndex >= 0) {
                 return new CablePointHit(entry.getKey(), pointIndex);
@@ -1964,10 +2032,11 @@ public final class BlueprintPanel extends AbstractWidget {
 
     /** Finds the saved route point nearest the pointer for the small white handle action. */
     private int cablePointAt(String key, int x, int y) {
-        if (task == null || task.cableAnchors == null) {
+        if (task == null) {
             return -1;
         }
-        TaskCableRoute route = task.cableAnchors.get(key);
+        TaskCableRoute route = task.cableAnchors == null ? automaticCableRoutes.get(key)
+                : task.cableAnchors.getOrDefault(key, automaticCableRoutes.get(key));
         if (route == null || route.points == null) {
             return -1;
         }
@@ -2009,7 +2078,7 @@ public final class BlueprintPanel extends AbstractWidget {
                 routes.remove();
             }
             onChanged.run();
-            onMessage.accept("Cable routing point removed");
+            onMessage.accept(Lang.get("lune.gui.blueprint.cable_routing_point_removed"));
             return true;
         }
         return false;
@@ -2055,7 +2124,7 @@ public final class BlueprintPanel extends AbstractWidget {
                         }
                         removeCableAnchor(key);
                         onChanged.run();
-                        onMessage.accept("Always connection cut");
+                        onMessage.accept(Lang.get("lune.gui.blueprint.always_connection_cut"));
                         return true;
                     }
                 }
@@ -2070,7 +2139,7 @@ public final class BlueprintPanel extends AbstractWidget {
                 source.onSuccess = null;
                 removeCableAnchor(successKey);
                 onChanged.run();
-                onMessage.accept("Success wire cut");
+                onMessage.accept(Lang.get("lune.gui.blueprint.success_wire_cut"));
                 return true;
             }
             TaskNode failureTarget = task.nodeById(source.onFailure);
@@ -2083,7 +2152,7 @@ public final class BlueprintPanel extends AbstractWidget {
                 source.onFailure = null;
                 removeCableAnchor(failureKey);
                 onChanged.run();
-                onMessage.accept("Failure wire cut");
+                onMessage.accept(Lang.get("lune.gui.blueprint.failure_wire_cut"));
                 return true;
             }
             if (source.whileVisible) {
@@ -2097,7 +2166,7 @@ public final class BlueprintPanel extends AbstractWidget {
                     source.onWhile = null;
                     removeCableAnchor(whileKey);
                     onChanged.run();
-                    onMessage.accept("While wire cut");
+                    onMessage.accept(Lang.get("lune.gui.blueprint.while_wire_cut"));
                     return true;
                 }
             }
@@ -2110,7 +2179,7 @@ public final class BlueprintPanel extends AbstractWidget {
                     source.observedNodeId = null;
                     removeCableAnchor(key);
                     onChanged.run();
-                    onMessage.accept("Observer wire cut");
+                    onMessage.accept(Lang.get("lune.gui.blueprint.observer_wire_cut"));
                     return true;
                 }
             }
@@ -2128,7 +2197,7 @@ public final class BlueprintPanel extends AbstractWidget {
                         signalLinks.remove();
                         removeCableAnchor(key);
                         onChanged.run();
-                        onMessage.accept("Pulse output wire cut");
+                        onMessage.accept(Lang.get("lune.gui.blueprint.pulse_output_wire_cut"));
                         return true;
                     }
                 }
@@ -2152,7 +2221,7 @@ public final class BlueprintPanel extends AbstractWidget {
                     target.inputLinks.remove(entry.getKey());
                     removeCableAnchor(key);
                     onChanged.run();
-                    onMessage.accept("Data wire cut");
+                    onMessage.accept(Lang.get("lune.gui.blueprint.data_wire_cut"));
                     return true;
                 }
             }
@@ -2171,46 +2240,26 @@ public final class BlueprintPanel extends AbstractWidget {
      */
     private int wireSegmentAt(int x1, int y1, int x2, int y2, int px, int py,
                               TaskCableRoute route) {
+        // Measured against the same spline that is drawn. Sampling each segment's own curve
+        // separately, as this used to, meant the line you grabbed was not the line you saw.
+        TaskCablePath path = TaskCablePath.of(x1, y1, x2, y2, route);
+        int samples = Math.clamp((int) Math.round(path.length() / 4), 16, 192);
         double closestDistance = Double.POSITIVE_INFINITY;
         int closestSegment = -1;
-        int segmentIndex = 0;
-        int previousX = x1;
-        int previousY = y1;
-        if (route != null && route.points != null) {
-            for (TaskCableAnchor point : route.points) {
-                if (point == null) {
-                    continue;
-                }
-                double distance = distanceToCurve(px, py, previousX, previousY, point.x, point.y);
-                if (distance < closestDistance) {
-                    closestDistance = distance;
-                    closestSegment = segmentIndex;
-                }
-                previousX = point.x;
-                previousY = point.y;
-                segmentIndex++;
-            }
-        }
-        double distance = distanceToCurve(px, py, previousX, previousY, x2, y2);
-        if (distance < closestDistance) {
-            closestDistance = distance;
-            closestSegment = segmentIndex;
-        }
-        return closestDistance <= 7.0 ? closestSegment : -1;
-    }
-
-    private double distanceToCurve(double px, double py, int x1, int y1, int x2, int y2) {
-        int length = Math.abs(x2 - x1) + Math.abs(y2 - y1);
-        int samples = Math.clamp(length / 4, 8, 64);
-        double closest = Double.POSITIVE_INFINITY;
-        WirePoint last = curvedPoint(x1, y1, x2, y2, 0);
+        TaskCablePath.Point last = path.at(0);
         for (int i = 1; i <= samples; i++) {
-            WirePoint next = curvedPoint(x1, y1, x2, y2, i / (double) samples);
-            closest = Math.min(closest,
-                    distanceToSegment(px, py, last.x(), last.y(), next.x(), next.y()));
+            double t = i / (double) samples;
+            TaskCablePath.Point next = path.at(t);
+            double distance = distanceToSegment(px, py, last.x(), last.y(), next.x(), next.y());
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                // The midpoint of the sampled step, so a hit right on a knot lands in the segment
+                // the pointer is actually over rather than always in the one after it.
+                closestSegment = path.segmentAt(t - 0.5 / samples);
+            }
             last = next;
         }
-        return closest;
+        return closestDistance <= 7.0 ? closestSegment : -1;
     }
 
     private static double distanceToSegment(double px, double py, double x1, double y1,
@@ -2358,7 +2407,7 @@ public final class BlueprintPanel extends AbstractWidget {
                     }
                     if (!compatibleDataPorts(wireSource, wireDataPort,
                             target.node(), target.parameterId())) {
-                        onMessage.accept("Data ports must use the same value type");
+                        onMessage.accept(Lang.get("lune.gui.blueprint.data_ports_must_use_same_value_type"));
                         wireSource = null;
                         wireDataPort = null;
                         wireSignalPort = -1;
@@ -2379,10 +2428,9 @@ public final class BlueprintPanel extends AbstractWidget {
                         }
                     }
                     onChanged.run();
-                    onMessage.accept((old == null ? "Data" : "Data wire replaced")
-                            + " connected to " + parameterLabel(target.node(), target.parameterId()));
+                    onMessage.accept(Lang.get("lune.gui.blueprint.connected", (old == null ? Lang.get("lune.gui.blueprint.data") : Lang.get("lune.gui.blueprint.data_wire_replaced")), parameterLabel(target.node(), target.parameterId())));
                 } else if (target == null) {
-                    onMessage.accept("Drop the data wire on an exposed input");
+                    onMessage.accept(Lang.get("lune.gui.blueprint.drop_data_wire_exposed_input"));
                 }
                 wireSource = null;
                 wireDataPort = null;
@@ -2397,7 +2445,7 @@ public final class BlueprintPanel extends AbstractWidget {
             int targetPort = input == null ? -1 : input.port();
             if (wireType == WIRE_SIGNAL) {
                 if (target == null || target.isSourceNode() || target.id.equals(wireSource.id)) {
-                    onMessage.accept("Drop the pulse output on a command or pulse input");
+                    onMessage.accept(Lang.get("lune.gui.blueprint.drop_pulse_output_command_or_pulse_input"));
                 } else {
                     if (wireSource.signalLinks == null) {
                         wireSource.signalLinks = new java.util.ArrayList<>();
@@ -2411,9 +2459,7 @@ public final class BlueprintPanel extends AbstractWidget {
                         wireSource.signalLinks.add(new TaskSignalLink(wireSignalPort,
                                 target.id, relayTargetPort));
                         onChanged.run();
-                        onMessage.accept((wireSource.isTimerNode() ? "Timer output" : "Relay output")
-                                + " " + (wireSignalPort + 1)
-                                + " connected to " + nodeName(target));
+                        onMessage.accept(Lang.get("lune.gui.blueprint.connected_2", (wireSource.isTimerNode() ? Lang.get("lune.gui.blueprint.timer_output") : Lang.get("lune.gui.blueprint.relay_output")), (wireSignalPort + 1), nodeName(target)));
                     }
                 }
                 wireSource = null;
@@ -2427,7 +2473,7 @@ public final class BlueprintPanel extends AbstractWidget {
             }
             if (wireType == WIRE_WHILE && wireSource.isClockNode()) {
                 if (target == null || target.isClockNode()) {
-                    onMessage.accept("Drop " + nodeName(wireSource) + " on a command's In pin");
+                    onMessage.accept(Lang.get("lune.gui.blueprint.drop_commands_pin", nodeName(wireSource)));
                 } else {
                     if (wireSource.alwaysTargets == null) {
                         wireSource.alwaysTargets = new java.util.LinkedHashSet<>();
@@ -2439,7 +2485,7 @@ public final class BlueprintPanel extends AbstractWidget {
                         wireSource.alwaysTargetInputPorts.put(target.id,
                                 target.isSignalRelayNode() ? targetPort : 0);
                         onChanged.run();
-                        onMessage.accept(nodeName(wireSource) + " connected to " + nodeName(target));
+                        onMessage.accept(Lang.get("lune.gui.blueprint.connected", nodeName(wireSource), nodeName(target)));
                     }
                 }
                 wireSource = null;
@@ -2452,7 +2498,7 @@ public final class BlueprintPanel extends AbstractWidget {
             }
             if (target != null && target.isObserverNode()) {
                 if (target.id.equals(wireSource.id)) {
-                    onMessage.accept("An Observer cannot watch itself");
+                    onMessage.accept(Lang.get("lune.gui.blueprint.observer_cannot_watch_itself"));
                 } else {
                     String oldObserved = target.observedNodeId;
                     target.observedNodeId = wireSource.id;
@@ -2460,7 +2506,7 @@ public final class BlueprintPanel extends AbstractWidget {
                         removeCableAnchor(TaskCableAnchor.key("observe", oldObserved, target.id));
                     }
                     onChanged.run();
-                    onMessage.accept("Observer now watches " + nodeName(wireSource));
+                    onMessage.accept(Lang.get("lune.gui.blueprint.observer_now_watches", nodeName(wireSource)));
                 }
                 wireSource = null;
                 wireDataPort = null;
@@ -2471,7 +2517,7 @@ public final class BlueprintPanel extends AbstractWidget {
                 return;
             }
             if (target != null && target.isSourceNode()) {
-                onMessage.accept("START and Always are source nodes; connect to a command's In pin");
+                onMessage.accept(Lang.get("lune.gui.blueprint.start_always_source_nodes_connect"));
                 wireSource = null;
                 wireDataPort = null;
                 wireSignalPort = -1;
@@ -2481,7 +2527,7 @@ public final class BlueprintPanel extends AbstractWidget {
                 return;
             }
             if (wireType == WIRE_WHILE && target != null && target.isPulseNode()) {
-                onMessage.accept("Use Success or Fail to send a pulse into this node");
+                onMessage.accept(Lang.get("lune.gui.blueprint.use_success_or_fail_send_pulse_into_node"));
                 wireSource = null;
                 wireDataPort = null;
                 wireSignalPort = -1;
@@ -2494,7 +2540,7 @@ public final class BlueprintPanel extends AbstractWidget {
                 // A left-drag is for connecting or rerouting. Releasing in empty space cancels
                 // the gesture; cutting is deliberately the explicit right-click action shown in
                 // the canvas hint, so a click or an imprecise release cannot destroy a wire.
-                onMessage.accept("Cable drag cancelled; release on an input to connect");
+                onMessage.accept(Lang.get("lune.gui.blueprint.cable_drag_cancelled_release_input"));
                 wireSource = null;
                 wireDataPort = null;
                 wireSignalPort = -1;
@@ -2534,9 +2580,9 @@ public final class BlueprintPanel extends AbstractWidget {
             }
             if (!java.util.Objects.equals(oldTarget, newTarget)) {
                 onChanged.run();
-                String label = wireType == WIRE_FAILURE ? "Failure"
-                        : wireType == WIRE_WHILE ? "While" : "Success";
-                onMessage.accept(label + " connected to " + nodeName(target));
+                String label = wireType == WIRE_FAILURE ? Lang.get("lune.gui.blueprint.failure")
+                        : wireType == WIRE_WHILE ? Lang.get("lune.gui.blueprint.while") : Lang.get("lune.gui.blueprint.success");
+                onMessage.accept(Lang.get("lune.gui.blueprint.connected", label, nodeName(target)));
             }
             wireSource = null;
             wireDataPort = null;
@@ -2594,7 +2640,7 @@ public final class BlueprintPanel extends AbstractWidget {
             return;
         }
         extractor.fill(left, top, right, bottom, 0x243F8FFF);
-        extractor.outline(left, top, right - left, bottom - top, 0xFF79AFFF);
+        extractor.outline(left, top, right - left, bottom - top, LuneScreen.ACCENT_HOVER);
     }
 
     private void selectAnchor() {
@@ -2629,10 +2675,8 @@ public final class BlueprintPanel extends AbstractWidget {
         }
         boolean ctrl = (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0;
         if (ctrl && (event.key() == GLFW.GLFW_KEY_0 || event.key() == GLFW.GLFW_KEY_KP_0)) {
-            zoom = 1.0f;
-            panX = 0;
-            panY = 0;
-            onMessage.accept("Blueprint view reset");
+            resetView();
+            onMessage.accept(Lang.get("lune.gui.blueprint.blueprint_view_reset"));
             return true;
         }
         if (ctrl && event.key() == GLFW.GLFW_KEY_A) {
@@ -2782,7 +2826,7 @@ public final class BlueprintPanel extends AbstractWidget {
     }
 
     private int inputY(TaskNode node) {
-        return nodeY(node) + 29;
+        return nodeY(node) + TaskCanvas.INPUT_OFFSET_Y;
     }
 
     private int outputX(TaskNode node) {
@@ -2790,15 +2834,15 @@ public final class BlueprintPanel extends AbstractWidget {
     }
 
     private int successY(TaskNode node) {
-        return nodeY(node) + 29;
+        return nodeY(node) + TaskCanvas.SUCCESS_OFFSET_Y;
     }
 
     private int failureY(TaskNode node) {
-        return nodeY(node) + 44;
+        return nodeY(node) + TaskCanvas.FAILURE_OFFSET_Y;
     }
 
     private int whileY(TaskNode node) {
-        return nodeY(node) + (node.isClockNode() ? 29 : 59);
+        return TaskCanvas.whileY(node);
     }
 
     private int signalInputY(TaskNode node, int index) {
@@ -2889,8 +2933,10 @@ public final class BlueprintPanel extends AbstractWidget {
             maxX = Math.max(maxX, nodeX(node) + NODE_W);
             maxY = Math.max(maxY, nodeY(node) + nodeHeight(node));
         }
-        if (task.cableAnchors != null) {
-            for (TaskCableRoute route : task.cableAnchors.values()) {
+        java.util.List<TaskCableRoute> visibleRoutes = new java.util.ArrayList<>(automaticCableRoutes.values());
+        if (task.cableAnchors != null) visibleRoutes.addAll(task.cableAnchors.values());
+        {
+            for (TaskCableRoute route : visibleRoutes) {
                 if (route == null || route.points == null) {
                     continue;
                 }
@@ -2958,7 +3004,7 @@ public final class BlueprintPanel extends AbstractWidget {
         extractor.fill(x, y, x + width, y + height, 0xD0202028);
         extractor.outline(x, y, width, height, pinWhile);
         extractor.textRenderer().accept(x + 6, y + 5,
-                Component.literal("Always").withColor(LuneScreen.TEXT));
+                Component.literal(Lang.get("lune.gui.tasks.always")).withColor(LuneScreen.TEXT));
         extractor.fill(x + width - 5, y + 6, x + width + 1, y + 12, pinWhile);
     }
 
@@ -2972,7 +3018,7 @@ public final class BlueprintPanel extends AbstractWidget {
         extractor.outline(x, y, MINIMAP_WIDTH, MINIMAP_HEIGHT, 0xFF66758C);
         extractor.fill(x, y, x + MINIMAP_WIDTH, y + MINIMAP_HEADER, 0xE02A405C);
         extractor.textRenderer().accept(x + 6, y + 4,
-                Component.literal("MAP").withColor(0xFFFFFFFF));
+                Component.literal(Lang.get("lune.gui.blueprint.map")).withColor(0xFFFFFFFF));
 
         MinimapBounds bounds = minimapBounds();
         double scale = minimapScale(bounds);
@@ -3207,28 +3253,28 @@ public final class BlueprintPanel extends AbstractWidget {
 
     private static String nodeName(TaskNode node) {
         if (node.isStartNode()) {
-            return "START";
+            return Lang.get("lune.gui.tasks.start");
         }
         if (node.isClockNode()) {
-            return node.isPulseSourceNode() ? "Pulse" : "Always";
+            return node.isPulseSourceNode() ? Lang.get("lune.gui.tasks.pulse") : Lang.get("lune.gui.tasks.always");
         }
         if (node.isSignalRelayNode()) {
-            return "Signal Relay";
+            return Lang.get("lune.gui.tasks.signal_relay");
         }
         if (node.isTimerNode()) {
-            return "Timer";
+            return Lang.get("lune.gui.tasks.timer");
         }
         if (node.isEndNode()) {
-            return "End";
+            return Lang.get("lune.gui.palette.end");
         }
         if (node.isCounterNode()) {
-            return "Counter";
+            return Lang.get("lune.gui.tasks.counter");
         }
         if (node.isObserverNode()) {
-            return "Observer";
+            return Lang.get("lune.gui.palette.observer");
         }
         if (node.isButtonNode()) {
-            return "Button";
+            return Lang.get("lune.gui.tasks.button");
         }
         CommandDef def = CommandRegistry.byId(node.commandId);
         return def == null ? node.commandId : def.name();
@@ -3237,7 +3283,7 @@ public final class BlueprintPanel extends AbstractWidget {
     @Override
     protected void updateWidgetNarration(NarrationElementOutput output) {
         if (selected != null) {
-            output.add(NarratedElementType.TITLE, Component.literal("Selected " + nodeName(selected)));
+            output.add(NarratedElementType.TITLE, Component.literal(Lang.get("lune.gui.blueprint.selected", nodeName(selected))));
         }
     }
 }

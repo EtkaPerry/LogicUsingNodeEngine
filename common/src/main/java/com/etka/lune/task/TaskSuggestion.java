@@ -1,5 +1,6 @@
 package com.etka.lune.task;
 
+import com.etka.lune.util.Lang;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -118,15 +119,15 @@ public final class TaskSuggestion {
             return "Add START";
         }
         if (kind == Kind.SAFETY) {
-            return "Make permanent";
+            return Lang.get("lune.suggestion.make_permanent");
         }
         if (kind == Kind.QUANTITY) {
-            return "Set goal";
+            return Lang.get("lune.suggestion.set_goal");
         }
         if (kind == Kind.AUTO_TOOL) {
-            return "Turn on";
+            return Lang.get("lune.suggestion.turn");
         }
-        return changesTask ? "Add step" : "Got it";
+        return changesTask ? Lang.get("lune.suggestion.add_step") : Lang.get("lune.suggestion.got");
     }
 
     public boolean changesTask() {
@@ -144,10 +145,10 @@ public final class TaskSuggestion {
         }
         if (kind == Kind.QUANTITY) {
             int current = intParam(node, "limit", 0);
-            return "Stop after: " + (current <= 0 ? "No limit" : current + " " + unit);
+            return Lang.get("lune.suggestion.stop_after", (current <= 0 ? Lang.get("lune.suggestion.limit") : current + " " + unit));
         }
         if (kind == Kind.AUTO_TOOL) {
-            return "Get tools first: Off";
+            return Lang.get("lune.suggestion.get_tools_first_off");
         }
         return previewBefore;
     }
@@ -157,16 +158,16 @@ public final class TaskSuggestion {
             return "Self Preservation: x∞";
         }
         if (kind == Kind.QUANTITY) {
-            return "Stop after: " + Math.clamp(amount, Math.max(1, amountStep), 512) + " " + unit;
+            return Lang.get("lune.suggestion.stop_after_2", Math.clamp(amount, Math.max(1, amountStep), 512), unit);
         }
         if (kind == Kind.AUTO_TOOL) {
-            return "Get tools first: On";
+            return Lang.get("lune.suggestion.get_tools_first");
         }
         return previewAfter;
     }
 
     public String acceptedReply() {
-        return acceptedReply.isBlank() ? "All right. I'll keep that in mind." : acceptedReply;
+        return acceptedReply.isBlank() ? Lang.get("lune.suggestion.all_right_ill_keep_mind") : acceptedReply;
     }
 
     /** Revalidates the editable node before changing it, since the prompt may have been open awhile. */
@@ -251,7 +252,7 @@ public final class TaskSuggestion {
             TaskNode issueNode = found.node() == null ? task.nodes.get(0) : found.node();
             TaskSuggestion connection = notice(Kind.CONNECTION, task, issueNode,
                     found.message(), found.key(),
-                    "I'll leave that connection for you to repair in Tasks.");
+                    Lang.get("lune.suggestion.ill_leave_connection_repair_tasks"));
             if (!ignored.contains(connection.key())) {
                 return Optional.of(connection);
             }
@@ -334,24 +335,23 @@ public final class TaskSuggestion {
         if (millis >= 1) {
             // Against the 50 ms a client tick has, so the number means something to a reader who
             // has never thought about tick budgets.
-            prompt.append(" is using about ").append(millis)
-                    .append(" ms of every 50 ms tick");
+            prompt.append(Lang.get("lune.suggestion.using_about")).append(millis)
+                    .append(Lang.get("lune.suggestion.ms_every_50_ms_tick"));
         } else {
-            prompt.append(" is restarting constantly");
+            prompt.append(Lang.get("lune.suggestion.restarting_constantly"));
         }
         if (restartsPerSecond >= 1.0) {
-            prompt.append(" and starting over about ").append(Math.round(restartsPerSecond))
-                    .append(" times a second");
+            prompt.append(Lang.get("lune.suggestion.starting_over_about")).append(Math.round(restartsPerSecond))
+                    .append(Lang.get("lune.suggestion.times_second"));
         }
-        prompt.append(". That is why the world is stuttering, and it has not produced anything"
-                + " while I have been watching.");
+        prompt.append(Lang.get("lune.suggestion.why_world_stuttering_has_produced"));
         if (permanent) {
-            prompt.append(" It is set to repeat forever, so it begins again the moment it finishes.");
+            prompt.append(Lang.get("lune.suggestion.set_repeat_forever_begins_again_moment"));
         }
-        prompt.append(" Was that intended?");
+        prompt.append(Lang.get("lune.suggestion.intended"));
         return Optional.of(notice(Kind.PERFORMANCE, task, node, prompt.toString(),
                 "slow-" + millis + "-" + Math.round(restartsPerSecond),
-                "Understood. I'll leave it running and stop mentioning it."));
+                Lang.get("lune.suggestion.understood_ill_leave_running_stop")));
     }
 
     private static TaskSuggestion locationSuggestion(TaskGraph task, TaskNode node,
@@ -366,17 +366,15 @@ public final class TaskSuggestion {
         String locationProblem = incompatibleTargetGroup(dimension, targets);
         if (locationProblem != null) {
             return notice(Kind.LOCATION, task, node,
-                    "This job only targets " + locationProblem + " blocks, but you're in "
-                            + dimensionLabel(dimension) + ". It may search forever here.",
-                    dimension, "Good catch. I'll leave the route unchanged for you.");
+                    Lang.get("lune.suggestion.job_only_targets_blocks_but_youre_may", locationProblem, dimensionLabel(dimension)),
+                    dimension, Lang.get("lune.suggestion.good_catch_ill_leave_route_unchanged"));
         }
         if ("chop".equals(node.commandId) && context.barrenForWood) {
             String biome = context.biomeName == null || context.biomeName.isBlank()
-                    ? "this biome" : context.biomeName;
+                    ? Lang.get("lune.suggestion.biome") : context.biomeName;
             return notice(Kind.LOCATION, task, node,
-                    "This is a " + job.workload + "-log job, but " + biome
-                            + " has almost no trees. A travel step may be needed first.",
-                    biome, "Mm-hm. I'll let you choose where the wood run should begin.");
+                    Lang.get("lune.suggestion.log_job_but_has_almost_trees_travel_step", job.workload, biome),
+                    biome, Lang.get("lune.suggestion.mm_hm_ill_let_choose_where_wood_run"));
         }
         return null;
     }
@@ -392,23 +390,20 @@ public final class TaskSuggestion {
         if (context.freeSlots >= needed) {
             return null;
         }
-        String ending = " Extra drops may be left behind; add a Deposit step if needed.";
+        String ending = Lang.get("lune.suggestion.extra_drops_may_left_behind_add_deposit");
         String prompt =
-                "This " + job.workload + "-" + job.unit + " job may need about " + needed
-                        + " free slots; you have " + context.freeSlots
-                        + " and no Deposit step after it." + ending;
+                Lang.get("lune.suggestion.job_may_need_about_free_slots_have", job.workload, job.unit, needed, context.freeSlots, ending);
         String filter = depositFilter(node);
         if (filter != null && TaskWiring.canInsertAfter(task, node)) {
             return change(Kind.INVENTORY_SPACE, task, node,
-                    prompt + " Shall I add an optional " + filter.toLowerCase(Locale.ROOT)
-                            + " deposit?",
+                    Lang.get("lune.suggestion.shall_add_optional_deposit", prompt, filter.toLowerCase(Locale.ROOT)),
                     context.freeSlots + "-" + needed,
-                    "Done. I'll put away the gathered items when a container is nearby.",
+                    Lang.get("lune.suggestion.done_ill_put_away_gathered_items_when"),
                     nodeName(node), nodeName(node) + "  →  Deposit");
         }
         return notice(Kind.INVENTORY_SPACE, task, node, prompt,
                 context.freeSlots + "-" + needed,
-                "Okay. I won't pretend that bag has more room than it does.");
+                Lang.get("lune.suggestion.okay_wont_pretend_bag_has_more_room_than"));
     }
 
     private static TaskSuggestion durabilitySuggestion(TaskGraph task, TaskNode node,
@@ -425,20 +420,18 @@ public final class TaskSuggestion {
         }
         String tool = job.tool == ToolNeed.AXE ? "axe" : "pickaxe";
         String prompt = remaining == 0
-                        ? "This " + job.workload + "-" + job.unit + " job has no usable " + tool
-                                + " prepared. A Get Tools step would make it much smoother."
-                        : "Your best " + tool + " has about " + remaining + " uses left, but this job"
-                                + " is roughly " + job.toolUses + " uses. It may break partway through.";
+                        ? Lang.get("lune.suggestion.job_has_usable_prepared_get_tools_step", job.workload, job.unit, tool)
+                        : Lang.get("lune.suggestion.best_has_about_uses_left_but_job_roughly", tool, remaining, job.toolUses);
         if (TaskWiring.canInsertBefore(task, node)) {
             return change(Kind.TOOL_DURABILITY, task, node,
-                    prompt + " Shall I add Get Tools before it?",
+                    Lang.get("lune.suggestion.shall_add_get_tools_before", prompt),
                     tool + "-" + remaining + "-" + job.toolUses,
-                    "Done. I'll prepare the " + tool + " before that job.",
+                    Lang.get("lune.suggestion.done_ill_prepare_before_job", tool),
                     nodeName(node), "Get Tools  →  " + nodeName(node));
         }
         return notice(Kind.TOOL_DURABILITY, task, node, prompt,
                 tool + "-" + remaining + "-" + job.toolUses,
-                "Got it. I won't count a nearly broken tool as ready.");
+                Lang.get("lune.suggestion.got_wont_count_nearly_broken_tool_as"));
     }
 
     private static TaskSuggestion foodSuggestion(TaskGraph task, TaskNode node,
@@ -448,17 +441,16 @@ public final class TaskSuggestion {
                 || hasCommand(task, "eat")) {
             return null;
         }
-        String prompt = "This is a long " + job.label + ", but your food bar is only "
-                + context.foodLevel + "/20 and the task has no Eat step. Hunger may interrupt it.";
+        String prompt = Lang.get("lune.suggestion.long_but_food_bar_only_20_task_has_eat", job.label, context.foodLevel);
         if (TaskWiring.canInsertBefore(task, node)) {
-            return change(Kind.FOOD, task, node, prompt + " Shall I add a snack break?",
+            return change(Kind.FOOD, task, node, Lang.get("lune.suggestion.shall_add_snack_break", prompt),
                     String.valueOf(context.foodLevel),
-                    "Done. I'll eat before settling into that long job.",
+                    Lang.get("lune.suggestion.done_ill_eat_before_settling_into_long"),
                     nodeName(node), "Eat  →  " + nodeName(node));
         }
         return notice(Kind.FOOD, task, node, prompt,
                 String.valueOf(context.foodLevel),
-                "All right. A proper snack break belongs before a long job.");
+                Lang.get("lune.suggestion.all_right_proper_snack_break_belongs"));
     }
 
     private static TaskSuggestion torchSuggestion(TaskGraph task, TaskNode node,
@@ -472,11 +464,9 @@ public final class TaskSuggestion {
             return null;
         }
         return notice(Kind.TORCHES, task, node,
-                "This underground job is about " + job.workload + " " + job.unit + ", but you carry "
-                        + context.torches + " torch" + (context.torches == 1 ? "" : "es")
-                        + ". I'd bring around " + wanted + " before starting.",
+                Lang.get("lune.suggestion.underground_job_about_but_carry_torch_id", job.workload, job.unit, context.torches, (context.torches == 1 ? "" : "es"), wanted),
                 context.torches + "-" + wanted,
-                "Mhm. Long tunnels deserve a little light.");
+                Lang.get("lune.suggestion.mhm_long_tunnels_deserve_little_light"));
     }
 
     private static TaskSuggestion sleepSuggestion(TaskGraph task, TaskNode node,
@@ -487,17 +477,16 @@ public final class TaskSuggestion {
                 || hasCommand(task, "sleep")) {
             return null;
         }
-        String prompt = "It's already night, and this is a long " + job.label
-                + " with no Sleep step.";
+        String prompt = Lang.get("lune.suggestion.already_night_long_with_sleep_step", job.label);
         if (TaskWiring.canInsertBefore(task, node)) {
             return change(Kind.SLEEP, task, node,
-                    prompt + " Shall I add Sleep before it?",
-                    "night", "Done. I'll try to sleep before that outdoor job.",
+                    Lang.get("lune.suggestion.shall_add_sleep_before", prompt),
+                    "night", Lang.get("lune.suggestion.done_ill_try_sleep_before_outdoor_job"),
                     nodeName(node), "Sleep  →  " + nodeName(node));
         }
         return notice(Kind.SLEEP, task, node,
-                prompt + " You may want to place Sleep manually around this loop.",
-                "night", "Okay. I'll leave the bedtime decision with you.");
+                Lang.get("lune.suggestion.may_want_place_sleep_manually_around", prompt),
+                "night", Lang.get("lune.suggestion.okay_ill_leave_bedtime_decision_with"));
     }
 
     private static TaskSuggestion notice(Kind kind, TaskGraph task, TaskNode node,
@@ -516,10 +505,10 @@ public final class TaskSuggestion {
                 : task.nodes.isEmpty() ? new TaskNode(TaskNode.START_COMMAND)
                 : task.nodes.get(0);
         return change(Kind.START, task, keyNode,
-                "This task has no explicit START node. Shall I add one before its current entry point?",
-                "missing-start", "Done. The task now has an explicit START point.",
-                "List order chooses the entry point", "START  →  "
-                        + (first == null ? "first action" : nodeName(first)));
+                Lang.get("lune.suggestion.task_has_explicit_start_node_shall_add"),
+                "missing-start", Lang.get("lune.suggestion.done_task_now_has_explicit_start_point"),
+                Lang.get("lune.suggestion.list_order_chooses_entry_point"), "START  →  "
+                        + (first == null ? Lang.get("lune.suggestion.first_action") : nodeName(first)));
     }
 
     /**
@@ -532,9 +521,8 @@ public final class TaskSuggestion {
         for (TaskNode node : TaskSafety.connectedGuards(task)) {
             if (node.repeat > 0) {
                 return change(Kind.SAFETY, task, node,
-                        "Self Preservation is set to " + node.describeRepeat()
-                                + ". Shall I make it permanent for the whole task?",
-                        "monitor-" + node.id, "Done. Self Preservation will remain available for the whole task.",
+                        Lang.get("lune.suggestion.self_preservation_set_shall_make", node.describeRepeat()),
+                        "monitor-" + node.id, Lang.get("lune.suggestion.done_self_preservation_remain_available"),
                         "Self Preservation: " + node.describeRepeat(), "Self Preservation: x∞");
             }
         }
@@ -640,15 +628,15 @@ public final class TaskSuggestion {
             case "chop" -> current <= 8
                     ? new TaskSuggestion(Kind.QUANTITY, task, node, 32, 8, "logs",
                     current <= 0
-                            ? "This wood job has no finish line. Shall we choose how many logs to gather?"
-                            : "Eight logs may be a little tiny. Want to choose a bigger wood goal?")
+                            ? Lang.get("lune.suggestion.wood_job_has_finish_line_shall_we_choose")
+                            : Lang.get("lune.suggestion.eight_logs_may_little_tiny_want_choose"))
                     : null;
             case "mine" -> current <= 0
                     ? mineQuantity(task, node)
                     : null;
             case "harvest" -> current <= 0
                     ? new TaskSuggestion(Kind.QUANTITY, task, node, 64, 16, "crops",
-                    "This harvest has no stopping point. Shall we give it a crop goal?")
+                    Lang.get("lune.suggestion.harvest_has_stopping_point_shall_we_give"))
                     : null;
             default -> null;
         };
@@ -659,13 +647,11 @@ public final class TaskSuggestion {
         boolean bulkStone = containsAny(targets, "stone", "cobblestone", "deepslate", "netherrack");
         int amount = bulkStone ? 128 : 32;
         int step = bulkStone ? 32 : 8;
-        String noun = bulkStone ? "stone blocks" : "blocks";
-        String runs = node.repeat == 0 ? "repeat forever" : node.repeat == 1
-                ? "run once" : "run " + node.repeat + " times";
+        String noun = bulkStone ? Lang.get("lune.suggestion.stone_blocks") : "blocks";
+        String runs = node.repeat == 0 ? Lang.get("lune.suggestion.repeat_forever") : node.repeat == 1
+                ? Lang.get("lune.suggestion.run_once") : "run " + node.repeat + " times";
         return new TaskSuggestion(Kind.QUANTITY, task, node, amount, step, "blocks",
-                "This Mine node is set to " + runs + ", but each run has no block goal and can "
-                        + "still continue forever. Shall we set a goal for the next run—maybe "
-                        + amount + " " + noun + "?");
+                Lang.get("lune.suggestion.mine_node_set_but_each_run_has_block", runs, amount, noun));
     }
 
     private static TaskSuggestion toolSuggestion(TaskGraph task, TaskNode node) {
@@ -679,7 +665,7 @@ public final class TaskSuggestion {
             return null;
         }
         return new TaskSuggestion(Kind.AUTO_TOOL, task, node, 0, 0, "",
-                "This mining step may need a proper tool, but tool preparation is off. Shall I turn it on?");
+                Lang.get("lune.suggestion.mining_step_may_need_proper_tool_but"));
     }
 
     private enum ToolNeed {
@@ -698,14 +684,14 @@ public final class TaskSuggestion {
         return switch (node.commandId) {
             case "chop" -> {
                 int amount = positiveOr(intParam(node, "limit", 8), 32);
-                yield new JobProfile("wood run", amount, amount, "log", true, 2,
+                yield new JobProfile(Lang.get("lune.suggestion.wood_run"), amount, amount, "log", true, 2,
                         false, true, ToolNeed.AXE);
             }
             case "mine" -> {
                 int amount = positiveOr(intParam(node, "limit", 0),
                         containsAny(param(node, "targets"), "stone", "deepslate", "netherrack")
                                 ? 128 : 32);
-                yield new JobProfile("mining run", amount, amount, "block", true, 2,
+                yield new JobProfile(Lang.get("lune.suggestion.mining_run"), amount, amount, "block", true, 2,
                         isUndergroundMine(node), false, mineTool(node));
             }
             case "harvest" -> {
@@ -728,25 +714,25 @@ public final class TaskSuggestion {
             }
             case "bridge" -> {
                 int length = intParam(node, "length", 16);
-                yield new JobProfile("bridge build", length, 0, "block", false, 0,
+                yield new JobProfile(Lang.get("lune.suggestion.bridge_build"), length, 0, "block", false, 0,
                         false, true, ToolNeed.NONE);
             }
             case "explore" -> {
                 int distance = safeMultiply(intParam(node, "attempts", 6),
                         intParam(node, "step", 12));
-                yield new JobProfile("exploration route", distance, 0, "block", false, 0,
+                yield new JobProfile(Lang.get("lune.suggestion.exploration_route"), distance, 0, "block", false, 0,
                         false, true, ToolNeed.NONE);
             }
             case "walk", "run" -> {
                 int distance = intParam(node, "distance", 32);
-                yield new JobProfile("travel route", distance, 0, "block", false, 0,
+                yield new JobProfile(Lang.get("lune.suggestion.travel_route"), distance, 0, "block", false, 0,
                         false, true, ToolNeed.NONE);
             }
-            case "huntendermen" -> hunt(node, "count", 12, "enderman hunt", "pearl");
-            case "huntblazes" -> hunt(node, "count", 8, "blaze hunt", "rod");
-            case "huntcreepers" -> hunt(node, "count", 16, "creeper hunt", "drop");
-            case "huntskeletons" -> hunt(node, "count", 16, "skeleton hunt", "drop");
-            case "huntsheep" -> hunt(node, "count", 16, "sheep hunt", "wool");
+            case "huntendermen" -> hunt(node, "count", 12, Lang.get("lune.suggestion.enderman_hunt"), "pearl");
+            case "huntblazes" -> hunt(node, "count", 8, Lang.get("lune.suggestion.blaze_hunt"), "rod");
+            case "huntcreepers" -> hunt(node, "count", 16, Lang.get("lune.suggestion.creeper_hunt"), "drop");
+            case "huntskeletons" -> hunt(node, "count", 16, Lang.get("lune.suggestion.skeleton_hunt"), "drop");
+            case "huntsheep" -> hunt(node, "count", 16, Lang.get("lune.suggestion.sheep_hunt"), "wool");
             default -> null;
         };
     }
@@ -917,7 +903,7 @@ public final class TaskSuggestion {
             case "minecraft:the_nether" -> "the Nether";
             case "minecraft:the_end" -> "the End";
             case "minecraft:overworld" -> "the Overworld";
-            default -> "this dimension";
+            default -> Lang.get("lune.suggestion.dimension");
         };
     }
 

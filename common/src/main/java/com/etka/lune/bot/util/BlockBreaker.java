@@ -1,6 +1,7 @@
 package com.etka.lune.bot.util;
 
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.knowledge.OreKnowledge;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.path.WaterEscape;
@@ -43,7 +44,7 @@ public final class BlockBreaker {
     private boolean destroying;
     /** What is under the swing, kept because a finished break can only be read as air. */
     private BlockState destroyingState;
-    private String failureReason = "";
+    private final StatusText failureReason = new StatusText();
 
     /** Outcome of one tick of work on a block. */
     public enum Progress {
@@ -90,7 +91,7 @@ public final class BlockBreaker {
      */
     public Progress tick(BotContext ctx, BlockPos wanted, boolean allowNecessaryWaterBreach,
                          Set<Long> protectedPositions, BlockState toolState) {
-        failureReason = "";
+        failureReason.clear();
         if (WaterEscape.needsAir(ctx.player)) {
             stop(ctx);
             WaterEscape.tick(ctx);
@@ -127,15 +128,15 @@ public final class BlockBreaker {
         }
         if (protectedPositions.contains(pos.asLong())) {
             stop(ctx);
-            failureReason = "refusing to destroy an existing route-support block";
-            ctx.debug.breaking(pos, blockName, failureReason);
+            failureReason.set("lune.status.break.refusing_route_support");
+            ctx.debug.breaking(pos, blockName, failureReason.text());
             return Progress.HAZARD;
         }
         if (MovementHelper.wouldOpenLava(ctx.level, pos) && !ctx.player.isInLava()) {
             stop(ctx);
-            failureReason = "refusing to break " + state.getBlock().getName().getString()
-                    + " because lava would flow through";
-            ctx.debug.breaking(pos, blockName, failureReason);
+            failureReason.set("lune.status.break.refusing_lava_flow",
+                    state.getBlock().getName().getString());
+            ctx.debug.breaking(pos, blockName, failureReason.text());
             return Progress.HAZARD;
         }
         if (MovementHelper.wouldOpenWater(ctx.level, pos)) {
@@ -144,12 +145,12 @@ public final class BlockBreaker {
             boolean hasExit = WaterEscape.hasBreathableExit(ctx.level, pos);
             if (!waterBreachAllowed || !enoughAir || !hasExit) {
                 stop(ctx);
-                failureReason = !waterBreachAllowed
-                        ? "refusing to open a water breach while mining"
+                failureReason.set(!waterBreachAllowed
+                        ? "lune.status.break.refusing_water_breach"
                         : !enoughAir
-                                ? "not enough air to open this water breach"
-                                : "water behind this block has no nearby breathable exit";
-                ctx.debug.breaking(pos, blockName, failureReason);
+                                ? "lune.status.break.not_enough_air_for_breach"
+                                : "lune.status.break.water_has_no_exit");
+                ctx.debug.breaking(pos, blockName, failureReason.text());
                 return Progress.HAZARD;
             }
         }
@@ -232,7 +233,8 @@ public final class BlockBreaker {
         }
     }
 
-    public String getFailureReason() {
+    /** Why the last break was refused, keyed so a task can adopt it without losing meaning. */
+    public StatusText getFailureReason() {
         return failureReason;
     }
 

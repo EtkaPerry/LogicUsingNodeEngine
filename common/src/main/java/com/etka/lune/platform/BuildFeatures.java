@@ -1,9 +1,5 @@
 package com.etka.lune.platform;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.Properties;
-
 /**
  * Features that are intentionally different in a released installation. Keeping the check here
  * gives all loaders and common code the same release boundary without removing the learned policy
@@ -11,7 +7,7 @@ import java.util.Properties;
  */
 public final class BuildFeatures {
 
-    private static final boolean RELEASE_BUILD = loadReleaseFlag();
+    private static final boolean RELEASE_BUILD = BuildInfo.flag("lune.release");
 
     private BuildFeatures() {}
 
@@ -34,18 +30,8 @@ public final class BuildFeatures {
         return !RELEASE_BUILD;
     }
 
-    private static boolean loadReleaseFlag() {
-        try (InputStream stream = BuildFeatures.class.getResourceAsStream("/lune-build.properties")) {
-            if (stream == null) {
-                return false;
-            }
-            Properties properties = new Properties();
-            properties.load(stream);
-            return Boolean.parseBoolean(properties.getProperty("lune.release", "false"));
-        } catch (IOException | RuntimeException ignored) {
-            // A missing or malformed marker must fail safe to the developer path. The publish
-            // script also verifies that it is building with -PluneRelease=true.
-            return false;
-        }
+    /** Detailed per-run journals are test diagnostics and are never written by a release build. */
+    public static boolean runTracingEnabled() {
+        return !RELEASE_BUILD;
     }
 }

@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -79,7 +81,7 @@ public final class LootTask implements Task {
     private int attemptTicks;
     private int collected;
     private String collectionStrategy = CollectionPolicy.DEFAULT;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     /** Keeps the sweep working through one pile instead of zigzagging between the far ends of two. */
     private final WorkSite site = new WorkSite();
@@ -135,7 +137,7 @@ public final class LootTask implements Task {
 
     @Override
     public TaskProgress learningProgress() {
-        return new TaskProgress(collected, Math.max(1, collected), "items");
+        return new TaskProgress(collected, Math.max(1, collected), Lang.get("lune.unit.items"));
     }
 
     @Override
@@ -159,11 +161,17 @@ public final class LootTask implements Task {
 
     @Override
     public String name() {
-        return "Loot";
+        return Lang.get("lune.task.loot.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Loot");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -175,14 +183,14 @@ public final class LootTask implements Task {
         nudgeTicks = 0;
         attemptTicks = 0;
         collected = 0;
-        status = "";
+        status.clear();
     }
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
         // Nothing can be collected into a full bag; spinning here would stall the whole task.
         if (InventoryHelper.isFull(ctx.player)) {
-            status = "inventory full, collected " + collected;
+            status.set("lune.status.loot.inventory_full_collected", collected);
             return TaskStatus.SUCCESS;
         }
 
@@ -198,7 +206,7 @@ public final class LootTask implements Task {
         if (target == null) {
             target = findNearest(ctx);
             if (target == null) {
-                status = "collected " + collected + ", nothing left within " + radius + " blocks";
+                status.set("lune.status.loot.collected_nothing_left_within_blocks", collected, radius);
                 return TaskStatus.SUCCESS;
             }
             attemptTicks = 0;
@@ -207,13 +215,13 @@ public final class LootTask implements Task {
         // The backstop. Every failure mode below is meant to be handled explicitly, but this is what
         // guarantees the task cannot hang on one stubborn item no matter what was missed.
         if (++attemptTicks > attemptDeadline) {
-            giveUpOnTarget(ctx, "took too long");
+            giveUpOnTarget(ctx, Lang.get("lune.reason.took_too_long"));
             return TaskStatus.RUNNING;
         }
 
         if (withinPickupRange(ctx, target)) {
             // Standing on it; vanilla collects next tick and the isAlive check above notices.
-            status = "collecting";
+            status.set("lune.status.loot.collecting");
             return TaskStatus.RUNNING;
         }
 
@@ -251,7 +259,8 @@ public final class LootTask implements Task {
                 if (nudgeTowardDrop(ctx)) {
                     return TaskStatus.RUNNING;
                 }
-                giveUpOnTarget(ctx, standOnDrop ? "unreachable" : "no route to it");
+                giveUpOnTarget(ctx, Lang.get(standOnDrop ? "lune.reason.unreachable"
+                    : "lune.reason.no_route_to_it"));
                 return TaskStatus.RUNNING;
             }
             case SUCCESS -> {
@@ -267,14 +276,14 @@ public final class LootTask implements Task {
                     // player feet positions instead: the item occupies the floor block, so asking
                     // the pathfinder to stand on that block is usually impossible.
                     standOnDrop = true;
-                    status = "stepping onto the drop";
+                    status.set("lune.status.loot.stepping_onto_drop");
                     return TaskStatus.RUNNING;
                 }
                 if (withinPickupRange(ctx, target)) {
                     // Arrived on the block this very tick. Vanilla collects on its own next tick,
                     // and the alive-check at the top of onTick notices; writing the drop off here
                     // would throw away an item the bot is literally standing on.
-                    status = "collecting";
+                    status.set("lune.status.loot.collecting");
                     return TaskStatus.RUNNING;
                 }
                 // The route arrived and the item is still out of reach - the pickup box is much
@@ -285,12 +294,11 @@ public final class LootTask implements Task {
                 if (nudgeTowardDrop(ctx)) {
                     return TaskStatus.RUNNING;
                 }
-                giveUpOnTarget(ctx, "cannot be picked up from here");
+                giveUpOnTarget(ctx, Lang.get("lune.reason.cannot_be_picked_up_here"));
                 return TaskStatus.RUNNING;
             }
             default -> {
-                status = "walking to " + target.getItem().getHoverName().getString()
-                        + " (" + collected + " collected)";
+                status.set("lune.status.loot.walking_collected", target.getItem().getHoverName().getString(), collected);
                 return TaskStatus.RUNNING;
             }
         }
@@ -323,7 +331,7 @@ public final class LootTask implements Task {
         ctx.look.lookAt(ctx.player, target.position());
         ctx.input.forward = true;
         ctx.debug.intent = "closing the last few blocks to a drop the router could not reach";
-        status = String.format(java.util.Locale.ROOT, "edging toward the drop (%.1f blocks)", distance);
+        status.set("lune.status.loot.edging_toward_drop_blocks", distance);
         return true;
     }
 
@@ -354,7 +362,7 @@ public final class LootTask implements Task {
         nudgeTicks = 0;
         unreachable.add(target.getId());
         clearTarget(ctx);
-        status = "drop " + why + ", trying the next one";
+        status.set("lune.status.loot.drop_trying_next_one", why);
     }
 
     /** Whether there is anything worth sweeping up within {@code radius}. */

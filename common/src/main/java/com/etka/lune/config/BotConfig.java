@@ -1,5 +1,6 @@
 package com.etka.lune.config;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.Constants;
 import com.etka.lune.bot.path.AStarPathfinder;
 import com.etka.lune.platform.Services;
@@ -30,6 +31,7 @@ public final class BotConfig {
     public static final String LUNE_SIZE_LARGE = "Large";
     /** Card colour families for the task canvas. */
     public static final String THEME_SLATE = "Slate";
+    public static final String THEME_ORANGE = "Orange";
     public static final String THEME_BLUE = "Blue";
     public static final String THEME_PURPLE = "Purple";
     public static final String THEME_AMBER = "Amber";
@@ -39,12 +41,22 @@ public final class BotConfig {
     public static final String PINS_CLASSIC = "Classic";
     public static final String PINS_COLOUR_BLIND = "Colour-blind safe";
 
+    /** Follow the game's language setting rather than pinning one of Lune's own. */
+    public static final String LANGUAGE_GAME_DEFAULT = "auto";
+
     public static final String LUNE_UI_AUTO = "Auto";
     public static final String LUNE_UI_MATCH_GAME = "Match game";
     public static final String LUNE_UI_COMPACT = "Compact";
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static BotConfig instance;
+
+    // --- Terms --------------------------------------------------------------
+    /**
+     * Highest {@link Terms#VERSION} the player has accepted; 0 until they do, which is what keeps
+     * the panel shut and the bot idle on a fresh install.
+     */
+    public int acceptedTermsVersion = 0;
 
     // --- Movement -----------------------------------------------------------
     /** Sprint on straight, level stretches. */
@@ -132,6 +144,8 @@ public final class BotConfig {
     // --- Editor state -------------------------------------------------------
     /** Last task opened in the editor; harmless when the task was later deleted. */
     public String lastOpenedTask = "";
+    /** Training lesson ids the player has cleared; see {@code com.etka.lune.training}. */
+    public Set<String> trainingCompleted = new LinkedHashSet<>();
 
     // --- Lune assistant -----------------------------------------------------
     /** Hide the assistant and compact in-world status without losing her position or preferences. */
@@ -145,10 +159,18 @@ public final class BotConfig {
      * How Lune's menus answer the game's GUI scale. Auto shrinks them by the smallest step that
      * gives the layout room; Match game leaves the player's scale alone even where it does not fit.
      */
+    /**
+     * Which language Lune reads in, independent of the game's own setting.
+     *
+     * <p>Stored as the language code ("tr_tr"), never as the name shown in the dropdown - the name
+     * is itself translated, so a config keyed on it would stop matching the moment it changed.</p>
+     */
+    public String language = LANGUAGE_GAME_DEFAULT;
+
     public String luneUiScale = LUNE_UI_AUTO;
 
     /** Which card colour scheme the task canvas draws with. */
-    public String blueprintTheme = THEME_SLATE;
+    public String blueprintTheme = THEME_ORANGE;
 
     /** Which pin/wire colours the task canvas uses. */
     public String blueprintPins = PINS_CLASSIC;
@@ -189,6 +211,10 @@ public final class BotConfig {
     public static BotConfig get() {
         if (instance == null) {
             instance = load();
+            // Once, here, rather than from the config screen: the screen is not the first thing
+            // that draws text, and a language applied only when you go looking for the setting
+            // is a language that is not applied.
+            Lang.select(instance.language);
         }
         return instance;
     }

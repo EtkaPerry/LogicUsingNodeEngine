@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -19,25 +21,39 @@ public final class FailTask implements Task {
     }
 
     private final String name;
-    private final String reason;
+    private String nameKey = "";
+    /** Why the card will not run, kept keyed like every other task's status. */
+    private final StatusText reason = new StatusText();
 
-    public FailTask(String name, String reason) {
+    public FailTask(String name, String reasonKey, Object... args) {
         this.name = name;
-        this.reason = reason;
+        this.reason.set(reasonKey, args);
+    }
+
+    /** Display identity is separate from the stable English learner identity. */
+    public static FailTask forCommand(String commandId, String name, String reasonKey, Object... args) {
+        FailTask task = new FailTask(name, reasonKey, args);
+        task.nameKey = "lune.command." + commandId + ".name";
+        return task;
     }
 
     /** For a command that exists in the registry but has no behaviour written yet. */
     public static FailTask notImplemented(String commandName) {
-        return new FailTask(commandName, "not implemented yet");
+        return new FailTask(commandName, "lune.status.fail.not_implemented");
     }
 
     @Override
     public String name() {
-        return name;
+        return Lang.getOr(nameKey, name);
     }
 
     @Override
-    public String status() {
+    public String learningId() {
+        return Task.learningName(name);
+    }
+
+    @Override
+    public StatusText statusLine() {
         return reason;
     }
 

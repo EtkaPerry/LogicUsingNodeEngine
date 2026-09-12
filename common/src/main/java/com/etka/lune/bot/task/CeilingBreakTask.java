@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -25,7 +27,7 @@ final class CeilingBreakTask implements Task {
     private int cleared;
     private int ticksOnBlock;
     private BlockPos target;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     CeilingBreakTask(int maxBlocks) {
         this.maxBlocks = Math.max(1, maxBlocks);
@@ -33,11 +35,17 @@ final class CeilingBreakTask implements Task {
 
     @Override
     public String name() {
-        return "Clear obstruction";
+        return Lang.get("lune.task.ceiling_break.clear_obstruction");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Clear obstruction");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -46,11 +54,11 @@ final class CeilingBreakTask implements Task {
         BlockPos feet = ctx.player.blockPosition();
         BlockPos body = blockedBody(ctx, feet);
         if (body == null && hasHeadroom(ctx, feet)) {
-            status = "obstruction cleared - " + cleared + " blocks";
+            status.set("lune.status.ceiling_break.obstruction_cleared_blocks", cleared);
             return TaskStatus.SUCCESS;
         }
         if (cleared >= maxBlocks) {
-            status = "ceiling recovery limit reached";
+            status.set("lune.status.ceiling_break.ceiling_recovery_limit_reached");
             return TaskStatus.FAILED;
         }
 
@@ -64,28 +72,28 @@ final class CeilingBreakTask implements Task {
         }
         if (!MovementHelper.isBreakable(ctx.level, target)) {
             breaker.stop(ctx);
-            status = "ceiling is not breakable";
+            status.set("lune.status.ceiling_break.ceiling_not_breakable");
             return TaskStatus.FAILED;
         }
         if (MovementHelper.wouldOpenLava(ctx.level, target)
                 || MovementHelper.wouldOpenWater(ctx.level, target)) {
             breaker.stop(ctx);
-            status = "refusing unsafe ceiling breach";
+            status.set("lune.status.ceiling_break.refusing_unsafe_ceiling_breach");
             return TaskStatus.FAILED;
         }
         if (++ticksOnBlock > BLOCK_TIMEOUT_TICKS) {
             breaker.stop(ctx);
-            status = "could not clear the ceiling";
+            status.set("lune.status.goto.could_not_clear_ceiling");
             return TaskStatus.FAILED;
         }
 
         BlockBreaker.Progress progress = breaker.tick(ctx, target, false);
         if (progress == BlockBreaker.Progress.NO_TOOL) {
-            status = "no tool for the ceiling";
+            status.set("lune.status.ceiling_break.no_tool_ceiling");
             return TaskStatus.FAILED;
         }
         if (progress == BlockBreaker.Progress.HAZARD) {
-            status = breaker.getFailureReason();
+            status.set(breaker.getFailureReason());
             return TaskStatus.FAILED;
         }
         if (ctx.level.getBlockState(target).isAir()
@@ -95,7 +103,7 @@ final class CeilingBreakTask implements Task {
             target = null;
             ticksOnBlock = 0;
         }
-        status = "clearing obstruction - " + cleared + "/" + maxBlocks;
+        status.set("lune.status.ceiling_break.clearing_obstruction", cleared, maxBlocks);
         return TaskStatus.RUNNING;
     }
 

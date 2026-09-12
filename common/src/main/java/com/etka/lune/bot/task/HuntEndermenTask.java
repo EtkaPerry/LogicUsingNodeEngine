@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -40,7 +42,7 @@ public final class HuntEndermenTask implements Task {
     /** Survives the KillTask rebuild each hunt cycle; see {@link KillTask} for why that matters. */
     private final java.util.Set<Integer> unreachableMobs;
     private final boolean clearUnreachableOnStart;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public HuntEndermenTask(int wanted) {
         this(wanted, new KillOptions(false, true, false,
@@ -64,17 +66,23 @@ public final class HuntEndermenTask implements Task {
 
     @Override
     public String name() {
-        return "Hunt Endermen";
+        return Lang.get("lune.task.hunt_endermen.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Hunt Endermen");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
     @Override
     public TaskProgress progress() {
-        return new TaskProgress(gatheredPearls, wanted, "pearls");
+        return new TaskProgress(gatheredPearls, wanted, Lang.get("lune.unit.pearls"));
     }
 
     @Override
@@ -100,13 +108,13 @@ public final class HuntEndermenTask implements Task {
                 current.stop(ctx);
                 current = null;
             }
-            status = "gathered " + (pearls - startPearls) + " pearls";
+            status.set("lune.status.hunt_endermen.gathered_pearls", (pearls - startPearls));
             return TaskStatus.SUCCESS;
         }
 
         if (current != null) {
             TaskStatus r = current.tick(ctx);
-            status = state + " - " + current.status();
+            status.set("lune.status.detail", state, current.statusLine());
             if (r == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
@@ -135,9 +143,7 @@ public final class HuntEndermenTask implements Task {
                 } else if (roams < MAX_ROAMS) {
                     state = State.ROAM;
                 } else {
-                    status = "roamed too much (" + roams + "/" + MAX_ROAMS + "), only "
-                            + (InventoryHelper.count(ctx.player, Items.ENDER_PEARL) - startPearls)
-                            + " pearls";
+                    status.set("lune.status.hunt_endermen.roamed_too_much_only_pearls", roams, MAX_ROAMS, (InventoryHelper.count(ctx.player, Items.ENDER_PEARL) - startPearls));
                     return TaskStatus.FAILED;
                 }
             }
@@ -155,11 +161,11 @@ public final class HuntEndermenTask implements Task {
 
         current = createTask(ctx);
         if (current == null) {
-            status = state + " failed";
+            status.set("lune.status.hunt_mob.failed", state);
             return TaskStatus.FAILED;
         }
         current.start(ctx);
-        status = state + " started";
+        status.set("lune.status.hunt_mob.started", state);
         return TaskStatus.RUNNING;
     }
 

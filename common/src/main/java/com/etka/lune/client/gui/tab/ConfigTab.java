@@ -1,5 +1,7 @@
 package com.etka.lune.client.gui.tab;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.util.LuneLanguages;
 import com.etka.lune.bot.command.CommandDef;
 import com.etka.lune.bot.command.Param;
 import com.etka.lune.client.gui.LuneScreen;
@@ -47,6 +49,7 @@ public class ConfigTab extends LuneTab {
     private final CommandDef settings;
     private final Button restoreSuggestionsButton;
     private final Button restoreDefaultTasksButton;
+    private final com.etka.lune.task.SecretTaskUnlock secretTaskUnlock = new com.etka.lune.task.SecretTaskUnlock();
     private final Button resetSettingsButton;
     /** Reset is the one footer button that cannot be undone, so it asks first. */
     private boolean confirmingReset;
@@ -56,11 +59,11 @@ public class ConfigTab extends LuneTab {
     private static final int FOOTER_BUTTON_H = 18;
 
     public ConfigTab() {
-        super(Component.literal("Config"));
+        super(Component.literal(Lang.get("lune.gui.config.title")));
 
         BotConfig config = BotConfig.get();
         List<Param<?>> parameters = buildParameters(config);
-        settings = new CommandDef("settings", "Settings", "Global bot behaviour", parameters,
+        settings = new CommandDef("settings", parameters,
                 def -> null);
 
         panel = add(new ParamPanel(0, 0, 10, 10));
@@ -69,11 +72,11 @@ public class ConfigTab extends LuneTab {
         panel.setParameterEnabled(id -> !isOmniscientParameter(id)
                 || OmniscientAccess.isAllowed(Minecraft.getInstance()));
         panel.setSections(configSections());
-        restoreSuggestionsButton = add(Button.builder(Component.literal("Restore Lune suggestions"),
+        restoreSuggestionsButton = add(Button.builder(Component.literal(Lang.get("lune.gui.config.restore_lune_suggestions")),
                 button -> restoreSuggestions()).size(180, 18).build());
-        restoreDefaultTasksButton = add(Button.builder(Component.literal("Restore default tasks"),
+        restoreDefaultTasksButton = add(Button.builder(Component.literal(Lang.get("lune.gui.config.restore_default_tasks")),
                 button -> restoreDefaultTasks()).size(FOOTER_BUTTON_WIDTH, 18).build());
-        resetSettingsButton = add(Button.builder(Component.literal("Reset config settings"),
+        resetSettingsButton = add(Button.builder(Component.literal(Lang.get("lune.gui.config.reset_config_settings")),
                 button -> resetSettings()).size(FOOTER_BUTTON_WIDTH, 18).build());
     }
 
@@ -87,124 +90,56 @@ public class ConfigTab extends LuneTab {
     private List<Param<?>> buildParameters(BotConfig config) {
         boolean omniscientAllowed = OmniscientAccess.isAllowed(Minecraft.getInstance());
         List<Param<?>> parameters = new ArrayList<>(List.of(
-                new Param.Bool("allow_sprint", "Allow sprint",
-                        "Sprint on straight, level ground", config.allowSprint),
-                new Param.Bool("allow_swim", "Allow swimming",
-                        "Let the pathfinder route through water", config.allowSwim),
-                new Param.Ints("max_fall", "Max fall",
-                        "Largest voluntary drop, in blocks", config.maxFall, 0, 20),
-                new Param.Ints("turn_speed", "Turn speed",
-                        "Degrees the view may turn per tick at full speed", (int) config.turnSpeed, 1, 90),
-                new Param.Ints("turn_smoothness", "Turn smoothness",
-                        "How gently turns start and stop. 1 snaps straight to full speed; "
-                                + "10 eases in and out of every turn like a real head",
-                        smoothnessSlider(config.turnSmoothing), 1, SMOOTHNESS_STEPS),
-                new Param.Ints("node_budget", "Path budget (x1000)",
-                        "A* nodes per search; higher finds longer routes",
-                        config.nodeBudget / BUDGET_SCALE, 1, 100),
-                new Param.Ints("repath", "Repath interval",
-                        "Ticks between route recalculations", config.repathInterval, 20, 600),
-                new Param.Choice("ui_scale", "Menu size",
-                        "Auto shrinks Lune's menus by the smallest step that fits the layout, and "
-                                + "never past half the game's GUI scale; Match game keeps your GUI "
-                                + "scale exactly; Compact shrinks as far as Auto is allowed to",
-                        List.of(BotConfig.LUNE_UI_AUTO, BotConfig.LUNE_UI_MATCH_GAME,
+                new Param.Bool("allow_sprint", config.allowSprint),
+                new Param.Bool("allow_swim", config.allowSwim),
+                new Param.Ints("max_fall", config.maxFall, 0, 20),
+                new Param.Ints("turn_speed", (int) config.turnSpeed, 1, 90),
+                new Param.Ints("turn_smoothness", smoothnessSlider(config.turnSmoothing), 1, SMOOTHNESS_STEPS),
+                new Param.Ints("node_budget", config.nodeBudget / BUDGET_SCALE, 1, 100),
+                new Param.Ints("repath", config.repathInterval, 20, 600),
+                new Param.Choice("language", LuneLanguages::available, config.language,
+                        LuneLanguages::displayName),
+                new Param.Choice("ui_scale", List.of(BotConfig.LUNE_UI_AUTO, BotConfig.LUNE_UI_MATCH_GAME,
                                 BotConfig.LUNE_UI_COMPACT), config.luneUiScale),
-                new Param.Ints("dashboard_line_height", "Dashboard line spacing",
-                        "Vertical spacing between Main dashboard lines; increase it when you add more detail",
-                        config.dashboardLineHeight, DashboardFrame.MIN_ROW_H, DashboardFrame.MAX_ROW_H),
-                new Param.Bool("dashboard_coordinates", "Dashboard coordinates",
-                        "Show the player's position in the Safety Monitor", config.dashboardShowCoordinates),
-                new Param.Bool("dashboard_seed", "Dashboard seed",
-                        "Show the world seed when the client is allowed to know it", config.dashboardShowSeed),
-                new Param.Bool("dashboard_enemies", "Dashboard visible enemies",
-                        "Show the number of hostile mobs currently visible to the player",
-                        config.dashboardShowEnemies),
-                new Param.Bool("dashboard_saturation", "Dashboard saturation",
-                        "Show the player's hidden food-saturation reserve",
-                        config.dashboardShowSaturation),
-                new Param.Bool("dashboard_items", "Dashboard item conditions",
-                        "Show main-hand and off-hand item condition lines", config.dashboardShowItemConditions),
-                new Param.Bool("dashboard_experience", "Dashboard experience",
-                        "Show experience level and progress", config.dashboardShowExperience),
-                new Param.Bool("dashboard_effects", "Dashboard active effects",
-                        "Show how many potion or status effects are active", config.dashboardShowEffects),
-                new Param.Bool("dashboard_environment", "Dashboard environment",
-                        "Show whether the player is grounded, swimming, burning, or airborne",
-                        config.dashboardShowEnvironment),
-                new Param.Bool("dashboard_light", "Dashboard light level",
-                        "Show block and sky light at the player's position", config.dashboardShowLight),
-                new Param.Bool("dashboard_facing", "Dashboard facing",
-                        "Show the player's current facing direction", config.dashboardShowFacing),
-                new Param.Bool("dashboard_learning", "Dashboard learning details",
-                        "Show the learning summary instead of queue size in Statistics",
-                        config.dashboardShowLearning),
-                new Param.Choice("blueprint_theme", "Node colours",
-                        "The colour family task cards are drawn from. Cards are shaded by the "
-                                + "role they play - source, decision, signal, work - within whichever "
-                                + "family you pick",
-                        List.of(BotConfig.THEME_SLATE, BotConfig.THEME_BLUE,
+                new Param.Ints("dashboard_line_height", config.dashboardLineHeight, DashboardFrame.MIN_ROW_H, DashboardFrame.MAX_ROW_H),
+                new Param.Bool("dashboard_coordinates", config.dashboardShowCoordinates),
+                new Param.Bool("dashboard_seed", config.dashboardShowSeed),
+                new Param.Bool("dashboard_enemies", config.dashboardShowEnemies),
+                new Param.Bool("dashboard_saturation", config.dashboardShowSaturation),
+                new Param.Bool("dashboard_items", config.dashboardShowItemConditions),
+                new Param.Bool("dashboard_experience", config.dashboardShowExperience),
+                new Param.Bool("dashboard_effects", config.dashboardShowEffects),
+                new Param.Bool("dashboard_environment", config.dashboardShowEnvironment),
+                new Param.Bool("dashboard_light", config.dashboardShowLight),
+                new Param.Bool("dashboard_facing", config.dashboardShowFacing),
+                new Param.Bool("dashboard_learning", config.dashboardShowLearning),
+                new Param.Choice("blueprint_theme", List.of(BotConfig.THEME_ORANGE, BotConfig.THEME_SLATE, BotConfig.THEME_BLUE,
                                 BotConfig.THEME_PURPLE, BotConfig.THEME_AMBER,
                                 BotConfig.THEME_GREEN), config.blueprintTheme),
-                new Param.Choice("blueprint_pins", "Pin colours",
-                        "Success and Fail are green and red, the pair red-green colour blindness "
-                                + "makes hardest to tell apart. Colour-blind safe swaps every pin "
-                                + "and wire to the Okabe-Ito palette, where they stay distinct",
-                        List.of(BotConfig.PINS_CLASSIC, BotConfig.PINS_COLOUR_BLIND),
+                new Param.Choice("blueprint_pins", List.of(BotConfig.PINS_CLASSIC, BotConfig.PINS_COLOUR_BLIND),
                         config.blueprintPins),
-                new Param.Bool("close_on_run", "Close panel on Run",
-                        "Hand the screen back to the game when a task starts, instead of leaving "
-                                + "the panel open to watch it", config.closePanelOnRun),
-                new Param.Bool("show_lune", "Show Lune",
-                        "Show Lune in menus and the compact status card while the bot runs", config.showLune),
-                new Param.Choice("lune_speech", "Lune speech",
-                        "Silent lets Lune sleep with no chat; Quiet keeps only questions and replies; Normal also shows work status",
-                        List.of(BotConfig.LUNE_SPEECH_SILENT, BotConfig.LUNE_SPEECH_QUIET,
+                new Param.Bool("close_on_run", config.closePanelOnRun),
+                new Param.Bool("show_lune", config.showLune),
+                new Param.Choice("lune_speech", List.of(BotConfig.LUNE_SPEECH_SILENT, BotConfig.LUNE_SPEECH_QUIET,
                                 BotConfig.LUNE_SPEECH_NORMAL), config.luneSpeech),
-                new Param.Choice("lune_size", "Lune size",
-                        "Size of the floating character",
-                        List.of(BotConfig.LUNE_SIZE_SMALL, BotConfig.LUNE_SIZE_NORMAL,
+                new Param.Choice("lune_size", List.of(BotConfig.LUNE_SIZE_SMALL, BotConfig.LUNE_SIZE_NORMAL,
                                 BotConfig.LUNE_SIZE_LARGE), config.luneSize),
-                new Param.Choice("lune_chatbox", "Lune chat box",
-                        "Width and height of Lune's popup",
-                        List.of(BotConfig.LUNE_SIZE_SMALL, BotConfig.LUNE_SIZE_NORMAL,
+                new Param.Choice("lune_chatbox", List.of(BotConfig.LUNE_SIZE_SMALL, BotConfig.LUNE_SIZE_NORMAL,
                                  BotConfig.LUNE_SIZE_LARGE), config.luneChatboxSize),
-                new Param.Bool("warn_slow_steps", "Warn about slow steps",
-                        "Let Lune speak up when one step of a running task is what is costing the "
-                                + "frame rate. It never changes or stops the task, only asks "
-                                + "whether that was intended", config.warnAboutSlowSteps),
-                new Param.Bool("show_debug", "Debug overlay",
-                        "Show live telemetry top-left (F6)", config.showDebug),
-                new Param.Bool("debug_detail", "Debug: path detail",
-                        "Include pathfinder counters, target visibility, memory and give-up limits",
-                        config.debugPathDetail),
-                new Param.Bool("debug_profiler", "Debug: profiler",
-                        "Measure where Lune's client-tick time goes and list the worst sections on "
-                                + "the overlay. Turn this on when the game stutters while a task runs",
-                        config.debugProfiler),
-                new Param.Bool("debug_run_log", "Debug: run journal",
-                        "Write a text file with the bot's decisions, tools, blocks, memory and stalls",
-                        config.debugRunLog),
-                new Param.Bool("action_markers", "World action markers",
-                        "Show the block Lune is breaking or walking toward, plus the Stay Near area",
-                        config.showActionMarkers),
-                new Param.Bool("learning", "Local learning",
-                        "Remember job best times and safe skill tactics in config/lune-learning.json",
-                        config.learningEnabled),
-                new Param.Bool("user_learning", "User feedback",
-                        "F7 approves and F8 rejects the last concrete skill tactic, not its route",
-                        config.userLearningEnabled),
-                new Param.Bool("omniscient_mining", "Omniscient mining",
-                        "Legacy loaded-chunk access (cheat/X-ray). Only available in singleplayer or to server operators. "
-                                + "Off = human-like vision only",
-                        omniscientAllowed && config.omniscientMining),
-                new Param.Bool("omniscient_harvesting", "Omniscient harvesting",
-                        "Legacy loaded-chunk access for mature crops. Only available in singleplayer or to server operators. "
-                                + "Off = human-like vision only",
-                        omniscientAllowed && config.omniscientHarvesting)
+                new Param.Bool("warn_slow_steps", config.warnAboutSlowSteps),
+                new Param.Bool("show_debug", config.showDebug),
+                new Param.Bool("debug_detail", config.debugPathDetail),
+                new Param.Bool("debug_profiler", config.debugProfiler),
+                new Param.Bool("debug_run_log", config.debugRunLog),
+                new Param.Bool("action_markers", config.showActionMarkers),
+                new Param.Bool("learning", config.learningEnabled),
+                new Param.Bool("user_learning", config.userLearningEnabled),
+                new Param.Bool("omniscient_mining", omniscientAllowed && config.omniscientMining),
+                new Param.Bool("omniscient_harvesting", omniscientAllowed && config.omniscientHarvesting)
         ));
         if (!BuildFeatures.approvalFeedback()) {
-            parameters.removeIf(parameter -> parameter.id().equals("user_learning"));
+            parameters.removeIf(parameter -> parameter.id().equals("user_learning")
+                    || parameter.id().equals("debug_run_log"));
         }
         return parameters;
     }
@@ -220,6 +155,10 @@ public class ConfigTab extends LuneTab {
         config.turnSmoothing = smoothnessAcceleration(settings.intValue("turn_smoothness"));
         config.nodeBudget = settings.intValue("node_budget") * BUDGET_SCALE;
         config.repathInterval = settings.intValue("repath");
+        config.language = settings.choiceValue("language");
+        // Cheap when nothing changed; the moment it does, every line drawn after
+        // this frame comes from the new file.
+        Lang.select(config.language);
         config.luneUiScale = settings.choiceValue("ui_scale");
         config.dashboardLineHeight = settings.intValue("dashboard_line_height");
         config.dashboardShowCoordinates = settings.boolValue("dashboard_coordinates");
@@ -245,7 +184,8 @@ public class ConfigTab extends LuneTab {
         config.debugPathDetail = settings.boolValue("debug_detail");
         config.debugProfiler = settings.boolValue("debug_profiler");
         com.etka.lune.bot.LuneProfiler.setEnabled(config.debugProfiler);
-        config.debugRunLog = settings.boolValue("debug_run_log");
+        config.debugRunLog = BuildFeatures.runTracingEnabled()
+                && settings.boolValue("debug_run_log");
         config.showActionMarkers = settings.boolValue("action_markers");
         config.learningEnabled = settings.boolValue("learning");
         if (BuildFeatures.approvalFeedback()) {
@@ -282,7 +222,7 @@ public class ConfigTab extends LuneTab {
         }
         MascotAdvisor.restoreSuggestionMemory();
         config.save();
-        restoreSuggestionsButton.setMessage(Component.literal("Suggestions restored"));
+        restoreSuggestionsButton.setMessage(Component.literal(Lang.get("lune.gui.config.suggestions_restored")));
     }
 
     /**
@@ -295,26 +235,32 @@ public class ConfigTab extends LuneTab {
     private void resetSettings() {
         if (!confirmingReset) {
             confirmingReset = true;
-            resetSettingsButton.setMessage(Component.literal("Reset? Click again"));
+            resetSettingsButton.setMessage(Component.literal(Lang.get("lune.gui.config.reset_click_again")));
             return;
         }
         confirmingReset = false;
-        CommandDef shipped = new CommandDef("defaults", "Defaults", "",
-                buildParameters(new BotConfig()), def -> null);
+        CommandDef shipped = new CommandDef("defaults", buildParameters(new BotConfig()), def -> null);
         settings.apply(shipped.snapshot());
         panel.refresh();
         // tick() mirrors the panel back into the live config every frame, so writing the panel is
         // writing the settings; this only forces it to happen now rather than a frame later.
         tick();
         BotConfig.get().save();
-        resetSettingsButton.setMessage(Component.literal("Config settings reset"));
+        resetSettingsButton.setMessage(Component.literal(Lang.get("lune.gui.config.config_settings_reset")));
     }
 
     private void restoreDefaultTasks() {
+        boolean unlock = secretTaskUnlock.press(System.nanoTime());
         int restored = TaskStore.get().restoreMissingDefaults();
-        restoreDefaultTasksButton.setMessage(Component.literal(restored == 0
-                ? "Default tasks already present"
-                : restored + " default task" + (restored == 1 ? "" : "s") + " restored"));
+        if (unlock) {
+            TaskStore.get().unlockSecretTasks();
+            restoreDefaultTasksButton.setMessage(Component.literal(Lang.get("lune.gui.config.secret_task_unlocked")));
+            return;
+        }
+        restoreDefaultTasksButton.setMessage(restored == 0
+                ? Component.literal(Lang.get("lune.gui.config.defaults_already_present"))
+                : Component.literal(Lang.get(restored == 1 ? "lune.gui.config.default_task_restored"
+                        : "lune.gui.config.default_tasks_restored", restored)));
     }
 
     /** Stored acceleration to a slider position, so a hand-edited config still shows up sensibly. */
@@ -340,6 +286,7 @@ public class ConfigTab extends LuneTab {
                 Map.entry("turn_smoothness", "Movement & Pathfinding"),
                 Map.entry("node_budget", "Movement & Pathfinding"),
                 Map.entry("repath", "Movement & Pathfinding"),
+                Map.entry("language", "Lune & Interface"),
                 Map.entry("ui_scale", "Lune & Interface"),
                 Map.entry("dashboard_line_height", "Lune & Interface"),
                 Map.entry("dashboard_coordinates", "Lune & Interface"),
@@ -420,7 +367,7 @@ public class ConfigTab extends LuneTab {
     public void extractTabRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float partialTick) {
         Frame frame = Frame.of(area);
         extractor.textRenderer().accept(frame.left() + 4, frame.hintY(),
-                Component.literal("Numbers: click −/+ (Shift = 10)  •  Yes/No: click to toggle  •  Choices: click to open")
+                Component.literal(Lang.get("lune.gui.config.numbers_click_shift_10_yes_no_click"))
                         .withColor(LuneScreen.TEXT_DIM));
     }
 }

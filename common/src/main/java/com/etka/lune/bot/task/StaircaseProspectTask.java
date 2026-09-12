@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -64,7 +66,7 @@ public final class StaircaseProspectTask implements Task {
     private boolean caveSealed;
     private BlockPos sealPos;
 
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public StaircaseProspectTask(Direction direction, int steps) {
         this(direction, steps, Set.of(), new HashSet<>());
@@ -84,11 +86,17 @@ public final class StaircaseProspectTask implements Task {
 
     @Override
     public String name() {
-        return "Dig prospecting stairs";
+        return Lang.get("lune.task.staircase_prospect.dig_prospecting_stairs");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Dig prospecting stairs");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -105,34 +113,35 @@ public final class StaircaseProspectTask implements Task {
         stagingPosition = MovementHelper.findStableMiningStart(ctx.level, current,
                 24, -32, 2, Set.of(), false);
         if (stagingPosition == null) {
-            status = "no stable ground nearby for the prospecting stair";
+            status.set("lune.status.staircase_prospect.no_stable_ground");
             return;
         }
         stagingTask = new GotoTask(new Goals.Block(stagingPosition), true, true);
         stagingTask.start(ctx);
-        status = "moving to stable ground before prospecting";
+        status.set("lune.status.staircase_prospect.moving_stable_ground_before_prospecting");
     }
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
         if (stagingTask != null) {
             TaskStatus result = stagingTask.tick(ctx);
-            status = "moving to stable ground before prospecting - " + stagingTask.status();
+            status.set("lune.status.staircase_prospect.moving_stable_ground_before_prospecting_2", stagingTask.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
             stagingTask.stop(ctx);
             stagingTask = null;
             if (result == TaskStatus.FAILED) {
-                status = "could not reach stable ground for the prospecting stair";
+                status.set("lune.status.staircase_prospect.could_not_reach_stable_ground");
                 return TaskStatus.FAILED;
             }
             beginAt(ctx.player.blockPosition());
-            status = "starting the prospecting stair from stable ground";
+            status.set("lune.status.staircase_prospect.starting_prospecting_stair_from_stable");
         }
         if (origin == null) {
-            status = status.isBlank()
-                    ? "no stable ground nearby for the prospecting stair" : status;
+            if (status.isBlank()) {
+                status.set("lune.status.staircase_prospect.no_stable_ground");
+            }
             return TaskStatus.FAILED;
         }
         if (retreating) {
@@ -155,7 +164,7 @@ public final class StaircaseProspectTask implements Task {
         }
 
         if (completed >= steps) {
-            status = "descended " + completed + " steps";
+            status.set("lune.status.staircase_prospect.descended_steps", completed);
             return TaskStatus.SUCCESS;
         }
 
@@ -173,17 +182,15 @@ public final class StaircaseProspectTask implements Task {
                 continue;
             }
             if (!MovementHelper.isBreakable(ctx.level, obstruction)) {
-                status = "stairs blocked by "
-                        + ctx.level.getBlockState(obstruction).getBlock().getName().getString();
+                status.set("lune.status.staircase_prospect.stairs_blocked_by", ctx.level.getBlockState(obstruction).getBlock().getName().getString());
                 return TaskStatus.FAILED;
             }
             if (protectedRoute.contains(obstruction.asLong())) {
-                status = "refusing to destroy the existing staircase";
+                status.set("lune.status.staircase_prospect.refusing_destroy_existing_staircase");
                 return TaskStatus.FAILED;
             }
             if (MovementHelper.fallingBlocksAbove(ctx.level, obstruction) >= 1) {
-                status = "stairs would open falling "
-                        + ctx.level.getBlockState(obstruction.above()).getBlock().getName().getString();
+                status.set("lune.status.staircase_prospect.stairs_would_open_falling", ctx.level.getBlockState(obstruction.above()).getBlock().getName().getString());
                 return TaskStatus.FAILED;
             }
             if (breaker.isOutOfReach(ctx, obstruction)) {
@@ -192,7 +199,7 @@ public final class StaircaseProspectTask implements Task {
                 // a block that is now several blocks below simply never lands and never stops. Say
                 // so instead: the caller is standing in a half-dug shaft and can do something
                 // useful with that, which is more than this loop will ever manage.
-                status = "pulled away from the stairwell";
+                status.set("lune.status.staircase_prospect.pulled_away_from_stairwell");
                 return TaskStatus.FAILED;
             }
             requestedBreak = obstruction;
@@ -200,19 +207,19 @@ public final class StaircaseProspectTask implements Task {
                     ctx.level.getBlockState(obstruction).getBlock());
             BlockBreaker.Progress progress = breaker.tick(ctx, obstruction, false, protectedRoute);
             if (progress == BlockBreaker.Progress.NO_TOOL) {
-                status = MineTask.NO_TOOL_PREFIX + " for staircase block";
+                status.set("lune.status.staircase_prospect.staircase_block");
                 return TaskStatus.FAILED;
             }
             if (progress == BlockBreaker.Progress.HAZARD) {
-                status = breaker.getFailureReason();
+                status.set(breaker.getFailureReason());
                 return TaskStatus.FAILED;
             }
             if (trackBlockWork(obstruction)) {
                 breaker.stop(ctx);
-                status = "stair block stalled; abandoning this step and returning to the caller";
+                status.set("lune.status.staircase_prospect.stair_block_stalled_abandoning_step");
                 return TaskStatus.FAILED;
             }
-            status = "digging stair " + (completed + 1) + "/" + steps;
+            status.set("lune.status.staircase_prospect.digging_stair", (completed + 1), steps);
             return TaskStatus.RUNNING;
         }
         breaker.stop(ctx);
@@ -220,7 +227,7 @@ public final class StaircaseProspectTask implements Task {
         // Never deliberately open a drop beneath the staircase. A solid floor makes every segment
         // reversible on foot and avoids falling into caves, water or lava that was not visible.
         if (!MovementHelper.isSolidFloor(ctx.level, nextFeet.below())) {
-            status = "stairs reached an unsupported opening";
+            status.set("lune.status.staircase_prospect.stairs_reached_unsupported_opening");
             return TaskStatus.FAILED;
         }
 
@@ -256,12 +263,12 @@ public final class StaircaseProspectTask implements Task {
         lastWalkFeet = now;
         lastWalkDistance = distance;
         if (walkStuckTicks > 40) {
-            status = "could not enter the new stair";
+            status.set("lune.status.staircase_prospect.could_not_enter_new_stair");
             return TaskStatus.FAILED;
         }
         ctx.look.lookAt(ctx.player, Vec3.atCenterOf(nextFeet));
         ctx.input.forward = true;
-        status = "walking down stair " + (completed + 1) + "/" + steps;
+        status.set("lune.status.staircase_prospect.walking_down_stair", (completed + 1), steps);
         return TaskStatus.RUNNING;
     }
 
@@ -343,19 +350,19 @@ public final class StaircaseProspectTask implements Task {
                     requestedBreakCounts = true;
                     BlockBreaker.Progress progress = breaker.tick(ctx, candidate, false, protectedRoute);
                     if (progress == BlockBreaker.Progress.NO_TOOL) {
-                        status = MineTask.NO_TOOL_PREFIX + " for stair target";
+                        status.set("lune.status.staircase_prospect.stair_target");
                         return TaskStatus.FAILED;
                     }
                     if (progress == BlockBreaker.Progress.HAZARD) {
-                        status = breaker.getFailureReason();
+                        status.set(breaker.getFailureReason());
                         return TaskStatus.FAILED;
                     }
                     if (trackBlockWork(candidate)) {
                         breaker.stop(ctx);
-                        status = "stair target stalled; abandoning this step and returning to the caller";
+                        status.set("lune.status.staircase_prospect.stair_target_stalled_abandoning_step");
                         return TaskStatus.FAILED;
                     }
-                    status = "mining stair target " + stepIndex + "/" + steps;
+                    status.set("lune.status.staircase_prospect.mining_stair_target", stepIndex, steps);
                     return TaskStatus.RUNNING;
                 }
             }
@@ -428,7 +435,7 @@ public final class StaircaseProspectTask implements Task {
         // drowning. Stop before the player crosses the opening and retry from dry ground instead.
         if (waterAhead(ctx, nextFeet)) {
             caveSeen = true;
-            status = "water ahead, sealing and retreating";
+            status.set("lune.status.staircase_prospect.water_ahead_sealing_retreating");
             retreating = true;
             sealPos = nextFeet;
             return tickRetreat(ctx);
@@ -440,7 +447,7 @@ public final class StaircaseProspectTask implements Task {
         caveSeen = true;
 
         if (hostileMobsNearby(ctx, nextFeet)) {
-            status = "cave with hostiles, sealing and retreating";
+            status.set("lune.status.staircase_prospect.cave_with_hostiles_sealing_retreating");
             retreating = true;
             sealPos = nextFeet;
             return tickRetreat(ctx);
@@ -449,7 +456,7 @@ public final class StaircaseProspectTask implements Task {
         // No hostiles. Stop here so the parent task can scan the exposed cave and decide whether to
         // enter. If the wanted ore is visible, the next Mine/Find tick will walk in; if not, it will
         // try another direction instead of blindly descending into the cave.
-        status = "opened a cave - scanning before entering";
+        status.set("lune.status.staircase_prospect.opened_cave_scanning_before_entering");
         return TaskStatus.SUCCESS;
     }
 
@@ -513,14 +520,13 @@ public final class StaircaseProspectTask implements Task {
                     || sealing == BlockPlacer.PlacementResult.ALREADY_PRESENT) {
                 caveSealed = true;
                 sealTicks = 0;
-                status = "sealed the cave, leaving by the stair";
+                status.set("lune.status.staircase_prospect.sealed_cave_leaving_by_stair");
             } else if (!sealing.isTransient() || sealTicks >= MAX_SEAL_TICKS) {
                 caveSealed = true;
                 sealTicks = 0;
-                status = "could not seal the cave (" + sealing.name().toLowerCase()
-                        + "), leaving anyway";
+                status.set("lune.status.staircase_prospect.could_not_seal_cave_leaving_anyway", sealing.name().toLowerCase());
             } else {
-                status = "sealing the cave entrance";
+                status.set("lune.status.staircase_prospect.sealing_cave_entrance");
                 return TaskStatus.RUNNING;
             }
         }
@@ -537,7 +543,7 @@ public final class StaircaseProspectTask implements Task {
 
         retreat.stop(ctx);
         retreat = null;
-        status = "retreated from the cave";
+        status.set("lune.status.staircase_prospect.retreated_from_cave");
         return TaskStatus.FAILED;
     }
 

@@ -391,6 +391,13 @@ public final class LearningStore {
                 + automatic;
     }
 
+    /** Localized dashboard summary; summary(boolean) remains machine-readable diagnostics. */
+    public synchronized String displaySummary() {
+        return com.etka.lune.util.Lang.get("lune.gui.main.learning_summary", data.sessions,
+                data.successfulSessions, data.failedSessions, stateCount(), updateCount(),
+                data.totalSkillOutcomes, data.totalFeedback);
+    }
+
     /** Test/UI support for deliberately forgetting the learned profile. */
     public synchronized void clear() {
         if (readOnly) {

@@ -1,6 +1,8 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
@@ -404,13 +406,19 @@ public final class SpeedrunTask implements Task {
     private String lastRouteSignature = "";
     private BlockPos lastRoutePosition;
     private Phase lastRoutePhase;
-    private String status = "";
+    private final StatusText status = new StatusText();
     /** Fixed high-level route style; learning happens inside concrete skills such as chopping. */
     private String routeStyle = ROUTE_BALANCED;
 
     @Override
     public String name() {
-        return "Speedrun: Complete the Game";
+        return Lang.get("lune.task.speedrun.speedrun_complete_game");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Speedrun: Complete the Game");
     }
 
     @Override
@@ -646,7 +654,7 @@ public final class SpeedrunTask implements Task {
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -713,7 +721,7 @@ public final class SpeedrunTask implements Task {
         lastRouteSignature = "";
         lastRoutePosition = null;
         lastRoutePhase = null;
-        status = "choosing a route";
+        status.set("lune.status.speedrun.choosing_route");
     }
 
     @Override
@@ -727,7 +735,7 @@ public final class SpeedrunTask implements Task {
         tidyHotbar(ctx);
 
         if (phase == Phase.DONE) {
-            status = "ender dragon killed and returned to the overworld";
+            status.set("lune.status.speedrun.ender_dragon_killed_returned_overworld");
             return TaskStatus.SUCCESS;
         }
 
@@ -767,12 +775,12 @@ public final class SpeedrunTask implements Task {
                 opportunityKind = null;
                 workedOpportunities.add(supplies.asLong());
                 current = new OpportunityTask(SpeedrunOpportunity.CONTAINER, supplies, overworldContainers);
-                status = describe() + " - hungry; raiding the supplies noticed earlier";
+                status.set("lune.status.speedrun.hungry_raiding_supplies_noticed_earlier", describe());
                 ctx.debug.decide("hungry, and a chest was noted at " + supplies.toShortString()
                         + "; take that before hunting");
             } else {
                 current = new FoodTask(OPPORTUNISTIC_FOOD, false);
-                status = describe() + " - too hungry to sprint; going to find food";
+                status.set("lune.status.speedrun.too_hungry_sprint_going_find_food", describe());
                 ctx.debug.decide("under the sprint threshold with nothing to eat; searching for food");
             }
             current.start(ctx);
@@ -783,7 +791,7 @@ public final class SpeedrunTask implements Task {
             foodDiversions++;
             current = new EatTask(stack -> stack.has(DataComponents.FOOD), 14);
             current.start(ctx);
-            status = describe() + " - eating carried food before the route continues";
+            status.set("lune.status.speedrun.eating_carried_food_before_route", describe());
         } else if (suspendedForFood == null && suspendedForGravel == null && shouldGrabGravel(ctx)) {
             // Take the gravel while it is here. The flint phase is a search for a bank like this
             // one, so a bank walked past now is a shoreline walked to later.
@@ -795,7 +803,7 @@ public final class SpeedrunTask implements Task {
                     GRAVEL_RESERVE - InventoryHelper.count(ctx.player, Items.GRAVEL),
                     false, false, false, true, 0, 0);
             current.start(ctx);
-            status = describe() + " - taking gravel in passing for the flint later";
+            status.set("lune.status.speedrun.taking_gravel_passing_flint_later", describe());
             ctx.debug.decide("gravel in sight; carry a few so the flint phase starts with material");
             return TaskStatus.RUNNING;
         } else if (suspendedForFood == null && shouldDivertToOpportunity(ctx)) {
@@ -814,7 +822,7 @@ public final class SpeedrunTask implements Task {
             suspendedForFood = current;
             current = new OpportunityTask(kind, site, overworldContainers);
             current.start(ctx);
-            status = describe() + " - calling at the " + kind.label() + " spotted on the way";
+            status.set("lune.status.speedrun.calling_spotted_way", describe(), com.etka.lune.bot.command.Param.Choice.optionLabel(kind.label()));
             ctx.debug.decide("a " + kind.label() + " is in sight at " + site.toShortString()
                     + "; call there now rather than after the current march");
             return TaskStatus.RUNNING;
@@ -831,7 +839,7 @@ public final class SpeedrunTask implements Task {
                 foodDiversions++;
                 current = new HayHarvestTask(SHEEP_DIVERSION_RADIUS);
                 current.start(ctx);
-                status = describe() + " - stripping a hay farm for bread";
+                status.set("lune.status.speedrun.stripping_hay_farm_bread", describe());
                 return TaskStatus.RUNNING;
             }
             FoodTask opportunityFood = new FoodTask(OPPORTUNISTIC_FOOD, true);
@@ -841,7 +849,7 @@ public final class SpeedrunTask implements Task {
                 foodDiversions++;
                 current = opportunityFood;
                 current.start(ctx);
-                status = describe() + " - taking a visible food opportunity";
+                status.set("lune.status.speedrun.taking_visible_food_opportunity", describe());
             }
         } else if (suspendedForFood == null && shouldMakeCamp(ctx)) {
             // A bed is cheaper than the night it removes. Mobs that never spawn cost no fighting,
@@ -855,11 +863,11 @@ public final class SpeedrunTask implements Task {
             // route straight back, and the same check picks it up again once it is actually dark.
             current = new SleepTask(false, true);
             current.start(ctx);
-            status = describe() + " - making camp for the night";
+            status.set("lune.status.speedrun.making_camp_night", describe());
         }
 
         TaskStatus result = current.tick(ctx);
-        status = describe() + " - " + current.status();
+        status.set("lune.status.detail", describe(), current.statusLine());
         if (result == TaskStatus.RUNNING) {
             return TaskStatus.RUNNING;
         }
@@ -902,7 +910,7 @@ public final class SpeedrunTask implements Task {
             if (phase == Phase.IRON && hasFood(ctx)) {
                 foodDeferredToNether = false;
             }
-            status = describe() + " - food opportunity handled; resuming the route";
+            status.set("lune.status.speedrun.food_opportunity_handled_resuming_route", describe());
             return TaskStatus.RUNNING;
         }
 
@@ -912,7 +920,7 @@ public final class SpeedrunTask implements Task {
             current = suspendedForGravel;
             suspendedForGravel = null;
             current.onResume(ctx);
-            status = describe() + " - gravel taken; resuming the route";
+            status.set("lune.status.speedrun.gravel_taken_resuming_route", describe());
             return TaskStatus.RUNNING;
         }
 
@@ -927,7 +935,7 @@ public final class SpeedrunTask implements Task {
             current = suspendedForNight;
             suspendedForNight = null;
             current.onResume(ctx);
-            status = describe() + " - camp handled; resuming the route";
+            status.set("lune.status.speedrun.camp_handled_resuming_route", describe());
             return TaskStatus.RUNNING;
         }
 
@@ -942,7 +950,7 @@ public final class SpeedrunTask implements Task {
             ctx.debug.decide(result == TaskStatus.SUCCESS
                     ? "relocation reached; scout the new iron area"
                     : "relocation was blocked; scout from the best new position");
-            status = describe() + " - relocation ended; scouting a new area";
+            status.set("lune.status.speedrun.relocation_ended_scouting_new_area", describe());
             return TaskStatus.RUNNING;
         }
 
@@ -965,12 +973,11 @@ public final class SpeedrunTask implements Task {
                 ironRelocationPending = true;
                 ironSearchRounds++;
                 if (ironSearchRounds >= MAX_IRON_SEARCH_ROUNDS) {
-                    status = describe() + " failed - no visible iron after "
-                            + ironSearchRounds + " searched areas";
+                    status.set("lune.status.speedrun.failed_no_visible_iron_after_searched", describe(), ironSearchRounds);
                     return TaskStatus.FAILED;
                 }
                 phaseAttempts = 0;
-                status = describe() + " - physical iron approach failed; scouting a new area";
+                status.set("lune.status.speedrun.physical_iron_approach_failed_scouting", describe());
                 return TaskStatus.RUNNING;
             } else if (phase == Phase.IRON && finished instanceof ExploreTask) {
                 // A scout that exhausted its walking stops has already delivered its location
@@ -1023,19 +1030,18 @@ public final class SpeedrunTask implements Task {
                 ironRelocationPending = true;
                 ironSearchRounds++;
                 if (ironSearchRounds >= MAX_IRON_SEARCH_ROUNDS) {
-                    status = describe() + " failed - no visible iron after "
-                            + ironSearchRounds + " searched areas";
+                    status.set("lune.status.speedrun.failed_no_visible_iron_after_searched", describe(), ironSearchRounds);
                     return TaskStatus.FAILED;
                 }
                 phaseAttempts = 0;
-                status = describe() + " - scout route failed; relocating before the next search";
+                status.set("lune.status.speedrun.scout_route_failed_relocating_before", describe());
                 return TaskStatus.RUNNING;
             }
             if (retryable(ctx, finished)) {
-                status = describe() + " - retrying after " + finished.status();
+                status.set("lune.status.speedrun.retrying_after", describe(), finished.statusLine());
                 return TaskStatus.RUNNING;
             }
-            status = describe() + " failed - " + finished.status();
+            status.set("lune.status.speedrun.failed", describe(), finished.statusLine());
             return TaskStatus.FAILED;
         }
 
@@ -1045,7 +1051,7 @@ public final class SpeedrunTask implements Task {
             phase = Phase.IRON;
             phaseAttempts = 0;
             ironExplorePending = true;
-            status = describe() + " - no visible Overworld food; continuing toward Nether fallback";
+            status.set("lune.status.speedrun.no_visible_overworld_food_continuing", describe());
             return TaskStatus.RUNNING;
         }
 
@@ -1055,7 +1061,7 @@ public final class SpeedrunTask implements Task {
             if (hasFood(ctx)) {
                 foodDeferredToNether = false;
             }
-            status = describe() + " - nearby food handled; continuing toward iron";
+            status.set("lune.status.speedrun.nearby_food_handled_continuing_toward", describe());
             return TaskStatus.RUNNING;
         }
 
@@ -1070,13 +1076,12 @@ public final class SpeedrunTask implements Task {
                 if (!ironSuppliesReady(ctx)) {
                     ironSearchRounds++;
                     if (ironSearchRounds >= MAX_IRON_SEARCH_ROUNDS) {
-                        status = describe() + " failed - no visible iron after "
-                                + ironSearchRounds + " searched areas";
+                        status.set("lune.status.speedrun.failed_no_visible_iron_after_searched", describe(), ironSearchRounds);
                         return TaskStatus.FAILED;
                     }
                     ironExplorePending = true;
                     ironRelocationPending = true;
-                    status = describe() + " - prospect ended; scouting a new area";
+                    status.set("lune.status.speedrun.prospect_ended_scouting_new_area", describe());
                     return TaskStatus.RUNNING;
                 }
             }
@@ -1092,13 +1097,12 @@ public final class SpeedrunTask implements Task {
             }
             ironSearchRounds++;
             if (ironSearchRounds >= MAX_IRON_SEARCH_ROUNDS) {
-                status = describe() + " failed - no visible iron after "
-                        + ironSearchRounds + " searched areas";
+                status.set("lune.status.speedrun.failed_no_visible_iron_after_searched", describe(), ironSearchRounds);
                 return TaskStatus.FAILED;
             }
             ironExplorePending = true;
             ironRelocationPending = true;
-            status = describe() + " - no iron in this pocket; scouting a new area";
+            status.set("lune.status.speedrun.no_iron_pocket_scouting_new_area", describe());
             return TaskStatus.RUNNING;
         }
 
@@ -1106,22 +1110,21 @@ public final class SpeedrunTask implements Task {
                 && !InventoryHelper.has(ctx.player, Items.FLINT, 1)) {
             flintSearchRounds++;
             if (flintSearchRounds >= MAX_GATHER_ATTEMPTS) {
-                status = describe() + " failed - no flint after "
-                        + flintSearchRounds + " searched areas";
+                status.set("lune.status.speedrun.failed_no_flint_after_searched_areas", describe(), flintSearchRounds);
                 return TaskStatus.FAILED;
             }
             // MineTask reports an empty visible scan as success. Rebuilding it at the same cave
             // floor would repeat the same head turn forever, so make the next attempt leave the
             // pocket (and, when possible, reach the surface gravel a player would actually use).
             flintExplorePending = true;
-            status = describe() + " - no flint in this spot; moving before the next search";
+            status.set("lune.status.speedrun.no_flint_spot_moving_before_next_search", describe());
             return TaskStatus.RUNNING;
         }
 
         if (phase == Phase.WOOD && finished instanceof SurfaceRecoveryTask) {
             // Reaching dry ground is a prerequisite for the wood phase, not completion of the
             // phase itself. Let woodTask re-derive its inventory requirement on the next tick.
-            status = describe() + " - reached dry ground; looking for visible wood";
+            status.set("lune.status.speedrun.reached_dry_ground_looking_visible_wood", describe());
             return TaskStatus.RUNNING;
         }
 
@@ -1130,7 +1133,7 @@ public final class SpeedrunTask implements Task {
         // through the portal; the next tick will continue with the bounded enderman fallback.
         if (phase == Phase.PEARLS
                 && !InventoryHelper.has(ctx.player, Items.ENDER_PEARL, PEARLS_NEEDED)) {
-            status = describe() + " - supplies collected; continuing until pearls are ready";
+            status.set("lune.status.speedrun.supplies_collected_continuing_until", describe());
             return TaskStatus.RUNNING;
         }
 
@@ -1139,7 +1142,7 @@ public final class SpeedrunTask implements Task {
         // eventual powder craft would fail deterministically.
         if (phase == Phase.BLAZE
                 && !InventoryHelper.has(ctx.player, Items.BLAZE_ROD, BLAZE_RODS_NEEDED)) {
-            status = describe() + " - food handled; continuing until rods are ready";
+            status.set("lune.status.speedrun.food_handled_continuing_until_rods_ready", describe());
             return TaskStatus.RUNNING;
         }
 
@@ -1913,7 +1916,7 @@ public final class SpeedrunTask implements Task {
                     ctx.debug.decide("not digging yet after " + ironScoutFailures
                             + " empty searches; look for a village or a wreck first ("
                             + ironDigDeferrals + "/" + MAX_DIG_DEFERRALS + ")");
-                    status = describe() + " - looking for a village or wreck before digging";
+                    status.set("lune.status.speedrun.looking_village_or_wreck_before_digging", describe());
                     return null;
                 }
                 // Nothing built within reach after a real search. A shaft is what keeps a barren
@@ -2112,7 +2115,7 @@ public final class SpeedrunTask implements Task {
                 if (shore != null && shore.distManhattan(ctx.player.blockPosition()) > ON_SHORE_DISTANCE) {
                     flintShoreTried = true;
                     ctx.debug.decide("gravel is a beach block; searching the waterline before digging");
-                    status = describe() + " - walking to the waterline to look for gravel";
+                    status.set("lune.status.speedrun.walking_waterline_look_gravel", describe());
                     return new GotoTask(new Goals.Near(shore, 2), true, false);
                 }
                 flintShoreTried = true;
@@ -2350,22 +2353,22 @@ public final class SpeedrunTask implements Task {
 
     private String describe() {
         return switch (phase) {
-            case START -> "choosing a route";
-            case WOOD -> "getting wood and a crafting table";
-            case STONE -> "making the stone kit";
-            case FOOD -> "gathering food";
-            case IRON -> "getting bucket iron";
-            case FLINT -> "looking for flint";
-            case PORTAL -> "casting a Nether portal";
-            case FORTRESS_SCAN -> "looking for a visible fortress";
-            case FORTRESS_APPROACH -> "approaching the fortress";
-            case BLAZE -> "collecting blaze rods";
-            case NETHER_EXIT -> "returning through the Nether portal";
-            case PEARLS -> "collecting ender pearls";
-            case BLAZE_POWDER -> "crafting blaze powder";
-            case EYES -> "crafting eyes of ender";
-            case ENDGAME -> "finishing the End sequence";
-            case DONE -> "done";
+            case START -> Lang.get("lune.status.speedrun.choosing_route");
+            case WOOD -> Lang.get("lune.status.speedrun.phase_getting_wood_and_a_crafting_table");
+            case STONE -> Lang.get("lune.status.speedrun.phase_making_the_stone_kit");
+            case FOOD -> Lang.get("lune.status.speedrun.phase_gathering_food");
+            case IRON -> Lang.get("lune.status.speedrun.phase_getting_bucket_iron");
+            case FLINT -> Lang.get("lune.status.speedrun.phase_looking_for_flint");
+            case PORTAL -> Lang.get("lune.status.speedrun.phase_casting_a_nether_portal");
+            case FORTRESS_SCAN -> Lang.get("lune.status.speedrun.phase_looking_for_a_visible_fortress");
+            case FORTRESS_APPROACH -> Lang.get("lune.status.speedrun.phase_approaching_the_fortress");
+            case BLAZE -> Lang.get("lune.status.speedrun.phase_collecting_blaze_rods");
+            case NETHER_EXIT -> Lang.get("lune.status.speedrun.phase_returning_through_the_nether_portal");
+            case PEARLS -> Lang.get("lune.status.speedrun.phase_collecting_ender_pearls");
+            case BLAZE_POWDER -> Lang.get("lune.status.speedrun.phase_crafting_blaze_powder");
+            case EYES -> Lang.get("lune.status.speedrun.phase_crafting_eyes_of_ender");
+            case ENDGAME -> Lang.get("lune.status.speedrun.phase_finishing_the_end_sequence");
+            case DONE -> Lang.get("lune.status.speedrun.phase_done");
         };
     }
 
@@ -2681,7 +2684,7 @@ public final class SpeedrunTask implements Task {
         private boolean opportunisticNoSource;
         /** The route position at which a visible local food opportunity was noticed. */
         private BlockPos opportunisticAnchor;
-        private String status = "";
+        private final StatusText status = new StatusText();
 
         FoodTask(int wanted) {
             this(wanted, false);
@@ -2693,10 +2696,15 @@ public final class SpeedrunTask implements Task {
         }
 
         @Override
-        public String name() { return "Gather Food"; }
+        public String name() { return Lang.get("lune.task.nested.gather_food"); }
 
         @Override
-        public String status() { return status; }
+        public String learningId() { return Task.learningName("Gather Food"); }
+
+        @Override
+        public StatusText statusLine() {
+        return status;
+    }
 
         boolean exhaustedWithoutFood() {
             return exhaustedWithoutFood;
@@ -2749,7 +2757,7 @@ public final class SpeedrunTask implements Task {
         public TaskStatus onTick(BotContext ctx) {
             publishFoodDebug(ctx);
             if (opportunistic && opportunisticNoSource) {
-                status = "no visible food opportunity; continuing the route";
+                status.set("lune.status.speedrun.no_visible_food_opportunity_continuing");
                 return TaskStatus.SUCCESS;
             }
             if (opportunistic && ctx.level.dimension() == Level.OVERWORLD) {
@@ -2757,7 +2765,7 @@ public final class SpeedrunTask implements Task {
                         && opportunisticAnchor.distSqr(ctx.player.blockPosition())
                         > OPPORTUNISTIC_RADIUS * OPPORTUNISTIC_RADIUS) {
                     stopCurrent(ctx);
-                    status = "nearby food opportunity drifted away; continuing the route";
+                    status.set("lune.status.speedrun.nearby_food_opportunity_drifted_away");
                     return TaskStatus.SUCCESS;
                 }
                 // An empty animal scan must never turn a route interruption into a new hunt.
@@ -2765,14 +2773,14 @@ public final class SpeedrunTask implements Task {
                 // only allowed to take the thing that was visible when the route was interrupted.
                 if (state == State.ROAM || state == State.ANIMAL_ROAM) {
                     stopCurrent(ctx);
-                    status = "no visible local food opportunity; continuing the route";
+                    status.set("lune.status.speedrun.no_visible_local_food_opportunity");
                     return TaskStatus.SUCCESS;
                 }
             }
             if (InventoryHelper.count(ctx.player, stack -> stack.has(
                     net.minecraft.core.component.DataComponents.FOOD)) >= wanted) {
                 stopCurrent(ctx);
-                status = "gathered enough food";
+                status.set("lune.status.speedrun.gathered_enough_food");
                 return TaskStatus.SUCCESS;
             }
 
@@ -2792,12 +2800,12 @@ public final class SpeedrunTask implements Task {
                 if (state == State.ROAM && current != null) {
                     stopCurrent(ctx);
                     if (ctx.level.dimension() == Level.OVERWORLD) {
-                        return deferOverworldFood(ctx, "food reserve is low; no visible source");
+                        return deferOverworldFood(ctx, Lang.get("lune.reason.food_reserve_low"));
                     }
-                    status = "food reserve is low; stopping random source search";
+                    status.set("lune.status.speedrun.food_reserve_low_stopping_random_source");
                     return TaskStatus.FAILED;
                 }
-                status = "food reserve is low; shortening source search";
+                status.set("lune.status.speedrun.food_reserve_low_shortening_source");
             }
 
             // The stone phase normally returns to its staging block, but a partial staircase can
@@ -2832,11 +2840,11 @@ public final class SpeedrunTask implements Task {
                             stack -> stack.has(DataComponents.FOOD));
                     case ROAM -> {
                         if (!FoodSearchPolicy.allowSourceRoam(emergencySourceSearch)) {
-                            status = "source search is too hungry for another roam";
+                            status.set("lune.status.speedrun.source_search_too_hungry_another_roam");
                             yield null;
                         }
                         if (roams++ >= FoodSearchPolicy.maxSourceRoams(emergencySourceSearch)) {
-                            status = "could not find enough food nearby";
+                            status.set("lune.status.speedrun.could_not_find_enough_food_nearby");
                             yield null;
                         }
                         // Food prospecting must remain a surface walk. Mining toward a sampled
@@ -2847,11 +2855,11 @@ public final class SpeedrunTask implements Task {
                     }
                     case ANIMAL_ROAM -> {
                         if (opportunistic && ctx.level.dimension() == Level.OVERWORLD) {
-                            status = "no visible local animal; continuing the route";
+                            status.set("lune.status.speedrun.no_visible_local_animal_continuing_route");
                             yield null;
                         }
                         if (animalRoams++ >= MAX_ANIMAL_SEARCH_ROAMS) {
-                            status = "no visible animals found nearby";
+                            status.set("lune.status.speedrun.no_visible_animals_found_nearby");
                             yield null;
                         }
                         // Animal fallback is an emergency clearing search. Do not send it up a
@@ -2863,11 +2871,11 @@ public final class SpeedrunTask implements Task {
                 if (current == null) {
                     if (opportunistic && ctx.level.dimension() == Level.OVERWORLD
                             && (state == State.ROAM || state == State.ANIMAL_ROAM)) {
-                        status = "no visible local food opportunity; continuing the route";
+                        status.set("lune.status.speedrun.no_visible_local_food_opportunity");
                         return TaskStatus.SUCCESS;
                     }
                     if (state == State.SURFACE) {
-                        status = "could not find a walkable surface nearby";
+                        status.set("lune.status.speedrun.could_not_find_walkable_surface_nearby");
                         return TaskStatus.FAILED;
                     }
                     if (state == State.FARM) {
@@ -2914,18 +2922,18 @@ public final class SpeedrunTask implements Task {
                         return TaskStatus.RUNNING;
                     }
                     if (state == State.ROAM && ctx.level.dimension() == Level.OVERWORLD) {
-                        return deferOverworldFood(ctx, "bounded source search finished without food");
+                        return deferOverworldFood(ctx, Lang.get("lune.reason.bounded_food_search_done"));
                     }
                     if (state == State.HUNT && animalRoams < MAX_ANIMAL_SEARCH_ROAMS) {
                         if (opportunistic && ctx.level.dimension() == Level.OVERWORLD) {
-                            status = "no visible local animal; continuing the route";
+                            status.set("lune.status.speedrun.no_visible_local_animal_continuing_route");
                             return TaskStatus.SUCCESS;
                         }
                         // A KillTask only sees the current loaded, visible slice. Move a bounded
                         // distance and try again rather than treating one empty sightline as proof
                         // that the biome has no animals.
                         state = State.ANIMAL_ROAM;
-                        status = "no visible animals here; checking another nearby clearing";
+                        status.set("lune.status.speedrun.no_visible_animals_here_checking_another");
                         return TaskStatus.RUNNING;
                     }
                     return TaskStatus.FAILED;
@@ -2934,7 +2942,7 @@ public final class SpeedrunTask implements Task {
             }
 
             TaskStatus result = current.tick(ctx);
-            status = state + " - " + current.status();
+            status.set("lune.status.detail", state, current.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
@@ -2945,33 +2953,35 @@ public final class SpeedrunTask implements Task {
             current.stop(ctx);
             current = null;
             if (opportunistic) {
-                status = result == TaskStatus.SUCCESS
-                        ? "took a nearby food opportunity"
-                        : "nearby food opportunity was unavailable; continuing the route";
+                if (result == TaskStatus.SUCCESS) {
+                    status.set("lune.status.speedrun.took_nearby_food_opportunity");
+                } else {
+                    status.set("lune.status.speedrun.nearby_food_opportunity_unavailable");
+                }
                 return TaskStatus.SUCCESS;
             }
             if (state == State.SURFACE && result == TaskStatus.FAILED) {
-                status = "could not reach open ground for food search";
+                status.set("lune.status.speedrun.could_not_reach_open_ground_food_search");
                 return TaskStatus.FAILED;
             }
             if (emptyAnimalScan) {
                 if (opportunistic && ctx.level.dimension() == Level.OVERWORLD) {
-                    status = "no visible local animal; continuing the route";
+                    status.set("lune.status.speedrun.no_visible_local_animal_continuing_route");
                     return TaskStatus.SUCCESS;
                 }
                 if (animalRoams >= MAX_ANIMAL_SEARCH_ROAMS) {
-                    status = "no visible hoglins found nearby";
+                    status.set("lune.status.speedrun.no_visible_hoglins_found_nearby");
                     return TaskStatus.FAILED;
                 }
                 // KillTask treats an empty radius as a successful scan. Move before rebuilding
                 // it, otherwise the food phase can spin forever over the same sightline.
                 state = State.ANIMAL_ROAM;
-                status = "no visible animals here; checking another nearby clearing";
+                status.set("lune.status.speedrun.no_visible_animals_here_checking_another");
                 return TaskStatus.RUNNING;
             }
             if (state == State.ROAM && result == TaskStatus.FAILED
                     && ctx.level.dimension() == Level.OVERWORLD) {
-                return deferOverworldFood(ctx, "could not reach the next surface clearing");
+                return deferOverworldFood(ctx, Lang.get("lune.reason.no_surface_clearing"));
             }
             state = switch (state) {
                 case SURFACE -> State.FARM;
@@ -3017,7 +3027,7 @@ public final class SpeedrunTask implements Task {
 
         private TaskStatus deferOverworldFood(BotContext ctx, String reason) {
             exhaustedWithoutFood = true;
-            status = reason + "; continuing toward the Nether chest fallback";
+            status.set("lune.status.speedrun.continuing_toward_nether_chest_fallback", reason);
             ctx.debug.decide("skip repeated food search: continue to Nether bastion fallback");
             return TaskStatus.SUCCESS;
         }
@@ -3342,7 +3352,7 @@ public final class SpeedrunTask implements Task {
         private BlockPos scanCentre;
         private BlockPos target;
         private GotoTask approach;
-        private String status = "";
+        private final StatusText status = new StatusText();
 
         VisibleShipApproachTask(int radius, Set<Long> approached) {
             this.radius = Math.max(1, radius);
@@ -3350,14 +3360,15 @@ public final class SpeedrunTask implements Task {
         }
 
         @Override
-        public String name() {
-            return "Approach Visible Shipwreck";
-        }
+        public String name() { return Lang.get("lune.task.nested.approach_shipwreck"); }
 
         @Override
-        public String status() {
-            return status;
-        }
+        public String learningId() { return Task.learningName("Approach Visible Shipwreck"); }
+
+        @Override
+        public StatusText statusLine() {
+        return status;
+    }
 
         @Override
         public void onStart(BotContext ctx) {
@@ -3365,7 +3376,7 @@ public final class SpeedrunTask implements Task {
             scanCentre = ctx.player.blockPosition();
             headScanner.reset(ctx.player);
             index.invalidate();
-            status = "checking ahead for a visible shipwreck";
+            status.set("lune.status.speedrun.checking_ahead_visible_shipwreck");
             ctx.debug.intent = "looking for a visible shipwreck silhouette";
             ctx.debug.searchAnchor = scanCentre;
             ctx.debug.searchLimit = 1;
@@ -3386,7 +3397,7 @@ public final class SpeedrunTask implements Task {
                 if (!Vision.isPanoramic()
                         && (headScanner.isTurning() || headScanner.isVerticalGlance())) {
                     headScanner.tickTurn(ctx);
-                    status = "looking for shipwreck wood - " + headScanner.status();
+                    status.set("lune.status.speedrun.looking_shipwreck_wood", headScanner.statusLine());
                     return TaskStatus.RUNNING;
                 }
 
@@ -3406,17 +3417,17 @@ public final class SpeedrunTask implements Task {
                     ctx.debug.target("visible shipwreck wood", target, Vision.inspect(ctx, target).verdict()
                             + "; shape/water test passed");
                     ctx.debug.decide("shipwreck candidate passed; approach before searching its chest");
-                    status = "visible shipwreck wood at " + target.toShortString();
+                    status.set("lune.status.speedrun.visible_shipwreck_wood", target.toShortString());
                 } else if (!Vision.isPanoramic() && headScanner.advance()) {
                     ctx.debug.decide("candidate not in current glance; turn to the next view");
-                    status = "no shipwreck ahead; checking " + headScanner.status();
+                    status.set("lune.status.speedrun.no_shipwreck_ahead_checking", headScanner.statusLine());
                     return TaskStatus.RUNNING;
                 } else if (!Vision.isPanoramic() && headScanner.escalate(ctx.player)) {
                     // A ship seen on the shoreline is often off the initial facing. Start with
                     // the cheap human glance, then widen to the shared sweep before concluding
                     // that the visible coastline has no wreck. This keeps the initial look
                     // natural without making a side-on wreck invisible to the speedrun.
-                    status = "glance was empty; widening shipwreck search to a sweep";
+                    status.set("lune.status.speedrun.glance_empty_widening_shipwreck_search");
                     ctx.debug.decide("glance empty; widen to a human-like sweep before giving up");
                     return TaskStatus.RUNNING;
                 } else {
@@ -3430,7 +3441,7 @@ public final class SpeedrunTask implements Task {
                         ctx.debug.target("ship-wood candidate", null, "none in loaded scan cube");
                         ctx.debug.decide("no loaded ship-wood candidate; continue bounded shoreline roam");
                     }
-                    status = "no visible shipwreck-like structure";
+                    status.set("lune.status.speedrun.no_visible_shipwreck_like_structure");
                     return TaskStatus.FAILED;
                 }
             }
@@ -3445,16 +3456,16 @@ public final class SpeedrunTask implements Task {
             if (result == TaskStatus.SUCCESS) {
                 approach.stop(ctx);
                 approach = null;
-                status = "near visible shipwreck; checking its chest";
+                status.set("lune.status.speedrun.near_visible_shipwreck_checking_chest");
                 return TaskStatus.SUCCESS;
             }
             if (result == TaskStatus.FAILED) {
                 approach.stop(ctx);
                 approach = null;
-                status = "could not reach visible shipwreck";
+                status.set("lune.status.speedrun.could_not_reach_visible_shipwreck");
                 return TaskStatus.FAILED;
             }
-            status = "walking to visible shipwreck";
+            status.set("lune.status.speedrun.walking_visible_shipwreck");
             ctx.debug.intent = "approaching remembered visible shipwreck wood";
             ctx.debug.giveUp = "shared route recovery; then visible chest scan";
             return TaskStatus.RUNNING;
@@ -3578,7 +3589,7 @@ public final class SpeedrunTask implements Task {
         private GotoTask inside;
         private FoodContainerTask loot;
         private int entries;
-        private String status = "";
+        private final StatusText status = new StatusText();
 
         VillageEntryTask(int radius, Set<Long> unavailableContainers) {
             this.radius = Math.max(1, radius);
@@ -3586,14 +3597,15 @@ public final class SpeedrunTask implements Task {
         }
 
         @Override
-        public String name() {
-            return "Check Visible Village Houses";
-        }
+        public String name() { return Lang.get("lune.task.nested.check_houses"); }
 
         @Override
-        public String status() {
-            return status;
-        }
+        public String learningId() { return Task.learningName("Check Visible Village Houses"); }
+
+        @Override
+        public StatusText statusLine() {
+        return status;
+    }
 
         @Override
         public void onStart(BotContext ctx) {
@@ -3603,14 +3615,14 @@ public final class SpeedrunTask implements Task {
             loot = null;
             entries = 0;
             unavailableDoors.clear();
-            status = "checking visible village entrances";
+            status.set("lune.status.speedrun.checking_visible_village_entrances");
         }
 
         @Override
         public TaskStatus onTick(BotContext ctx) {
             if (loot != null) {
                 TaskStatus result = loot.tick(ctx);
-                status = "inside a visible village house - " + loot.status();
+                status.set("lune.status.speedrun.inside_visible_village_house", loot.statusLine());
                 if (result == TaskStatus.RUNNING) {
                     return TaskStatus.RUNNING;
                 }
@@ -3626,7 +3638,7 @@ public final class SpeedrunTask implements Task {
             if (inside != null) {
                 TaskStatus result = inside.tick(ctx);
                 if (result == TaskStatus.RUNNING) {
-                    status = "stepping through a visible village doorway";
+                    status.set("lune.status.speedrun.stepping_through_visible_village_doorway");
                     return TaskStatus.RUNNING;
                 }
                 inside.stop(ctx);
@@ -3634,24 +3646,24 @@ public final class SpeedrunTask implements Task {
                 if (result == TaskStatus.SUCCESS) {
                     loot = new FoodContainerTask(INSIDE_RADIUS, unavailableContainers);
                     loot.start(ctx);
-                    status = "inside a visible village house; checking its chest";
+                    status.set("lune.status.speedrun.inside_visible_village_house_checking");
                     return TaskStatus.RUNNING;
                 }
-                status = "could not enter the visible village house";
+                status.set("lune.status.speedrun.could_not_enter_visible_village_house");
                 blacklistDoor(ctx);
                 return TaskStatus.RUNNING;
             }
 
             if (door == null) {
                 if (entries >= MAX_ENTRIES) {
-                    status = "no food in the visible village houses checked";
+                    status.set("lune.status.speedrun.no_food_visible_village_houses_checked");
                     return TaskStatus.FAILED;
                 }
                 door = BlockScanner.findNearest(ctx.level, ctx.player.blockPosition(),
                         FoodTask.VILLAGE_DOORS, radius, ctx.level.getMinY(), ctx.level.getMaxY(),
                         unavailableDoors, (pos, state) -> Vision.isVisible(ctx, pos));
                 if (door == null) {
-                    status = "no visible village entrance";
+                    status.set("lune.status.speedrun.no_visible_village_entrance");
                     return TaskStatus.FAILED;
                 }
                 entries++;
@@ -3663,30 +3675,30 @@ public final class SpeedrunTask implements Task {
             }
             TaskStatus walk = approach.tick(ctx);
             if (walk == TaskStatus.RUNNING) {
-                status = "walking to a visible village doorway";
+                status.set("lune.status.speedrun.walking_visible_village_doorway");
                 return TaskStatus.RUNNING;
             }
             approach.stop(ctx);
             approach = null;
             if (walk == TaskStatus.FAILED) {
-                status = "could not reach a visible village doorway";
+                status.set("lune.status.speedrun.could_not_reach_visible_village_doorway");
                 blacklistDoor(ctx);
                 return TaskStatus.RUNNING;
             }
 
             if (!inReach(ctx, door)) {
-                status = "arrived near a visible doorway; adjusting position";
+                status.set("lune.status.speedrun.arrived_near_visible_doorway_adjusting");
                 return TaskStatus.RUNNING;
             }
             if (!BlockPlacer.use(ctx, door)) {
-                status = "aiming at a visible village doorway";
+                status.set("lune.status.speedrun.aiming_visible_village_doorway");
                 return TaskStatus.RUNNING;
             }
 
             BlockPos insideTarget = insideTarget(ctx, door);
             inside = new GotoTask(new Goals.Near(insideTarget, 1), true, false, true);
             inside.start(ctx);
-            status = "opening a visible village doorway";
+            status.set("lune.status.speedrun.opening_visible_village_doorway");
             return TaskStatus.RUNNING;
         }
 
@@ -3789,7 +3801,7 @@ public final class SpeedrunTask implements Task {
         private boolean fighting;
         private int lootedContainers;
         private int ticks;
-        private String status = "";
+        private final StatusText status = new StatusText();
 
         OpportunityTask(SpeedrunOpportunity kind, BlockPos site, Set<Long> containers) {
             this.kind = kind;
@@ -3798,19 +3810,20 @@ public final class SpeedrunTask implements Task {
         }
 
         @Override
-        public String name() {
-            return "Work " + kind.label();
-        }
+        public String name() { return Lang.get("lune.task.nested.work_site", com.etka.lune.bot.command.Param.Choice.optionLabel(kind.label())); }
 
         @Override
-        public String status() {
-            return status;
-        }
+        public String learningId() { return Task.learningName("Work " + kind.label()); }
+
+        @Override
+        public StatusText statusLine() {
+        return status;
+    }
 
         @Override
         public void onStart(BotContext ctx) {
             ctx.debug.intent = "working the " + kind.label() + " at " + site.toShortString();
-            status = "heading for the " + kind.label();
+            status.set("lune.status.speedrun.heading", com.etka.lune.bot.command.Param.Choice.optionLabel(kind.label()));
         }
 
         @Override
@@ -3819,7 +3832,7 @@ public final class SpeedrunTask implements Task {
                     + lootedContainers + "/" + MAX_CONTAINERS;
             if (ticks++ >= BUDGET_TICKS) {
                 stopWork(ctx);
-                status = "spent long enough at the " + kind.label();
+                status.set("lune.status.speedrun.spent_long_enough", com.etka.lune.bot.command.Param.Choice.optionLabel(kind.label()));
                 // Never a failure. This is opportunistic work; the phase behind it still has its
                 // own route to iron and must not be failed by a chest that would not open.
                 return TaskStatus.SUCCESS;
@@ -3831,7 +3844,7 @@ public final class SpeedrunTask implements Task {
             if (ctx.player.getHealth() <= ABANDON_HEALTH) {
                 stopWork(ctx);
                 stopApproach(ctx);
-                status = "leaving the " + kind.label() + " - took too much damage";
+                status.set("lune.status.speedrun.leaving_took_too_much_damage", com.etka.lune.bot.command.Param.Choice.optionLabel(kind.label()));
                 ctx.debug.decide("abandon site: health " + (int) ctx.player.getHealth());
                 return TaskStatus.SUCCESS;
             }
@@ -3855,8 +3868,7 @@ public final class SpeedrunTask implements Task {
                 return tickOre(ctx);
             }
 
-            status = "took " + lootedContainers + " chest" + (lootedContainers == 1 ? "" : "s")
-                    + " from the " + kind.label();
+            status.set("lune.status.speedrun.took_chest_from", lootedContainers, com.etka.lune.bot.command.Param.Choice.optionLabel(kind.label()));
             return TaskStatus.SUCCESS;
         }
 
@@ -3906,7 +3918,7 @@ public final class SpeedrunTask implements Task {
                         + kind.label() + " before looting");
             }
             TaskStatus result = work.tick(ctx);
-            status = "fighting at the " + kind.label() + " - " + work.status();
+            status.set("lune.status.speedrun.fighting", com.etka.lune.bot.command.Param.Choice.optionLabel(kind.label()), work.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
@@ -3936,13 +3948,13 @@ public final class SpeedrunTask implements Task {
                 approach.start(ctx);
             }
             TaskStatus result = approach.tick(ctx);
-            status = "walking to the " + kind.label() + " - " + approach.status();
+            status.set("lune.status.speedrun.walking", com.etka.lune.bot.command.Param.Choice.optionLabel(kind.label()), approach.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
             stopApproach(ctx);
             if (result == TaskStatus.FAILED) {
-                status = "could not reach the " + kind.label();
+                status.set("lune.status.speedrun.could_not_reach_2", com.etka.lune.bot.command.Param.Choice.optionLabel(kind.label()));
                 return TaskStatus.SUCCESS;
             }
             arrived = true;
@@ -3960,7 +3972,7 @@ public final class SpeedrunTask implements Task {
                 work.start(ctx);
             }
             TaskStatus result = work.tick(ctx);
-            status = work.status();
+            status.set(work.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
@@ -3988,7 +4000,7 @@ public final class SpeedrunTask implements Task {
                 work.start(ctx);
             }
             TaskStatus result = work.tick(ctx);
-            status = "checking the " + kind.label() + " for exposed iron - " + work.status();
+            status.set("lune.status.speedrun.checking_exposed_iron", com.etka.lune.bot.command.Param.Choice.optionLabel(kind.label()), work.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
@@ -4035,7 +4047,7 @@ public final class SpeedrunTask implements Task {
         private int cooldown;
         private int openAttempts;
         private int moved;
-        private String status = "";
+        private final StatusText status = new StatusText();
 
         FoodContainerTask(int radius, Set<Long> unavailable) {
             this(radius, unavailable, FoodContainerTask::isFoodSupply, "food");
@@ -4054,14 +4066,15 @@ public final class SpeedrunTask implements Task {
         }
 
         @Override
-        public String name() {
-            return "Loot " + label + " container";
-        }
+        public String name() { return Lang.get("lune.task.nested.loot_container", com.etka.lune.bot.command.Param.Choice.optionLabel(label)); }
 
         @Override
-        public String status() {
-            return status;
-        }
+        public String learningId() { return Task.learningName("Loot " + label + " container"); }
+
+        @Override
+        public StatusText statusLine() {
+        return status;
+    }
 
         @Override
         public void onStart(BotContext ctx) {
@@ -4070,7 +4083,7 @@ public final class SpeedrunTask implements Task {
             cooldown = 0;
             openAttempts = 0;
             moved = 0;
-            status = "searching visible " + label + " containers";
+            status.set("lune.status.speedrun.searching_visible_containers", com.etka.lune.bot.command.Param.Choice.optionLabel(label));
         }
 
         @Override
@@ -4084,7 +4097,7 @@ public final class SpeedrunTask implements Task {
             if (target == null) {
                 target = findVisible(ctx, radius, unavailable);
                 if (target == null) {
-                    status = "no visible " + label + " chest";
+                    status.set("lune.status.speedrun.no_visible_chest", com.etka.lune.bot.command.Param.Choice.optionLabel(label));
                     return TaskStatus.FAILED;
                 }
             }
@@ -4111,17 +4124,17 @@ public final class SpeedrunTask implements Task {
                         ContainerInput.QUICK_MOVE, ctx.player);
                 moved += stack.getCount();
                 cooldown = ACTION_COOLDOWN;
-                status = "taking " + stack.getHoverName().getString() + " from a " + label + " chest";
+                status.set("lune.status.speedrun.taking_from_chest", stack.getHoverName().getString(), com.etka.lune.bot.command.Param.Choice.optionLabel(label));
                 return TaskStatus.RUNNING;
             }
 
             closeMenu(ctx);
             unavailable.add(target.asLong());
             if (moved == 0) {
-                status = "visible chest had no " + label + ", checking the next source";
+                status.set("lune.status.speedrun.visible_chest_had_no_checking_next", com.etka.lune.bot.command.Param.Choice.optionLabel(label));
                 return TaskStatus.FAILED;
             }
-            status = "took " + moved + " " + label + " items from a visible chest";
+            status.set("lune.status.speedrun.took_items_from_visible_chest", moved, com.etka.lune.bot.command.Param.Choice.optionLabel(label));
             return TaskStatus.SUCCESS;
         }
 
@@ -4129,7 +4142,7 @@ public final class SpeedrunTask implements Task {
             if (openAttempts >= MAX_OPEN_ATTEMPTS) {
                 unavailable.add(target.asLong());
                 closeMenu(ctx);
-                status = "could not open the visible " + label + " chest";
+                status.set("lune.status.speedrun.could_not_open_visible_chest", com.etka.lune.bot.command.Param.Choice.optionLabel(label));
                 return TaskStatus.FAILED;
             }
 
@@ -4137,10 +4150,10 @@ public final class SpeedrunTask implements Task {
                 if (BlockPlacer.use(ctx, target)) {
                     openAttempts++;
                     cooldown = ACTION_COOLDOWN + 2;
-                    status = "opening a visible " + label + " chest";
+                    status.set("lune.status.speedrun.opening_visible_chest", com.etka.lune.bot.command.Param.Choice.optionLabel(label));
                     return TaskStatus.RUNNING;
                 }
-                status = "aiming at the visible " + label + " chest";
+                status.set("lune.status.speedrun.aiming_visible_chest", com.etka.lune.bot.command.Param.Choice.optionLabel(label));
                 return TaskStatus.RUNNING;
             }
 
@@ -4162,19 +4175,19 @@ public final class SpeedrunTask implements Task {
                     unavailable.add(target.asLong());
                     target = null;
                     openAttempts = 0;
-                    status = "arrived beside a blocked " + label + " chest; checking the next source";
+                    status.set("lune.status.speedrun.arrived_beside_blocked_chest_checking", com.etka.lune.bot.command.Param.Choice.optionLabel(label));
                     return TaskStatus.RUNNING;
                 }
-                status = "arrived at a visible " + label + " chest";
+                status.set("lune.status.speedrun.arrived_visible_chest", com.etka.lune.bot.command.Param.Choice.optionLabel(label));
                 return TaskStatus.RUNNING;
             }
             if (walk == TaskStatus.FAILED) {
                 stopApproach(ctx);
                 unavailable.add(target.asLong());
-                status = "could not reach the visible " + label + " chest";
+                status.set("lune.status.speedrun.could_not_reach_visible_chest", com.etka.lune.bot.command.Param.Choice.optionLabel(label));
                 return TaskStatus.FAILED;
             }
-            status = "walking to a visible " + label + " chest";
+            status.set("lune.status.speedrun.walking_visible_chest", com.etka.lune.bot.command.Param.Choice.optionLabel(label));
             return TaskStatus.RUNNING;
         }
 
@@ -4247,7 +4260,7 @@ public final class SpeedrunTask implements Task {
         private BlockPos portal;
         private GotoTask approach;
         private int ticks;
-        private String status = "";
+        private final StatusText status = new StatusText();
 
         PortalTravelTask(ResourceKey<Level> dimension, BlockPos anchor, int searchRadius) {
             this.dimension = dimension;
@@ -4256,15 +4269,20 @@ public final class SpeedrunTask implements Task {
         }
 
         @Override
-        public String name() { return "Use Nether Portal"; }
+        public String name() { return Lang.get("lune.task.nested.use_nether_portal"); }
 
         @Override
-        public String status() { return status; }
+        public String learningId() { return Task.learningName("Use Nether Portal"); }
+
+        @Override
+        public StatusText statusLine() {
+        return status;
+    }
 
         @Override
         public TaskStatus onTick(BotContext ctx) {
             if (ctx.level.dimension() == dimension) {
-                status = "arrived in the target dimension";
+                status.set("lune.status.speedrun.arrived_target_dimension");
                 return TaskStatus.SUCCESS;
             }
 
@@ -4272,7 +4290,7 @@ public final class SpeedrunTask implements Task {
                 portal = anchor != null && ctx.level.getBlockState(anchor).is(Blocks.NETHER_PORTAL)
                         ? anchor : findPortal(ctx, ctx.player.blockPosition(), searchRadius);
                 if (portal == null) {
-                    status = "no Nether portal in the loaded area";
+                    status.set("lune.status.speedrun.no_nether_portal_loaded_area");
                     return TaskStatus.FAILED;
                 }
             }
@@ -4283,11 +4301,11 @@ public final class SpeedrunTask implements Task {
             }
             TaskStatus walk = approach.tick(ctx);
             if (walk == TaskStatus.RUNNING) {
-                status = "walking to portal";
+                status.set("lune.status.speedrun.walking_portal");
                 return TaskStatus.RUNNING;
             }
             if (walk == TaskStatus.FAILED) {
-                status = "could not reach portal";
+                status.set("lune.status.speedrun.could_not_reach_portal");
                 return TaskStatus.FAILED;
             }
             approach.stop(ctx);
@@ -4297,10 +4315,10 @@ public final class SpeedrunTask implements Task {
             ctx.input.forward = true;
             ctx.input.sprint = true;
             if (++ticks > TIMEOUT) {
-                status = "portal did not change dimension";
+                status.set("lune.status.speedrun.portal_did_not_change_dimension");
                 return TaskStatus.FAILED;
             }
-            status = "entering portal";
+            status.set("lune.status.speedrun.entering_portal");
             return TaskStatus.RUNNING;
         }
 
@@ -4355,17 +4373,22 @@ public final class SpeedrunTask implements Task {
         private List<BlockPos> frameOrder = List.of();
         /** The current cast must finish even if feedback reorders the remaining frame. */
         private BlockPos frameTarget;
-        private String status = "";
+        private final StatusText status = new StatusText();
 
         @Override
-        public String name() { return "Cast Nether Portal"; }
+        public String name() { return Lang.get("lune.task.nested.cast_nether_portal"); }
 
         @Override
-        public String status() { return status; }
+        public String learningId() { return Task.learningName("Cast Nether Portal"); }
+
+        @Override
+        public StatusText statusLine() {
+        return status;
+    }
 
         @Override
         public TaskProgress learningProgress() {
-            return new TaskProgress(frameIndex, 14, "frame blocks");
+            return new TaskProgress(frameIndex, 14, Lang.get("lune.unit.frame_blocks"));
         }
 
         @Override
@@ -4417,7 +4440,7 @@ public final class SpeedrunTask implements Task {
                     + "; frame " + frameIndex + "/14 step " + frameStep
                     + "; max " + MAX_FLUID_SCOUT_STOPS + " committed stops";
             if (ctx.level.dimension() == Level.NETHER) {
-                status = "entered the Nether";
+                status.set("lune.status.speedrun.entered_nether");
                 return TaskStatus.SUCCESS;
             }
 
@@ -4451,8 +4474,7 @@ public final class SpeedrunTask implements Task {
         private TaskStatus findSources(BotContext ctx) {
             if (fluidScout != null) {
                 TaskStatus scouted = fluidScout.tick(ctx);
-                status = "scouting for a visible " + fluidName(fluidScoutTarget)
-                        + " source - " + fluidScout.status();
+                status.set("lune.status.speedrun.scouting_visible_source_2", fluidName(fluidScoutTarget), fluidScout.statusLine());
                 ctx.debug.nextDecision = "finish this bounded physical scout, then report its result";
                 if (scouted == TaskStatus.RUNNING) {
                     return TaskStatus.RUNNING;
@@ -4469,16 +4491,16 @@ public final class SpeedrunTask implements Task {
                     } else {
                         waterSource = found;
                     }
-                    status = "spotted a visible " + fluidName(target) + " source";
-                    ctx.debug.target("visible " + fluidName(target) + " source", found,
+                    status.set("lune.status.speedrun.spotted_visible_source", fluidName(target));
+                    ctx.debug.target("visible " + fluidId(target) + " source", found,
                             Vision.inspect(ctx, found).verdict());
                     ctx.debug.decide("remember source at " + found.toShortString()
                             + "; continue to the other fluid");
                     return TaskStatus.RUNNING;
                 }
 
-                status = "could not find a visible reachable " + fluidName(target) + " source";
-                ctx.debug.decide("give up: " + fluidName(target)
+                status.set("lune.status.speedrun.could_not_find_visible_reachable_source", fluidName(target));
+                ctx.debug.decide("give up: " + fluidId(target)
                         + " not found within " + MAX_FLUID_SCOUT_STOPS + " physical stops");
                 return TaskStatus.FAILED;
             }
@@ -4507,12 +4529,12 @@ public final class SpeedrunTask implements Task {
                         HeadScanner.Style.GLANCE, false,
                         state -> state.getFluidState().isSource());
                 fluidScout.start(ctx);
-                status = "scouting for a visible " + fluidName(fluidScoutTarget) + " source";
+                status.set("lune.status.speedrun.scouting_visible_source", fluidName(fluidScoutTarget));
                 ctx.debug.nextDecision = "walk and turn physically; do not inspect hidden chunks";
                 return TaskStatus.RUNNING;
             }
             state = State.CHOOSE_SOURCES;
-            status = "found water and lava sources";
+            status.set("lune.status.speedrun.found_water_lava_sources");
             ctx.debug.decide("both fluid sources remembered; choose a flat portal base");
             return TaskStatus.RUNNING;
         }
@@ -4521,20 +4543,32 @@ public final class SpeedrunTask implements Task {
             return pos == null ? "none" : pos.toShortString();
         }
 
+        /**
+         * Asked of the block, because this goes into a dozen status lines the player reads.
+         *
+         * <p>Written out here it stayed English inside a translated sentence - "gorunur lava
+         * kaynagi araniyor" - and the game already knows the word in every language it ships.</p>
+         */
         private String fluidName(Block block) {
+            return Lang.get((block == Blocks.LAVA ? Blocks.LAVA : Blocks.WATER)
+                    .getDescriptionId());
+        }
+
+        /** The same fluid for the journal and the overlay, which stay English to stay greppable. */
+        private String fluidId(Block block) {
             return block == Blocks.LAVA ? "lava" : "water";
         }
 
         private TaskStatus chooseBase(BotContext ctx) {
             base = NetherPortalFrame.findBase(ctx, true, false);
             if (base == null) {
-                status = "no flat space for a portal frame";
+                status.set("lune.status.speedrun.no_flat_space_portal_frame");
                 return TaskStatus.FAILED;
             }
             frameOrder = PortalBuildingPolicy.order(base, true,
                     buildStrategy, ctx.player.getX());
             state = State.CAST;
-            status = "casting a portal frame";
+            status.set("lune.status.speedrun.casting_portal_frame");
             return TaskStatus.RUNNING;
         }
 
@@ -4584,7 +4618,7 @@ public final class SpeedrunTask implements Task {
                 return TaskStatus.RUNNING;
             }
             if (!BlockPlacer.isReplaceable(ctx, target)) {
-                status = "portal frame is blocked at " + target;
+                status.set("lune.status.speedrun.portal_frame_blocked", target);
                 return TaskStatus.FAILED;
             }
 
@@ -4597,13 +4631,13 @@ public final class SpeedrunTask implements Task {
                     startCastSourceScout(ctx, Blocks.LAVA);
                     return TaskStatus.RUNNING;
                 }
-                TaskStatus moved = moveTo(ctx, lavaSource, 3.5, "getting lava");
+                TaskStatus moved = moveTo(ctx, lavaSource, 3.5, "lune.status.speedrun.getting_lava");
                 if (moved != TaskStatus.SUCCESS) {
                     return moved;
                 }
                 if (!InventoryHelper.anyMatch(ctx.player, stack -> stack.is(Items.LAVA_BUCKET))
                         && !takeSource(ctx, lavaSource, Items.LAVA_BUCKET)) {
-                    status = "aiming at the lava source";
+                    status.set("lune.status.speedrun.aiming_lava_source");
                     return TaskStatus.RUNNING;
                 }
                 frameStep = 1;
@@ -4612,21 +4646,21 @@ public final class SpeedrunTask implements Task {
             }
 
             if (frameStep == 1) {
-                TaskStatus moved = moveTo(ctx, target, 3.5, "placing lava");
+                TaskStatus moved = moveTo(ctx, target, 3.5, "lune.status.speedrun.placing_lava");
                 if (moved != TaskStatus.SUCCESS) {
                     return moved;
                 }
                 if (!ctx.level.getBlockState(target).is(Blocks.LAVA)) {
                     if (!InventoryHelper.anyMatch(ctx.player, stack -> stack.is(Items.LAVA_BUCKET))) {
-                        status = "waiting for the lava bucket";
+                        status.set("lune.status.speedrun.waiting_lava_bucket");
                         return TaskStatus.RUNNING;
                     }
                     if (!placeFluid(ctx, Items.LAVA_BUCKET, target)) {
-                        status = "aiming at the portal frame";
+                        status.set("lune.status.speedrun.aiming_portal_frame");
                         return TaskStatus.RUNNING;
                     }
                     if (!ctx.level.getBlockState(target).is(Blocks.LAVA)) {
-                        status = "waiting for the lava source to place";
+                        status.set("lune.status.speedrun.waiting_lava_source_place");
                         return TaskStatus.RUNNING;
                     }
                 }
@@ -4641,13 +4675,13 @@ public final class SpeedrunTask implements Task {
                     startCastSourceScout(ctx, Blocks.WATER);
                     return TaskStatus.RUNNING;
                 }
-                TaskStatus moved = moveTo(ctx, waterSource, 3.5, "getting water");
+                TaskStatus moved = moveTo(ctx, waterSource, 3.5, "lune.status.speedrun.getting_water");
                 if (moved != TaskStatus.SUCCESS) {
                     return moved;
                 }
                 if (!InventoryHelper.anyMatch(ctx.player, stack -> stack.is(Items.WATER_BUCKET))
                         && !takeSource(ctx, waterSource, Items.WATER_BUCKET)) {
-                    status = "aiming at the water source";
+                    status.set("lune.status.speedrun.aiming_water_source");
                     return TaskStatus.RUNNING;
                 }
                 frameStep = 3;
@@ -4655,17 +4689,17 @@ public final class SpeedrunTask implements Task {
                 return TaskStatus.RUNNING;
             }
 
-            TaskStatus moved = moveTo(ctx, target, 3.5, "cooling the frame");
+            TaskStatus moved = moveTo(ctx, target, 3.5, "lune.status.speedrun.cooling_frame");
             if (moved != TaskStatus.SUCCESS) {
                 return moved;
             }
             if (!ctx.level.getBlockState(target).is(Blocks.OBSIDIAN)) {
                 if (!InventoryHelper.anyMatch(ctx.player, stack -> stack.is(Items.WATER_BUCKET))) {
-                    status = "waiting for the water bucket";
+                    status.set("lune.status.speedrun.waiting_water_bucket");
                     return TaskStatus.RUNNING;
                 }
                 if (!coolLava(ctx, target)) {
-                    status = "aiming water at the lava";
+                    status.set("lune.status.speedrun.aiming_water_lava");
                     return TaskStatus.RUNNING;
                 }
             }
@@ -4675,7 +4709,7 @@ public final class SpeedrunTask implements Task {
                 frameStep = 0;
                 stopApproach(ctx);
             }
-            status = "cast " + frameIndex + "/14 obsidian blocks";
+            status.set("lune.status.speedrun.cast_14_obsidian_blocks", frameIndex);
             return TaskStatus.RUNNING;
         }
 
@@ -4687,7 +4721,7 @@ public final class SpeedrunTask implements Task {
                     HeadScanner.Style.GLANCE, false,
                     state -> state.getFluidState().isSource());
             fluidScout.start(ctx);
-            status = "scouting for another visible " + fluidName(block) + " source";
+            status.set("lune.status.speedrun.scouting_another_visible_source", fluidName(block));
             ctx.debug.nextDecision = "walk and turn for the next source before casting this block";
             ctx.debug.decide("remembered source depleted; start a bounded physical fluid scout");
         }
@@ -4696,8 +4730,7 @@ public final class SpeedrunTask implements Task {
         private TaskStatus tickCastSourceScout(BotContext ctx) {
             Block target = fluidScoutTarget;
             TaskStatus result = fluidScout.tick(ctx);
-            status = "scouting for another visible " + fluidName(target)
-                    + " source - " + fluidScout.status();
+            status.set("lune.status.speedrun.scouting_another_visible_source_2", fluidName(target), fluidScout.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
@@ -4712,16 +4745,16 @@ public final class SpeedrunTask implements Task {
                 } else {
                     waterSource = found;
                 }
-                ctx.debug.target("visible " + fluidName(target) + " source", found,
+                ctx.debug.target("visible " + fluidId(target) + " source", found,
                         Vision.inspect(ctx, found).verdict());
-                ctx.debug.decide("found the next " + fluidName(target)
+                ctx.debug.decide("found the next " + fluidId(target)
                         + " source; resume this portal frame");
-                status = "found another visible " + fluidName(target) + " source";
+                status.set("lune.status.speedrun.found_another_visible_source", fluidName(target));
                 return TaskStatus.RUNNING;
             }
 
-            status = "no additional visible " + fluidName(target) + " source found";
-            ctx.debug.decide("give up: no next " + fluidName(target)
+            status.set("lune.status.speedrun.no_additional_visible_source_found", fluidName(target));
+            ctx.debug.decide("give up: no next " + fluidId(target)
                     + " source within the bounded physical scout");
             return TaskStatus.FAILED;
         }
@@ -4733,12 +4766,12 @@ public final class SpeedrunTask implements Task {
                 return TaskStatus.RUNNING;
             }
             if (++lightTicks > 80) {
-                status = "could not light the completed portal frame";
+                status.set("lune.status.speedrun.could_not_light_completed_portal_frame");
                 return TaskStatus.FAILED;
             }
             BlockPos support = base.offset(1, 0, 0);
             if (InventoryHelper.equip(ctx, stack -> stack.is(Items.FLINT_AND_STEEL)) < 0) {
-                status = "flint and steel disappeared";
+                status.set("lune.status.speedrun.flint_steel_disappeared");
                 return TaskStatus.FAILED;
             }
             Vec3 hit = Vec3.atCenterOf(support).add(0.0, 0.5, 0.0);
@@ -4748,42 +4781,43 @@ public final class SpeedrunTask implements Task {
                         new BlockHitResult(hit, Direction.UP, support, false));
                 ctx.player.swing(InteractionHand.MAIN_HAND);
             }
-            status = "lighting the portal";
+            status.set("lune.status.speedrun.lighting_portal");
             return TaskStatus.RUNNING;
         }
 
         private TaskStatus enter(BotContext ctx) {
             if (ctx.level.dimension() == Level.NETHER) {
-                status = "entered the Nether";
+                status.set("lune.status.speedrun.entered_nether");
                 return TaskStatus.SUCCESS;
             }
             if (portal == null) {
                 portal = findPortal(ctx, ctx.player.blockPosition(), 64);
             }
             if (portal == null) {
-                status = "portal disappeared";
+                status.set("lune.status.speedrun.portal_disappeared");
                 return TaskStatus.FAILED;
             }
-            TaskStatus moved = moveTo(ctx, portal, 2.0, "entering the portal");
+            TaskStatus moved = moveTo(ctx, portal, 2.0, "lune.status.speedrun.entering_portal");
             if (moved != TaskStatus.SUCCESS) {
                 return moved;
             }
             ctx.look.lookAt(ctx.player, Vec3.atCenterOf(portal));
             ctx.input.forward = true;
             ctx.input.sprint = true;
-            status = "entering the Nether";
+            status.set("lune.status.speedrun.entering_nether");
             return TaskStatus.RUNNING;
         }
 
-        private TaskStatus moveTo(BotContext ctx, BlockPos target, double tolerance, String what) {
+        private TaskStatus moveTo(BotContext ctx, BlockPos target, double tolerance,
+                                  String key) {
             if (approach == null) {
                 approach = new GotoTask(new Goals.Adjacent(target, tolerance), true, false);
                 approach.start(ctx);
             }
             TaskStatus result = approach.tick(ctx);
-            status = what;
+            status.set(key);
             if (result == TaskStatus.FAILED) {
-                status = "could not reach " + what;
+                status.set("lune.status.speedrun.could_not_reach", Lang.get(key));
             }
             return result;
         }
@@ -4871,7 +4905,7 @@ public final class SpeedrunTask implements Task {
         private BlockPos sourceAfterTravel(BotContext ctx, Block block, BlockPos remembered) {
             if (remembered != null && ctx.level.getBlockState(remembered).is(block)
                     && ctx.level.getBlockState(remembered).getFluidState().isSource()) {
-                ctx.debug.target("remembered " + fluidName(block) + " source", remembered,
+                ctx.debug.target("remembered " + fluidId(block) + " source", remembered,
                         "previously visible; return to it for the next cast step");
                 return remembered;
             }

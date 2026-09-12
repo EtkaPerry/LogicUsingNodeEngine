@@ -12,6 +12,8 @@ import com.etka.lune.bot.learning.TaskLearning;
 import com.etka.lune.bot.util.Leash;
 import com.etka.lune.bot.util.OmniscientAccess;
 import com.etka.lune.config.BotConfig;
+import com.etka.lune.config.Terms;
+import com.etka.lune.util.Lang;
 import com.etka.lune.platform.BuildFeatures;
 import net.minecraft.core.BlockPos;
 import net.minecraft.client.Minecraft;
@@ -56,6 +58,14 @@ public final class BotEngine {
     private BlockPos runAnchor;
     private boolean paused;
     private String lastMessage = "";
+    /**
+     * What the last message meant.
+     *
+     * <p>Carried beside the sentence instead of being read back out of it. The mascot used
+     * to decide whether a run had ended well by looking for the word "finished", which is a
+     * question about English rather than about the run.</p>
+     */
+    private StatusSignal lastMessageSignal = StatusSignal.NONE;
     private String lastThought = "";
     private int thoughtRepeat;
     private static final int MAX_THOUGHTS = 7;
@@ -115,6 +125,11 @@ public final class BotEngine {
         return lastMessage;
     }
 
+    /** Whether the last message was a finish, a failure, or neither. */
+    public StatusSignal getLastMessageSignal() {
+        return lastMessageSignal;
+    }
+
     public LearningStore getLearning() {
         return learning;
     }
@@ -123,11 +138,11 @@ public final class BotEngine {
     public String recordLearningFeedback(boolean positive) {
         BotConfig config = BotConfig.get();
         if (!BuildFeatures.approvalFeedback() || !config.userLearningEnabled || !config.learningEnabled) {
-            return "User feedback is unavailable in release builds";
+            return Lang.get("lune.engine.user_feedback_unavailable_release_builds");
         }
         LearningStore.SkillChoice choice = learning.feedbackSkillChoice();
         if (choice == null) {
-            return "No changeable skill tactic yet; fixed jobs still learn their best time";
+            return Lang.get("lune.engine.changeable_skill_tactic_yet_fixed_jobs");
         }
         String skill = choice.context().task();
         String judgedAction = choice.action();
@@ -144,7 +159,7 @@ public final class BotEngine {
                 learningSession.decision(choice.context(), switched);
             }
             debug.learningAction = switched;
-            return "Rejected " + skill + " tactic " + judgedAction + "; switching to " + switched;
+            return Lang.get("lune.engine.rejected_tactic_switching", skill, judgedAction, switched);
         }
         return "Skill " + skill + " " + label + ": " + judgedAction;
     }
@@ -160,14 +175,39 @@ public final class BotEngine {
     // --- queue control -------------------------------------------------------
 
     public void enqueue(Task task) {
+        if (refusedByTerms()) {
+            return;
+        }
         queue.addLast(task);
     }
 
     /** Cancels whatever is running and starts this task immediately, keeping the rest of the queue. */
     public void runNow(Task task) {
+        if (refusedByTerms()) {
+            return;
+        }
         cancelCurrent();
         queue.addFirst(task);
         paused = false;
+    }
+
+    /**
+     * Refuses to take work while Lune's terms are unaccepted, and says so.
+     *
+     * <p>The control panel is the only route a player has to this method and it does not open
+     * unaccepted, so in practice this never fires. It is here anyway because "the bot will not run
+     * until you accept" is a promise made to the player on the screen, and a promise kept in one
+     * place is a promise the next caller cannot walk around. It is not a behaviour: nothing is
+     * decided here, the queue simply stays shut.</p>
+     */
+    private boolean refusedByTerms() {
+        if (Terms.mayRun()) {
+            return false;
+        }
+        lastMessage = Lang.get("lune.engine.accept_terms_first");
+        lastMessageSignal = StatusSignal.BLOCKED;
+        Constants.LOG.warn("Refused to start a task: Lune's terms have not been accepted");
+        return true;
     }
 
     /**
@@ -191,7 +231,7 @@ public final class BotEngine {
         }
         Minecraft mc = Minecraft.getInstance();
         if (runTrace != null && mc != null && mc.player != null && mc.level != null) {
-            runTrace.event(botTicks, paused ? "paused by user" : "resumed by user",
+            runTrace.event(botTicks, paused ? Lang.get("lune.engine.paused_by_user") : Lang.get("lune.engine.resumed_by_user"),
                     debug, mc.player, mc.level);
         }
     }
@@ -202,7 +242,7 @@ public final class BotEngine {
 
     /** Panic button: drop the current task and the whole queue, and release every held key. */
     public void stopAll() {
-        stopAll("stopped by user");
+        stopAll(Lang.get("lune.engine.stopped_by_user"));
     }
 
     /**
@@ -219,7 +259,8 @@ public final class BotEngine {
         paused = false;
         input.reset();
         releaseUseKey();
-        lastMessage = "Stopped";
+        lastMessage = Lang.get("lune.engine.stopped");
+        lastMessageSignal = StatusSignal.NONE;
         runAnchor = null;
         Leash.get().release();
         finishLearningSession(reason, false);
@@ -287,18 +328,18 @@ public final class BotEngine {
         if (player == null || mc.level == null) {
             // Left the world mid-task; drop everything rather than resuming into a new one.
             if (current != null) {
-                recordLearningAbort(current, "left world");
+                recordLearningAbort(current, Lang.get("lune.engine.left_world"));
             }
             finishRunStatistics();
             if (current != null || !queue.isEmpty()) {
                 current = null;
                 queue.clear();
             }
-            finishLearningSession("left world", false);
-            closeRunTrace("left world");
+            finishLearningSession(Lang.get("lune.engine.left_world"), false);
+            closeRunTrace(Lang.get("lune.engine.left_world"));
             learning.flush();
             Leash.get().release();
-            AutoRun.runInterrupted(mc, "the world went away");
+            AutoRun.runInterrupted(mc, Lang.get("lune.engine.world_went_away"));
             return;
         }
 
@@ -312,13 +353,13 @@ public final class BotEngine {
                 // with the last traced tick still mid-air and at full health, and no clue that
                 // the ground had arrived.
                 if (runTrace != null) {
-                    runTrace.event(botTicks, "player died", debug, player, mc.level);
+                    runTrace.event(botTicks, Lang.get("lune.engine.player_died"), debug, player, mc.level);
                 }
-                stopAll("player died");
+                stopAll(Lang.get("lune.engine.player_died"));
             } else {
                 input.reset();
             }
-            AutoRun.runInterrupted(mc, "the player died");
+            AutoRun.runInterrupted(mc, Lang.get("lune.engine.player_died_3"));
             return;
         }
 
@@ -344,6 +385,19 @@ public final class BotEngine {
 
         // Started from the command line rather than by a player; no-op in an ordinary session.
         AutoRun.tick(mc, this);
+
+        // A recorded human session. The journal opens with no task behind it and is then ticked by
+        // the caller exactly as it is for a run, so the two come out in the same units and the same
+        // analysis reads both. Nothing is driven: isDriving() is false while current is null, so
+        // BotClientInput hands the player their own keys back untouched.
+        if (AutoRun.isRecordingSession() && runTrace == null && current == null) {
+            openRunTrace(player, mc.level, config, true);
+            if (runTrace != null) {
+                debug.taskName = "recorded session";
+                debug.intent = "human play; nothing is driving";
+                runTrace.event(botTicks, "recording-started", debug, player, mc.level);
+            }
+        }
 
         if (paused) {
             return;
@@ -404,18 +458,24 @@ public final class BotEngine {
                 Task finished = current;
                 debug.tasksCompleted++;
                 debug.peak("task_ticks", debug.taskTicks);
-                String detail = current.status().isBlank() ? "" : ": " + current.status();
+                String detail = current.status().isBlank()
+                        ? "" : Lang.get("lune.engine.detail_suffix", current.status());
                 boolean nextMission = !queue.isEmpty();
                 finished.stop(ctx);
                 AutomaticApproval.Decision automatic = recordLearningOutcome(finished,
                         TaskStatus.SUCCESS);
+                String queued = nextMission
+                        ? Lang.get("lune.engine.next_mission_queued") : "";
                 if (BuildFeatures.approvalFeedback()) {
-                    lastMessage = finished.name() + " finished" + detail + " - auto "
-                            + automatic.label() + (nextMission ? "; next mission queued" : "");
+                    lastMessage = Lang.get("lune.engine.task_finished_auto", finished.name(),
+                            detail, automatic.label(), queued);
                 } else {
-                    lastMessage = finished.name() + " finished" + detail
-                            + (nextMission ? "; next mission queued" : "");
+                    lastMessage = Lang.get("lune.engine.task_finished", finished.name(),
+                            detail, queued);
                 }
+                // A finish that ended in trouble is still trouble; the task keeps the reading.
+                lastMessageSignal = finished.statusSignal() == StatusSignal.NONE
+                        ? StatusSignal.SUCCESS : finished.statusSignal();
                 ctx.chat(lastMessage);
                 current = null;
                 if (runTrace != null) {
@@ -425,8 +485,8 @@ public final class BotEngine {
                     // The run is over, so "home" stops meaning anything until the next one starts.
                     runAnchor = null;
                     Leash.get().release();
-                    finishLearningSession("queue complete", true);
-                    closeRunTrace("queue complete");
+                    finishLearningSession(Lang.get("lune.engine.queue_complete"), true);
+                    closeRunTrace(Lang.get("lune.engine.queue_complete"));
                     finishRunStatistics();
                 }
             }
@@ -435,15 +495,18 @@ public final class BotEngine {
                 debug.tasksFailed++;
                 debug.peak("task_ticks", debug.taskTicks);
                 String detail = failed.status();
+                StatusSignal failedSignal = failed.statusSignal();
                 failed.stop(ctx);
                 AutomaticApproval.Decision automatic = recordLearningOutcome(failed,
                         TaskStatus.FAILED);
                 if (BuildFeatures.approvalFeedback()) {
-                    lastMessage = failed.name() + " failed: " + detail + " - auto "
-                            + automatic.label();
+                    lastMessage = Lang.get("lune.engine.task_failed_auto", failed.name(),
+                            detail, automatic.label());
                 } else {
-                    lastMessage = failed.name() + " failed: " + detail;
+                    lastMessage = Lang.get("lune.engine.task_failed", failed.name(), detail);
                 }
+                lastMessageSignal = failedSignal == StatusSignal.NONE
+                        ? StatusSignal.BLOCKED : failedSignal;
                 ctx.chat(lastMessage);
                 current = null;
                 if (runTrace != null) {
@@ -451,8 +514,8 @@ public final class BotEngine {
                 }
                 // Halt the rest of the queue: continuing after a failure usually compounds it.
                 queue.clear();
-                finishLearningSession("task failed", false);
-                closeRunTrace("task failed");
+                finishLearningSession(Lang.get("lune.engine.task_failed"), false);
+                closeRunTrace(Lang.get("lune.engine.task_failed"));
                 finishRunStatistics();
             }
         }
@@ -477,8 +540,14 @@ public final class BotEngine {
     /** Mirrors this tick's state into the overlay's telemetry. */
     private void updateDebug() {
         debug.state = describeState();
-        debug.taskName = current == null ? "-" : current.name();
-        debug.taskStatus = current == null ? "" : current.status();
+        boolean recording = current == null && AutoRun.isRecordingSession();
+        debug.taskName = current == null
+                ? (recording ? "recorded session" : "-")
+                : current.name();
+        // A journal with an empty status column summarises to nothing at all. Say plainly that the
+        // person is playing, so the closing summary has something to divide the time between.
+        debug.taskStatus = current != null ? current.status()
+                : recording ? "human play; nothing is driving" : "";
         debug.nextTask = queue.isEmpty() ? "" : queue.peekFirst().name();
         debug.queueSize = queue.size();
         debug.keys = describeKeys();
@@ -525,7 +594,19 @@ public final class BotEngine {
     }
 
     private void openRunTrace(LocalPlayer player, ClientLevel level, BotConfig config) {
-        if (!config.debugRunLog || runTrace != null) {
+        openRunTrace(player, level, config, false);
+    }
+
+    /**
+     * @param force open regardless of the debug setting, for a session the caller explicitly asked
+     *              to record - a recorded human run is the whole reason the client was started, so
+     *              silently declining to write it because a debug toggle is off wastes the session
+     */
+    private void openRunTrace(LocalPlayer player, ClientLevel level, BotConfig config,
+                              boolean force) {
+        if (!BuildFeatures.runTracingEnabled()
+                || (!config.debugRunLog && !force)
+                || runTrace != null) {
             return;
         }
         runTrace = RunTrace.open(player, level, config);

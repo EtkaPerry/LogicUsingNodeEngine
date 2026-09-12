@@ -98,6 +98,14 @@ public final class RunTrace implements AutoCloseable {
     private int lastTick;
     private int minHealth = Integer.MAX_VALUE;
     private int minFood = Integer.MAX_VALUE;
+    /** Motion ledger; see {@link #accumulateMotion}. */
+    private double lastX = Double.MIN_VALUE;
+    private double lastZ;
+    private double blocksTravelled;
+    private int movingTicks;
+    private int sprintingTicks;
+    private int jumps;
+    private boolean wasAirborne;
     private String lastMission = "";
     private int missionUnchangedSince = -1;
     private int stallsReported;
@@ -145,7 +153,7 @@ public final class RunTrace implements AutoCloseable {
                     + ",repathInterval:" + config.repathInterval);
             trace.line("columns=tick,type,task,mission,intent,status,position,look,vitals,world,action,target,blocked,giveup,blocks,tools,inventory,memory,flow"
                     + ",learning"
-                    + ",structure,landmarks,path,decisions");
+                    + ",structure,landmarks,path,sight,motion,decisions");
             return trace;
         } catch (IOException | RuntimeException e) {
             Constants.LOG.warn("Could not open Lune run trace", e);
@@ -203,12 +211,64 @@ public final class RunTrace implements AutoCloseable {
         }
         minHealth = Math.min(minHealth, Math.round(player.getHealth()));
         minFood = Math.min(minFood, player.getFoodData().getFoodLevel());
+        accumulateMotion(player);
         if (!debug.diversions.isBlank()) {
             lastDiversions = debug.diversions;
         }
         if (!debug.failures.isEmpty()) {
             lastFailures = debug.failureSnapshot().toString();
         }
+    }
+
+    /**
+     * How the bot actually moved, charged one tick at a time.
+     * <p>
+     * Everything else in the journal describes intent - the block it wants, the route it planned,
+     * the watchdog it is near. None of it answers the question a watcher actually asks, which is
+     * whether the bot got on with it. Ground covered, how much of it was at a run, and how often it
+     * left the ground are three numbers that make "it looks sluggish" into something with a value,
+     * and make a change to the movement rules provable rather than a matter of taste.
+     */
+    private void accumulateMotion(LocalPlayer player) {
+        if (lastX != Double.MIN_VALUE) {
+            double dx = player.getX() - lastX;
+            double dz = player.getZ() - lastZ;
+            double step = Math.sqrt(dx * dx + dz * dz);
+            // A teleport, a respawn or a dimension change is not travel, and letting one through
+            // makes the whole distance figure meaningless.
+            if (step < 2.0) {
+                blocksTravelled += step;
+                if (step > 0.01) {
+                    movingTicks++;
+                    if (player.isSprinting()) {
+                        sprintingTicks++;
+                    }
+                }
+            }
+        }
+        lastX = player.getX();
+        lastZ = player.getZ();
+        boolean airborne = !player.onGround();
+        if (airborne && !wasAirborne && !player.isInWater()) {
+            jumps++;
+        }
+        wasAirborne = airborne;
+    }
+
+    /** What the search was looking at, and which way of choosing produced the current target. */
+    private static String sightSummary(DebugInfo debug) {
+        String tally = debug.sightTally.isBlank() ? "-" : debug.sightTally;
+        String source = debug.selectionSource.isBlank() ? "-" : debug.selectionSource;
+        return "via=" + source + ";" + tally;
+    }
+
+    /** The motion ledger as a journal column. */
+    private String motionSummary() {
+        long sprintShare = movingTicks == 0 ? 0 : Math.round(100.0 * sprintingTicks / movingTicks);
+        return "walked=" + round(blocksTravelled)
+                + ";moving=" + movingTicks + "t"
+                + ";sprint=" + sprintShare + "%"
+                + ";airborne=" + jumps;
     }
 
     /**
@@ -308,6 +368,10 @@ public final class RunTrace implements AutoCloseable {
         if (!eventCounts.isEmpty()) {
             line("SUMMARY events " + eventCounts);
         }
+        // The headline number for any change to movement or target choice. Blocks per minute of
+        // travel and the share of it spent at a run are what a watcher means by "it looks better".
+        line("SUMMARY motion " + motionSummary()
+                + ";idle=" + share(total - movingTicks, total).trim());
         line("SUMMARY diversions " + (lastDiversions.isBlank() ? "none" : lastDiversions));
         line("SUMMARY failures " + (lastFailures.isBlank() ? "none" : lastFailures));
     }
@@ -376,7 +440,9 @@ public final class RunTrace implements AutoCloseable {
 
     private static String flowSummary(DebugInfo debug) {
         return "diversions=" + (debug.diversions.isBlank() ? "none" : debug.diversions)
-                + ";failures=" + debug.failureSnapshot();
+                + ";failures=" + debug.failureSnapshot()
+                + ";safety=" + (debug.safety.isBlank() ? "-" : debug.safety)
+                + ";safetyEpisodes=" + debug.safetyEpisodes;
     }
 
     /** Exposed for focused tests and for keeping the meaning of a blocked state consistent. */
@@ -439,6 +505,8 @@ public final class RunTrace implements AutoCloseable {
                 + " structure=" + safe(structureSummary)
                 + " landmarks=" + safe(landmarkSummary)
                 + " path=" + safe(path)
+                + " sight=" + safe(sightSummary(debug))
+                + " motion=" + safe(motionSummary())
                 + " decisions=" + safe(decisionSummary(debug));
     }
 

@@ -75,9 +75,29 @@ public interface Task {
     /** Called when the task finishes, fails, or is cancelled. Must release any held inputs. */
     default void onStop(BotContext ctx) {}
 
-    /** One-line live detail for the Main tab, e.g. "walking, 42 blocks left". */
+    /**
+     * One-line live detail for the Main tab, e.g. "walking, 42 blocks left".
+     *
+     * <p>Held as a key and its arguments rather than as a finished sentence, so the Main tab can
+     * render it in the player's language and the mascot can read what it means without either of
+     * them going through the other's answer. Tasks override this one; {@link #status()} and
+     * {@link #statusSignal()} follow from it.</p>
+     */
+    default StatusText statusLine() {
+        return StatusText.EMPTY;
+    }
+
+    /** The live detail as words, in whatever language is loaded. */
     default String status() {
-        return "";
+        return statusLine().text();
+    }
+
+    /**
+     * What the live detail means - danger, a blockage, a full inventory - independent of language.
+     * This is what the mascot reads.
+     */
+    default StatusSignal statusSignal() {
+        return statusLine().signal();
     }
 
     /** A bounded amount Lune can render as a progress bar, or {@code null} for open-ended work. */
@@ -111,7 +131,20 @@ public interface Task {
                 ? "job"
                 : "size=" + sizeBucket(progress.target()) + ";unit="
                         + (progress.unit().isBlank() ? "work" : progress.unit());
-        return new LearningContext("skill", learningName(name()), dimension, phase);
+        return new LearningContext("skill", learningId(), dimension, phase);
+    }
+
+    /**
+     * The job this task is, as a name the learner can store.
+     *
+     * <p>Deliberately not {@link #name()}. That one is shown to the player and is therefore
+     * translated, and a policy table keyed on it would start a fresh, empty set of rows the first
+     * time somebody played in Turkish - the same bot, relearning the same jobs, once per language.
+     * A task whose displayed name is translated overrides this with the English it used to be, so
+     * the rows already on disk keep being the rows it writes to.</p>
+     */
+    default String learningId() {
+        return learningName(name());
     }
 
     /**

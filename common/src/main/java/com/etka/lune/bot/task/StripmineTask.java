@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -43,7 +45,7 @@ public final class StripmineTask implements Task {
     private BlockPos junction;
     private Task current;
     private int branchesDone;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     public StripmineTask(int yLevel, int branchLength, int spacing, int branches) {
         this(Set.of(), yLevel, branchLength, spacing, branches);
@@ -72,11 +74,17 @@ public final class StripmineTask implements Task {
 
     @Override
     public String name() {
-        return "Stripmine";
+        return Lang.get("lune.task.stripmine.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Stripmine");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -87,7 +95,7 @@ public final class StripmineTask implements Task {
         }
 
         TaskStatus result = current.tick(ctx);
-        status = describe() + " - " + current.status();
+        status.set("lune.status.detail", describe(), current.statusLine());
 
         if (result == TaskStatus.RUNNING) {
             return TaskStatus.RUNNING;
@@ -96,7 +104,7 @@ public final class StripmineTask implements Task {
         current = null;
 
         if (result == TaskStatus.FAILED) {
-            status = describe() + " failed";
+            status.set("lune.status.hunt_mob.failed", describe());
             return TaskStatus.FAILED;
         }
         return finishPhase(ctx);
@@ -130,7 +138,7 @@ public final class StripmineTask implements Task {
             case RETURN -> {
                 branchesDone++;
                 if (branchesDone >= branches) {
-                    status = "dug " + branchesDone + " branches";
+                    status.set("lune.status.stripmine.dug_branches", branchesDone);
                     return TaskStatus.SUCCESS;
                 }
                 phase = Phase.SHAFT;
@@ -141,10 +149,12 @@ public final class StripmineTask implements Task {
 
     private String describe() {
         return switch (phase) {
-            case DESCEND -> "descending to y " + effectiveY;
-            case SHAFT -> "shaft (branch " + (branchesDone + 1) + "/" + branches + ")";
-            case BRANCH -> "branch " + (branchesDone + 1) + "/" + branches;
-            case RETURN -> "returning to shaft";
+            case DESCEND -> Lang.get("lune.status.stripmine.descending_to_y", effectiveY);
+            case SHAFT -> Lang.get("lune.status.stripmine.shaft_branch",
+                    branchesDone + 1, branches);
+            case BRANCH -> Lang.get("lune.status.stripmine.branch",
+                    branchesDone + 1, branches);
+            case RETURN -> Lang.get("lune.status.stripmine.returning_to_shaft");
         };
     }
 

@@ -26,7 +26,7 @@ public class DropdownPicker<T> extends AbstractWidget {
     private static final int MAX_VISIBLE = 5;
     private static final int DROPDOWN_BG = 0xFF1A1A20;
     private static final int ROW_HOVER = 0x30FFFFFF;
-    private static final int ROW_SELECTED = 0x504C9EFF;
+    private static final int ROW_SELECTED = LuneScreen.ACCENT_SELECTION;
 
     private final List<T> items;
     private final Function<T, String> labeller;

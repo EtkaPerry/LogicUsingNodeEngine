@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -80,7 +82,7 @@ public final class BoatTask implements Task {
     /** Ticks spent wading back to a bank before the crossing is abandoned. */
     private int bankTicks;
     private double bestDistance = Double.MAX_VALUE;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     /**
      * @param destination where to land, or null to cross to the far side of the nearest water or
@@ -96,11 +98,17 @@ public final class BoatTask implements Task {
 
     @Override
     public String name() {
-        return "Boat";
+        return Lang.get("lune.task.boat.name");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Boat");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
@@ -116,7 +124,7 @@ public final class BoatTask implements Task {
         stuckTicks = 0;
         bankTicks = 0;
         bestDistance = Double.MAX_VALUE;
-        status = "checking for a boat";
+        status.set("lune.status.boat.checking_boat");
     }
 
     @Override
@@ -125,7 +133,7 @@ public final class BoatTask implements Task {
 
         if (current != null) {
             TaskStatus result = current.tick(ctx);
-            status = state + " - " + current.status();
+            status.set("lune.status.detail", state, current.statusLine());
             if (result == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
@@ -134,7 +142,7 @@ public final class BoatTask implements Task {
             current = null;
             if (result == TaskStatus.FAILED) {
                 ctx.debug.recordFailure(name() + "/" + state, reason);
-                return finish(ctx, TaskStatus.FAILED, "could not " + state + ": " + reason);
+                return finish(ctx, TaskStatus.FAILED, "lune.status.boat.could_not_state", state, reason);
             }
             return TaskStatus.RUNNING;
         }
@@ -187,19 +195,19 @@ public final class BoatTask implements Task {
      */
     private TaskStatus returnToBank(BotContext ctx) {
         if (++bankTicks > MAX_BANK_TICKS) {
-            return finish(ctx, TaskStatus.FAILED, "in the water with no bank to launch from");
+            return finish(ctx, TaskStatus.FAILED, "lune.status.boat.no_bank_to_launch");
         }
         if (launchStand == null) {
             launchStand = findStandBeside(ctx, ctx.player.blockPosition());
         }
         if (launchStand == null) {
-            return finish(ctx, TaskStatus.FAILED, "in the water with no bank to launch from");
+            return finish(ctx, TaskStatus.FAILED, "lune.status.boat.no_bank_to_launch");
         }
         if (current == null) {
             current = new GotoTask(new Goals.Block(launchStand), true, false, true);
             current.start(ctx);
         }
-        status = "getting out of the water before launching";
+        status.set("lune.status.boat.getting_out_water_before_launching");
         return TaskStatus.RUNNING;
     }
 
@@ -217,7 +225,7 @@ public final class BoatTask implements Task {
         if (launchSurface == null || badLaunchSpots.contains(launchSurface.asLong())) {
             launchSurface = findLaunchSurface(ctx);
             if (launchSurface == null) {
-                return finish(ctx, TaskStatus.FAILED, "no water or ice within reach to cross");
+                return finish(ctx, TaskStatus.FAILED, "lune.status.boat.no_water_within_reach");
             }
             launchStand = findStandBeside(ctx, launchSurface);
             if (launchStand == null) {
@@ -230,7 +238,7 @@ public final class BoatTask implements Task {
                 if (destination == null) {
                     badLaunchSpots.add(launchSurface.asLong());
                     launchSurface = null;
-                    status = "that water has no far side worth crossing to";
+                    status.set("lune.status.boat.water_has_no_far_side_worth_crossing");
                     return TaskStatus.RUNNING;
                 }
                 ctx.debug.decide("cross to the far shore at " + destination.toShortString());
@@ -254,12 +262,11 @@ public final class BoatTask implements Task {
         }
         if (ctx.player.isInWater()) {
             // The advancement fires on entering the block; give the server a moment to send it.
-            status = "standing in the water so the boat recipe unlocks";
+            status.set("lune.status.boat.standing_water_boat_recipe_unlocks");
             return TaskStatus.RUNNING;
         }
         if (++attemptTicks > MAX_UNLOCK_TICKS) {
-            return finish(ctx, TaskStatus.FAILED,
-                    "could not reach water, so the boat recipe never unlocked");
+            return finish(ctx, TaskStatus.FAILED, "lune.status.boat.recipe_never_unlocked");
         }
 
         BlockPos water = findOpenWater(ctx);
@@ -268,16 +275,16 @@ public final class BoatTask implements Task {
             // so those are honestly hopeless rather than worth swinging at.
             if (ctx.level.getBlockState(launchSurface).is(Blocks.ICE)) {
                 if (breaker.tick(ctx, launchSurface, false, Set.of()) == BlockBreaker.Progress.NO_TOOL) {
-                    return finish(ctx, TaskStatus.FAILED, "cannot break the ice to reach water");
+                    return finish(ctx, TaskStatus.FAILED, "lune.status.boat.cannot_break_ice");
                 }
-                status = "breaking the ice to reach the water under it";
+                status.set("lune.status.boat.breaking_ice_reach_water_under");
                 return TaskStatus.RUNNING;
             }
-            return finish(ctx, TaskStatus.FAILED, "no open water to unlock the boat recipe");
+            return finish(ctx, TaskStatus.FAILED, "lune.status.boat.no_open_water_unlock");
         }
 
         breaker.stop(ctx);
-        status = "stepping into the water so the boat recipe unlocks";
+        status.set("lune.status.boat.stepping_into_water_boat_recipe_unlocks");
         current = new GotoTask(new Goals.Block(water), false, false);
         current.start(ctx);
         return TaskStatus.RUNNING;
@@ -317,18 +324,18 @@ public final class BoatTask implements Task {
         int planks = InventoryHelper.count(ctx.player, stack -> stack.is(ItemTags.PLANKS));
         int planksWanted = BoatPolicy.PLANKS_PER_BOAT + (haveTable ? 0 : PLANKS_PER_TABLE);
         if (planks < planksWanted) {
-            status = "making planks for a boat";
+            status.set("lune.status.boat.making_planks_boat");
             current = CraftTask.ofTag(ItemTags.PLANKS, "planks", planksWanted, false);
             current.start(ctx);
             return TaskStatus.RUNNING;
         }
         if (!haveTable) {
-            status = "making a crafting table for the boat";
+            status.set("lune.status.boat.making_crafting_table_boat");
             current = CraftTask.of(Items.CRAFTING_TABLE, 1, false);
             current.start(ctx);
             return TaskStatus.RUNNING;
         }
-        status = "crafting a boat";
+        status.set("lune.status.boat.crafting_boat");
         current = CraftTask.ofTag(ItemTags.BOATS, "boat", 1, true);
         current.start(ctx);
         return TaskStatus.RUNNING;
@@ -340,7 +347,7 @@ public final class BoatTask implements Task {
         if (launchSurface == null || badLaunchSpots.contains(launchSurface.asLong())) {
             launchSurface = findLaunchSurface(ctx);
             if (launchSurface == null) {
-                return finish(ctx, TaskStatus.FAILED, "no water or ice to launch from");
+                return finish(ctx, TaskStatus.FAILED, "lune.status.boat.no_water_to_launch");
             }
             launchStand = findStandBeside(ctx, launchSurface);
             if (launchStand == null) {
@@ -353,7 +360,7 @@ public final class BoatTask implements Task {
                 if (destination == null) {
                     badLaunchSpots.add(launchSurface.asLong());
                     launchSurface = null;
-                    status = "that water has no far side worth crossing to";
+                    status.set("lune.status.boat.water_has_no_far_side_worth_crossing");
                     return TaskStatus.RUNNING;
                 }
                 ctx.debug.decide("cross to the far shore at " + destination.toShortString());
@@ -364,7 +371,7 @@ public final class BoatTask implements Task {
             attemptTicks = 0;
             return TaskStatus.RUNNING;
         }
-        status = "walking to the water's edge";
+        status.set("lune.status.boat.walking_waters_edge");
         current = new GotoTask(new Goals.Near(launchStand, 1), true, false);
         current.start(ctx);
         return TaskStatus.RUNNING;
@@ -396,7 +403,7 @@ public final class BoatTask implements Task {
         }
         Vec3 aim = Vec3.atCenterOf(launchSurface).add(0.0, 0.4, 0.0);
         ctx.look.lookAt(ctx.player, aim);
-        status = "placing the boat";
+        status.set("lune.status.boat.placing_boat");
         if (ctx.look.isLookingAt(ctx.player, aim, 12.0F)) {
             BoatHelper.place(ctx);
         }
@@ -418,7 +425,7 @@ public final class BoatTask implements Task {
         }
         Vec3 centre = boat.getBoundingBox().getCenter();
         ctx.look.lookAt(ctx.player, centre);
-        status = "getting into the boat";
+        status.set("lune.status.boat.getting_into_boat");
         if (!ctx.look.isLookingAt(ctx.player, centre, 15.0F)) {
             return TaskStatus.RUNNING;
         }
@@ -473,8 +480,7 @@ public final class BoatTask implements Task {
         ctx.look.lookAt(ctx.player, new Vec3(destination.getX() + 0.5,
                 ctx.player.getEyePosition().y, destination.getZ() + 0.5));
         ctx.debug.movement(destination, "boat crossing");
-        status = String.format(java.util.Locale.ROOT,
-                "crossing by boat - %.0f blocks left, heading off by %.0f degrees", distance, yawError);
+        status.set("lune.status.boat.crossing_by_boat_blocks_left_heading_off", distance, yawError);
         return TaskStatus.RUNNING;
     }
 
@@ -482,12 +488,12 @@ public final class BoatTask implements Task {
         if (ridingBoat(ctx) != null) {
             // Sneak is how a passenger leaves a vehicle, and the input layer already owns it.
             ctx.input.sneak = true;
-            status = "getting out of the boat";
+            status.set("lune.status.boat.getting_out_boat");
             return TaskStatus.RUNNING;
         }
         state = reclaim ? State.RECLAIM : State.LAND;
         if (!reclaim) {
-            return finish(ctx, TaskStatus.SUCCESS, "crossed by boat");
+            return finish(ctx, TaskStatus.SUCCESS, "lune.status.boat.crossed");
         }
         return TaskStatus.RUNNING;
     }
@@ -495,15 +501,15 @@ public final class BoatTask implements Task {
     private TaskStatus reclaimBoat(BotContext ctx) {
         AbstractBoat boat = nearbyBoat(ctx);
         if (boat == null) {
-            return finish(ctx, TaskStatus.SUCCESS, "crossed by boat");
+            return finish(ctx, TaskStatus.SUCCESS, "lune.status.boat.crossed");
         }
         if (++attemptTicks > MAX_ATTEMPT_TICKS) {
             // The boat is not worth a long fight; five planks is cheaper than the time.
-            return finish(ctx, TaskStatus.SUCCESS, "crossed by boat, left it behind");
+            return finish(ctx, TaskStatus.SUCCESS, "lune.status.boat.crossed_left_behind");
         }
         Vec3 centre = boat.getBoundingBox().getCenter();
         ctx.look.lookAt(ctx.player, centre);
-        status = "picking the boat back up";
+        status.set("lune.status.boat.picking_boat_back_up");
         if (ctx.look.isLookingAt(ctx.player, centre, 15.0F)
                 && BoatHelper.withinBoardingRange(ctx, boat)) {
             BoatHelper.strike(ctx, boat);
@@ -511,9 +517,9 @@ public final class BoatTask implements Task {
         return TaskStatus.RUNNING;
     }
 
-    private TaskStatus finish(BotContext ctx, TaskStatus result, String reason) {
+    private TaskStatus finish(BotContext ctx, TaskStatus result, String key, Object... args) {
         ctx.input.reset();
-        status = reason;
+        status.set(key, args);
         return result;
     }
 

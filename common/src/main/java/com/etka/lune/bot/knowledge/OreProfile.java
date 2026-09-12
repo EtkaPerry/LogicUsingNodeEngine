@@ -1,5 +1,6 @@
 package com.etka.lune.bot.knowledge;
 
+import com.etka.lune.util.Lang;
 import net.minecraft.world.level.block.Block;
 
 import java.util.Collections;
@@ -72,8 +73,16 @@ public final class OreProfile {
         return cavePreferred;
     }
 
+    /**
+     * Where to dig for this ore, in the player's language.
+     *
+     * <p>A key for the built-in table, plain text for a profile out of the config file. Resolved
+     * here because the table is built in a static initialiser, and resolving it there would fix
+     * every note in whatever language happened to be loaded at class-load - see
+     * {@link BiomeProfile#notes()}, which had exactly that bug.</p>
+     */
     public String notes() {
-        return notes;
+        return notes.startsWith("lune.") ? Lang.get(notes) : notes;
     }
 
     /** True when a position is inside the vertical band this profile is describing. */

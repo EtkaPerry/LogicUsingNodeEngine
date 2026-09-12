@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.tab;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.task.GotoTask;
@@ -46,23 +47,23 @@ public class WaypointsTab extends LuneTab {
     private final Button goButton;
 
     public WaypointsTab() {
-        super(Component.literal("Waypoints"));
+        super(Component.literal(Lang.get("lune.gui.waypoints.title")));
 
         list = add(new ListPanel<>(0, 0, 10, 10, Waypoint::describe, this::onSelect));
         list.setItems(WaypointStore.get().all());
 
-        nameBox = add(new EditBox(Minecraft.getInstance().font, 0, 0, 120, 18, Component.literal("Name")));
-        nameBox.setHint(Component.literal("name"));
+        nameBox = add(new EditBox(Minecraft.getInstance().font, 0, 0, 120, 18, Component.literal(Lang.get("lune.gui.tasks.name"))));
+        nameBox.setHint(Component.literal(Lang.get("lune.gui.waypoints.name_2")));
         nameBox.setMaxLength(32);
 
         coordBox = add(new EditBox(Minecraft.getInstance().font, 0, 0, 120, 18,
-                Component.literal("Coordinates")));
-        coordBox.setHint(Component.literal("x y z - blank for here"));
+                Component.literal(Lang.get("lune.param.target.label"))));
+        coordBox.setHint(Component.literal(Lang.get("lune.gui.waypoints.x_y_z_blank_here")));
         coordBox.setMaxLength(48);
 
-        saveButton = add(Button.builder(Component.literal("Save"), b -> save()).size(64, 20).build());
-        deleteButton = add(Button.builder(Component.literal("Delete"), b -> delete()).size(64, 20).build());
-        goButton = add(Button.builder(Component.literal("Go"), b -> go()).size(64, 20).build());
+        saveButton = add(Button.builder(Component.literal(Lang.get("lune.gui.waypoints.save")), b -> save()).size(64, 20).build());
+        deleteButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.delete_2")), b -> delete()).size(64, 20).build());
+        goButton = add(Button.builder(Component.literal(Lang.get("lune.gui.waypoints.go")), b -> go()).size(64, 20).build());
     }
 
     private void onSelect(Waypoint waypoint) {
@@ -99,7 +100,7 @@ public class WaypointsTab extends LuneTab {
         }
         if (!WaypointStore.isInCurrentDimension(selected)) {
             Minecraft.getInstance().player.sendOverlayMessage(
-                    Component.literal("[Lune] Waypoint is in another dimension"));
+                    Component.literal(Lang.get("lune.gui.waypoints.lune_waypoint_another_dimension")));
             return;
         }
         BotEngine.get().runNow(new GotoTask(new Goals.Near(selected.pos(), 2), true, false));
@@ -165,15 +166,15 @@ public class WaypointsTab extends LuneTab {
         var text = extractor.textRenderer();
 
         text.accept(frame.formX(), frame.top() + 6,
-                Component.literal("Name").withColor(LuneScreen.TEXT));
+                Component.literal(Lang.get("lune.gui.tasks.name")).withColor(LuneScreen.TEXT));
         text.accept(frame.formX(), frame.top() + 46,
-                Component.literal("Coordinates").withColor(LuneScreen.TEXT));
+                Component.literal(Lang.get("lune.param.target.label")).withColor(LuneScreen.TEXT));
         if (frame.showNotes()) {
             text.accept(frame.formX(), frame.top() + 118,
-                    Component.literal("Saved in: " + WaypointStore.currentDimension())
+                    Component.literal(Lang.get("lune.gui.waypoints.saved", WaypointStore.currentDimension()))
                             .withColor(LuneScreen.TEXT_DIM));
             text.accept(frame.formX(), frame.top() + 131,
-                    Component.literal("Use these by name from Task → Go to Waypoint.")
+                    Component.literal(Lang.get("lune.gui.waypoints.use_these_by_name_from_task_go_waypoint"))
                             .withColor(LuneScreen.TEXT_DIM));
         }
     }

@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -82,7 +84,7 @@ public final class BuildPortalTask implements Task {
     private List<BlockPos> frameOrder = List.of();
     /** Keeps an in-progress placement stable when live feedback changes the remaining order. */
     private BlockPos frameTarget;
-    private String status = "";
+    private final StatusText status = new StatusText();
 
     private enum State { CHOOSE_BASE, BUILD, LIGHT, ENTER, DONE }
 
@@ -103,18 +105,24 @@ public final class BuildPortalTask implements Task {
 
     @Override
     public String name() {
-        return "Build Nether Portal";
+        return Lang.get("lune.task.build_portal.build_nether_portal");
+    }
+
+    /** The English this used to be, so the learner's rows survive being translated. */
+    @Override
+    public String learningId() {
+        return Task.learningName("Build Nether Portal");
     }
 
     @Override
-    public String status() {
+    public StatusText statusLine() {
         return status;
     }
 
     @Override
     public TaskProgress progress() {
         int target = mode.includeCorners ? 14 : 10;
-        return new TaskProgress(frameIndex, target, "frame blocks");
+        return new TaskProgress(frameIndex, target, Lang.get("lune.unit.frame_blocks"));
     }
 
     @Override
@@ -152,7 +160,7 @@ public final class BuildPortalTask implements Task {
         buildStrategy = PortalBuildingPolicy.DEFAULT;
         frameOrder = List.of();
         frameTarget = null;
-        status = "";
+        status.clear();
         stopApproach(ctx);
     }
 
@@ -163,7 +171,7 @@ public final class BuildPortalTask implements Task {
                 + ", block " + placeTicks + "/" + PLACE_TIMEOUT_TICKS + " ticks";
 
         if (enterAfterBuild && ctx.level.dimension() == Level.NETHER) {
-            status = "entered the Nether";
+            status.set("lune.status.speedrun.entered_nether");
             return TaskStatus.SUCCESS;
         }
 
@@ -179,7 +187,7 @@ public final class BuildPortalTask implements Task {
             case LIGHT -> light(ctx);
             case ENTER -> enter(ctx);
             case DONE -> {
-                status = "Nether portal is built and lit";
+                status.set("lune.status.build_portal.nether_portal_built_lit");
                 yield TaskStatus.SUCCESS;
             }
         };
@@ -187,18 +195,18 @@ public final class BuildPortalTask implements Task {
 
     private TaskStatus chooseBase(BotContext ctx) {
         if (mode == FrameMode.RESOURCE_SAVING && cornerMaterials.isEmpty()) {
-            status = "choose dirt or cobblestone for the portal corners";
+            status.set("lune.status.build_portal.choose_dirt_or_cobblestone_portal");
             return TaskStatus.FAILED;
         }
         base = NetherPortalFrame.findBase(ctx, mode.includeCorners, mode == FrameMode.RESOURCE_SAVING);
         if (base == null) {
-            status = "no flat space for a portal frame";
+            status.set("lune.status.speedrun.no_flat_space_portal_frame");
             return TaskStatus.FAILED;
         }
         frameOrder = PortalBuildingPolicy.order(base, mode.includeCorners,
                 buildStrategy, ctx.player.getX());
         state = State.BUILD;
-        status = "building a " + mode.label + " portal frame";
+        status.set("lune.status.build_portal.building_portal_frame", com.etka.lune.bot.command.Param.Choice.optionLabel(mode.label));
         return TaskStatus.RUNNING;
     }
 
@@ -241,13 +249,15 @@ public final class BuildPortalTask implements Task {
 
         Block material = materialFor(corner);
         if (material == null) {
-            status = corner
-                    ? "no dirt or cobblestone left for a portal corner"
-                    : "ran out of obsidian at frame block " + (frameIndex + 1);
+            if (corner) {
+                status.set("lune.status.build_portal.no_dirt_or_cobblestone_left_portal");
+            } else {
+                status.set("lune.status.build_portal.ran_out_obsidian_frame_block", (frameIndex + 1));
+            }
             return TaskStatus.FAILED;
         }
         if (!BlockPlacer.isReplaceable(ctx, target)) {
-            status = "portal frame is blocked at " + target.toShortString();
+            status.set("lune.status.speedrun.portal_frame_blocked", target.toShortString());
             return TaskStatus.FAILED;
         }
 
@@ -257,13 +267,13 @@ public final class BuildPortalTask implements Task {
                 approach.start(ctx);
             }
             TaskStatus walk = approach.tick(ctx);
-            status = "moving to place frame block " + (frameIndex + 1);
+            status.set("lune.status.build_portal.moving_place_frame_block", (frameIndex + 1));
             if (walk == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
             stopApproach(ctx);
             if (walk == TaskStatus.FAILED) {
-                status = "could not reach frame block " + (frameIndex + 1);
+                status.set("lune.status.build_portal.could_not_reach_frame_block", (frameIndex + 1));
                 return TaskStatus.FAILED;
             }
             return TaskStatus.RUNNING;
@@ -271,7 +281,7 @@ public final class BuildPortalTask implements Task {
         stopApproach(ctx);
 
         if (++placeTicks > PLACE_TIMEOUT_TICKS) {
-            status = "could not place frame block " + (frameIndex + 1);
+            status.set("lune.status.build_portal.could_not_place_frame_block_2", (frameIndex + 1));
             return TaskStatus.FAILED;
         }
         BlockPlacer.PlacementResult placement = place(ctx, material, target);
@@ -280,15 +290,14 @@ public final class BuildPortalTask implements Task {
             frameIndex = Math.min(frame.size(), frameIndex + 1);
             frameTarget = null;
             placeTicks = 0;
-            status = "placed " + frameIndex + "/" + frame.size() + " frame blocks";
+            status.set("lune.status.build_portal.placed_frame_blocks", frameIndex, frame.size());
             return TaskStatus.RUNNING;
         }
         if (!placement.isTransient()) {
-            status = "could not place frame block " + (frameIndex + 1)
-                    + " (" + placement.name().toLowerCase() + ")";
+            status.set("lune.status.build_portal.could_not_place_frame_block", (frameIndex + 1), placement.displayName());
             return TaskStatus.FAILED;
         }
-        status = "placing frame block " + (frameIndex + 1);
+        status.set("lune.status.build_portal.placing_frame_block", (frameIndex + 1));
         return TaskStatus.RUNNING;
     }
 
@@ -346,12 +355,12 @@ public final class BuildPortalTask implements Task {
             return TaskStatus.RUNNING;
         }
         if (++lightTicks > LIGHT_TIMEOUT_TICKS) {
-            status = "could not light the completed portal frame";
+            status.set("lune.status.speedrun.could_not_light_completed_portal_frame");
             return TaskStatus.FAILED;
         }
         if (InventoryHelper.equip(ctx, stack -> stack.is(Items.FLINT_AND_STEEL)) < 0
                 && InventoryHelper.equip(ctx, stack -> stack.is(Items.FIRE_CHARGE)) < 0) {
-            status = "nothing left to light the portal with";
+            status.set("lune.status.build_portal.nothing_left_light_portal_with");
             return TaskStatus.FAILED;
         }
         BlockPos support = base.offset(1, 0, 0);
@@ -362,20 +371,20 @@ public final class BuildPortalTask implements Task {
                     new BlockHitResult(hit, Direction.UP, support, false));
             ctx.player.swing(InteractionHand.MAIN_HAND);
         }
-        status = "lighting the portal";
+        status.set("lune.status.speedrun.lighting_portal");
         return TaskStatus.RUNNING;
     }
 
     private TaskStatus enter(BotContext ctx) {
         if (ctx.level.dimension() == Level.NETHER) {
-            status = "entered the Nether";
+            status.set("lune.status.speedrun.entered_nether");
             return TaskStatus.SUCCESS;
         }
         if (portal == null) {
             portal = findPortal(ctx, ctx.player.blockPosition(), 64);
         }
         if (portal == null) {
-            status = "portal disappeared";
+            status.set("lune.status.speedrun.portal_disappeared");
             return TaskStatus.FAILED;
         }
         if (!inReach(ctx, portal)) {
@@ -384,19 +393,19 @@ public final class BuildPortalTask implements Task {
                 approach.start(ctx);
             }
             TaskStatus walk = approach.tick(ctx);
-            status = "walking to the portal";
+            status.set("lune.status.build_portal.walking_portal");
             if (walk == TaskStatus.RUNNING) {
                 return TaskStatus.RUNNING;
             }
             stopApproach(ctx);
             if (walk == TaskStatus.FAILED) {
-                status = "could not reach the portal";
+                status.set("lune.status.build_portal.could_not_reach_portal");
                 return TaskStatus.FAILED;
             }
         }
         ctx.look.lookAt(ctx.player, Vec3.atCenterOf(portal));
         ctx.input.forward = true;
-        status = "entering the Nether";
+        status.set("lune.status.speedrun.entering_nether");
         return TaskStatus.RUNNING;
     }
 

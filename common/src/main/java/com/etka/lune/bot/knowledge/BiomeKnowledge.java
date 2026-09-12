@@ -1,5 +1,6 @@
 package com.etka.lune.bot.knowledge;
 
+import com.etka.lune.util.Lang;
 import com.etka.lune.config.BiomeProfileData;
 import com.etka.lune.config.BotConfig;
 import net.minecraft.core.Holder;
@@ -91,7 +92,7 @@ public final class BiomeKnowledge {
         return !needs.isEmpty();
     }
 
-    /** Short name for status lines: "badlands", "forest". */
+    /** English on purpose: this is what the run journal records, and it stays greppable. */
     public static String name(Holder<Biome> biome) {
         if (biome == null) {
             return "unknown";
@@ -99,6 +100,26 @@ public final class BiomeKnowledge {
         return biome.unwrapKey()
                 .map(key -> key.identifier().getPath().replace('_', ' '))
                 .orElse("unknown");
+    }
+
+    /**
+     * What the player calls this biome, for status lines and anything Lune says.
+     *
+     * <p>Minecraft already ships the name in every language it supports, so this asks the game
+     * rather than keeping a second list that would go stale the next time a biome is added. A
+     * biome with no key falls back to {@link #name}, which is the id with its underscores taken
+     * out - readable, if not translated.</p>
+     */
+    public static String displayName(Holder<Biome> biome) {
+        if (biome == null) {
+            return Lang.get("lune.biome.unknown");
+        }
+        return biome.unwrapKey()
+                .map(key -> "biome." + key.identifier().getNamespace() + "."
+                        + key.identifier().getPath())
+                .filter(Lang::has)
+                .map(Lang::get)
+                .orElseGet(() -> name(biome));
     }
 
     /** Applies player overrides. Safe to call more than once; the resolved cache is dropped. */
@@ -148,43 +169,43 @@ public final class BiomeKnowledge {
     /** Tag fallback - this is what lets a modded forest still read as somewhere to find wood. */
     private static BiomeProfile fromTags(Holder<Biome> biome) {
         if (is(biome, BiomeTags.IS_DEEP_OCEAN)) {
-            return new BiomeProfile("deep ocean", 0.0F, 0.1F, 0.0F, 0.1F, 1.0F, 3.5F, "open water, nothing grows");
+            return new BiomeProfile(Lang.get("lune.biome.deep_ocean"), 0.0F, 0.1F, 0.0F, 0.1F, 1.0F, 3.5F, "lune.biome.open_water_nothing_grows");
         }
         if (is(biome, BiomeTags.IS_OCEAN)) {
-            return new BiomeProfile("ocean", 0.0F, 0.15F, 0.0F, 0.2F, 1.0F, 3.0F, "open water, nothing grows");
+            return new BiomeProfile("ocean", 0.0F, 0.15F, 0.0F, 0.2F, 1.0F, 3.0F, "lune.biome.open_water_nothing_grows");
         }
         if (is(biome, BiomeTags.IS_RIVER)) {
-            return new BiomeProfile("river", 0.2F, 0.3F, 0.1F, 0.4F, 1.0F, 1.5F, "water, banks may have trees");
+            return new BiomeProfile("river", 0.2F, 0.3F, 0.1F, 0.4F, 1.0F, 1.5F, "lune.biome.water_banks_may_have_trees");
         }
         if (is(biome, BiomeTags.IS_BADLANDS)) {
-            return new BiomeProfile("badlands", 0.0F, 0.05F, 0.85F, 0.8F, 0.05F, 1.3F, "no trees grow here");
+            return new BiomeProfile("badlands", 0.0F, 0.05F, 0.85F, 0.8F, 0.05F, 1.3F, "lune.biome.trees_grow_here");
         }
         if (is(biome, BiomeTags.IS_JUNGLE)) {
-            return new BiomeProfile("jungle", 1.0F, 0.7F, 0.2F, 0.0F, 0.3F, 1.4F, "dense wood, slow going");
+            return new BiomeProfile("jungle", 1.0F, 0.7F, 0.2F, 0.0F, 0.3F, 1.4F, "lune.biome.dense_wood_slow_going");
         }
         if (is(biome, BiomeTags.IS_FOREST)) {
-            return new BiomeProfile("forest", 0.95F, 0.6F, 0.2F, 0.0F, 0.2F, 1.1F, "trees everywhere");
+            return new BiomeProfile("forest", 0.95F, 0.6F, 0.2F, 0.0F, 0.2F, 1.1F, "lune.biome.trees_everywhere");
         }
         if (is(biome, BiomeTags.IS_TAIGA)) {
-            return new BiomeProfile("taiga", 0.9F, 0.5F, 0.25F, 0.0F, 0.2F, 1.1F, "spruce forest");
+            return new BiomeProfile("taiga", 0.9F, 0.5F, 0.25F, 0.0F, 0.2F, 1.1F, "lune.biome.spruce_forest");
         }
         if (is(biome, BiomeTags.IS_SAVANNA)) {
-            return new BiomeProfile("savanna", 0.5F, 0.7F, 0.2F, 0.1F, 0.1F, 1.0F, "scattered acacia");
+            return new BiomeProfile("savanna", 0.5F, 0.7F, 0.2F, 0.1F, 0.1F, 1.0F, "lune.biome.scattered_acacia");
         }
         if (is(biome, BiomeTags.IS_BEACH)) {
-            return new BiomeProfile("beach", 0.05F, 0.2F, 0.1F, 1.0F, 0.8F, 1.0F, "sand and water, no trees");
+            return new BiomeProfile("beach", 0.05F, 0.2F, 0.1F, 1.0F, 0.8F, 1.0F, "lune.biome.sand_water_trees");
         }
         if (is(biome, BiomeTags.IS_MOUNTAIN)) {
-            return new BiomeProfile("mountain", 0.2F, 0.2F, 0.95F, 0.0F, 0.1F, 1.7F, "exposed stone, hard climbing");
+            return new BiomeProfile("mountain", 0.2F, 0.2F, 0.95F, 0.0F, 0.1F, 1.7F, "lune.biome.exposed_stone_hard_climbing");
         }
         if (is(biome, BiomeTags.IS_HILL)) {
-            return new BiomeProfile("hills", 0.5F, 0.4F, 0.6F, 0.0F, 0.1F, 1.3F, "rolling stone and trees");
+            return new BiomeProfile("hills", 0.5F, 0.4F, 0.6F, 0.0F, 0.1F, 1.3F, "lune.biome.rolling_stone_trees");
         }
         if (is(biome, BiomeTags.IS_NETHER)) {
-            return new BiomeProfile("nether", 0.15F, 0.0F, 0.7F, 0.2F, 0.0F, 1.6F, "no overworld resources");
+            return new BiomeProfile("nether", 0.15F, 0.0F, 0.7F, 0.2F, 0.0F, 1.6F, "lune.biome.overworld_resources");
         }
         if (is(biome, BiomeTags.IS_END)) {
-            return new BiomeProfile("the end", 0.0F, 0.0F, 0.1F, 0.0F, 0.0F, 1.4F, "nothing grows here");
+            return new BiomeProfile(Lang.get("lune.biome.end"), 0.0F, 0.0F, 0.1F, 0.0F, 0.0F, 1.4F, "lune.biome.nothing_grows_here");
         }
         return null;
     }
@@ -202,10 +223,10 @@ public final class BiomeKnowledge {
         boolean wet = value.hasPrecipitation();
 
         if (!wet && temperature >= 1.0F) {
-            return new BiomeProfile("arid", 0.05F, 0.1F, 0.5F, 0.9F, 0.05F, 1.1F, "hot and dry, guessed");
+            return new BiomeProfile("arid", 0.05F, 0.1F, 0.5F, 0.9F, 0.05F, 1.1F, "lune.biome.hot_dry_guessed");
         }
         if (wet && temperature >= 0.2F && temperature <= 1.0F) {
-            return new BiomeProfile("temperate", 0.7F, 0.6F, 0.3F, 0.1F, 0.3F, 1.1F, "temperate and wet, guessed");
+            return new BiomeProfile("temperate", 0.7F, 0.6F, 0.3F, 0.1F, 0.3F, 1.1F, "lune.biome.temperate_wet_guessed");
         }
         return BiomeProfile.UNKNOWN;
     }
@@ -216,61 +237,61 @@ public final class BiomeKnowledge {
 
     private static void registerVanilla() {
         // Wood. What the bot heads for when it needs logs.
-        put("forest", 0.95F, 0.6F, 0.2F, 0.0F, 0.2F, 1.0F, "oak and birch, easy walking");
-        put("flower_forest", 0.8F, 0.8F, 0.2F, 0.0F, 0.2F, 1.0F, "trees plus flowers and bees");
-        put("birch_forest", 0.95F, 0.5F, 0.2F, 0.0F, 0.2F, 1.0F, "tall birch");
-        put("old_growth_birch_forest", 1.0F, 0.5F, 0.2F, 0.0F, 0.2F, 1.0F, "very tall birch");
-        put("dark_forest", 1.0F, 0.5F, 0.2F, 0.0F, 0.2F, 1.2F, "dense dark oak, poor light");
-        put("taiga", 0.95F, 0.5F, 0.3F, 0.0F, 0.2F, 1.0F, "spruce and sweet berries");
-        put("old_growth_pine_taiga", 1.0F, 0.5F, 0.3F, 0.0F, 0.2F, 1.1F, "huge spruce");
-        put("old_growth_spruce_taiga", 1.0F, 0.5F, 0.3F, 0.0F, 0.2F, 1.1F, "huge spruce");
-        put("snowy_taiga", 0.9F, 0.4F, 0.3F, 0.0F, 0.2F, 1.1F, "spruce in snow");
-        put("jungle", 1.0F, 0.7F, 0.2F, 0.0F, 0.3F, 1.4F, "dense wood, slow going");
-        put("sparse_jungle", 0.7F, 0.6F, 0.2F, 0.0F, 0.3F, 1.2F, "thinner jungle");
-        put("bamboo_jungle", 0.8F, 0.6F, 0.2F, 0.0F, 0.3F, 1.3F, "bamboo and jungle wood");
-        put("cherry_grove", 0.9F, 0.6F, 0.3F, 0.0F, 0.1F, 1.2F, "cherry trees on hills");
-        put("swamp", 0.8F, 0.4F, 0.1F, 0.1F, 0.8F, 1.4F, "oak over shallow water");
-        put("mangrove_swamp", 0.85F, 0.3F, 0.1F, 0.1F, 0.9F, 1.5F, "mangrove over water");
-        put("windswept_forest", 0.8F, 0.4F, 0.7F, 0.0F, 0.1F, 1.5F, "trees on broken stone");
+        put("forest", 0.95F, 0.6F, 0.2F, 0.0F, 0.2F, 1.0F, "lune.biome.oak_birch_easy_walking");
+        put("flower_forest", 0.8F, 0.8F, 0.2F, 0.0F, 0.2F, 1.0F, "lune.biome.trees_plus_flowers_bees");
+        put("birch_forest", 0.95F, 0.5F, 0.2F, 0.0F, 0.2F, 1.0F, "lune.biome.tall_birch");
+        put("old_growth_birch_forest", 1.0F, 0.5F, 0.2F, 0.0F, 0.2F, 1.0F, "lune.biome.very_tall_birch");
+        put("dark_forest", 1.0F, 0.5F, 0.2F, 0.0F, 0.2F, 1.2F, "lune.biome.dense_dark_oak_poor_light");
+        put("taiga", 0.95F, 0.5F, 0.3F, 0.0F, 0.2F, 1.0F, "lune.biome.spruce_sweet_berries");
+        put("old_growth_pine_taiga", 1.0F, 0.5F, 0.3F, 0.0F, 0.2F, 1.1F, "lune.biome.huge_spruce");
+        put("old_growth_spruce_taiga", 1.0F, 0.5F, 0.3F, 0.0F, 0.2F, 1.1F, "lune.biome.huge_spruce");
+        put("snowy_taiga", 0.9F, 0.4F, 0.3F, 0.0F, 0.2F, 1.1F, "lune.biome.spruce_snow");
+        put("jungle", 1.0F, 0.7F, 0.2F, 0.0F, 0.3F, 1.4F, "lune.biome.dense_wood_slow_going");
+        put("sparse_jungle", 0.7F, 0.6F, 0.2F, 0.0F, 0.3F, 1.2F, "lune.biome.thinner_jungle");
+        put("bamboo_jungle", 0.8F, 0.6F, 0.2F, 0.0F, 0.3F, 1.3F, "lune.biome.bamboo_jungle_wood");
+        put("cherry_grove", 0.9F, 0.6F, 0.3F, 0.0F, 0.1F, 1.2F, "lune.biome.cherry_trees_hills");
+        put("swamp", 0.8F, 0.4F, 0.1F, 0.1F, 0.8F, 1.4F, "lune.biome.oak_over_shallow_water");
+        put("mangrove_swamp", 0.85F, 0.3F, 0.1F, 0.1F, 0.9F, 1.5F, "lune.biome.mangrove_over_water");
+        put("windswept_forest", 0.8F, 0.4F, 0.7F, 0.0F, 0.1F, 1.5F, "lune.biome.trees_broken_stone");
 
         // Open land. Some wood, plenty of food, easy to cross.
-        put("plains", 0.35F, 0.9F, 0.2F, 0.0F, 0.2F, 1.0F, "scattered oaks, lots of animals");
-        put("sunflower_plains", 0.35F, 0.9F, 0.2F, 0.0F, 0.2F, 1.0F, "scattered oaks, lots of animals");
-        put("meadow", 0.25F, 0.8F, 0.5F, 0.0F, 0.2F, 1.2F, "a few trees, open grass");
-        put("savanna", 0.5F, 0.7F, 0.2F, 0.1F, 0.1F, 1.0F, "acacia and tall grass");
-        put("savanna_plateau", 0.45F, 0.6F, 0.4F, 0.1F, 0.1F, 1.2F, "acacia on a plateau");
-        put("windswept_savanna", 0.4F, 0.5F, 0.6F, 0.1F, 0.1F, 1.4F, "acacia on broken ground");
-        put("mushroom_fields", 0.3F, 0.6F, 0.1F, 0.0F, 0.2F, 1.1F, "huge mushrooms, no normal trees");
+        put("plains", 0.35F, 0.9F, 0.2F, 0.0F, 0.2F, 1.0F, "lune.biome.scattered_oaks_lots_animals");
+        put("sunflower_plains", 0.35F, 0.9F, 0.2F, 0.0F, 0.2F, 1.0F, "lune.biome.scattered_oaks_lots_animals");
+        put("meadow", 0.25F, 0.8F, 0.5F, 0.0F, 0.2F, 1.2F, "lune.biome.few_trees_open_grass");
+        put("savanna", 0.5F, 0.7F, 0.2F, 0.1F, 0.1F, 1.0F, "lune.biome.acacia_tall_grass");
+        put("savanna_plateau", 0.45F, 0.6F, 0.4F, 0.1F, 0.1F, 1.2F, "lune.biome.acacia_plateau");
+        put("windswept_savanna", 0.4F, 0.5F, 0.6F, 0.1F, 0.1F, 1.4F, "lune.biome.acacia_broken_ground");
+        put("mushroom_fields", 0.3F, 0.6F, 0.1F, 0.0F, 0.2F, 1.1F, "lune.biome.huge_mushrooms_normal_trees");
 
         // Dead ends for wood. This is the "do not walk into the mesa for logs" knowledge.
-        put("badlands", 0.0F, 0.05F, 0.85F, 0.8F, 0.05F, 1.3F, "no trees grow here, but gold is shallow");
-        put("eroded_badlands", 0.0F, 0.05F, 0.9F, 0.8F, 0.05F, 1.6F, "no trees, hard to cross");
-        put("wooded_badlands", 0.45F, 0.2F, 0.85F, 0.7F, 0.05F, 1.4F, "only the plateau tops have trees");
-        put("desert", 0.0F, 0.05F, 0.3F, 1.0F, 0.05F, 1.0F, "no trees, sand and cactus");
-        put("snowy_plains", 0.05F, 0.3F, 0.2F, 0.0F, 0.2F, 1.1F, "almost no trees");
-        put("ice_spikes", 0.0F, 0.1F, 0.2F, 0.0F, 0.2F, 1.3F, "bare ice");
-        put("frozen_peaks", 0.0F, 0.05F, 0.9F, 0.0F, 0.1F, 1.9F, "bare ice and stone");
-        put("jagged_peaks", 0.0F, 0.05F, 0.95F, 0.0F, 0.1F, 1.9F, "bare stone, dangerous falls");
-        put("stony_peaks", 0.0F, 0.05F, 1.0F, 0.0F, 0.1F, 1.8F, "bare stone");
-        put("stony_shore", 0.0F, 0.1F, 1.0F, 0.1F, 0.6F, 1.4F, "bare stone at the waterline");
-        put("snowy_slopes", 0.05F, 0.1F, 0.8F, 0.0F, 0.1F, 1.7F, "snow over stone");
-        put("windswept_hills", 0.2F, 0.3F, 0.95F, 0.0F, 0.1F, 1.6F, "exposed stone and coal");
-        put("windswept_gravelly_hills", 0.15F, 0.3F, 0.9F, 0.3F, 0.1F, 1.6F, "gravel and stone");
+        put("badlands", 0.0F, 0.05F, 0.85F, 0.8F, 0.05F, 1.3F, "lune.biome.trees_grow_here_but_gold_shallow");
+        put("eroded_badlands", 0.0F, 0.05F, 0.9F, 0.8F, 0.05F, 1.6F, "lune.biome.trees_hard_cross");
+        put("wooded_badlands", 0.45F, 0.2F, 0.85F, 0.7F, 0.05F, 1.4F, "lune.biome.only_plateau_tops_have_trees");
+        put("desert", 0.0F, 0.05F, 0.3F, 1.0F, 0.05F, 1.0F, "lune.biome.trees_sand_cactus");
+        put("snowy_plains", 0.05F, 0.3F, 0.2F, 0.0F, 0.2F, 1.1F, "lune.biome.almost_trees");
+        put("ice_spikes", 0.0F, 0.1F, 0.2F, 0.0F, 0.2F, 1.3F, "lune.biome.bare_ice");
+        put("frozen_peaks", 0.0F, 0.05F, 0.9F, 0.0F, 0.1F, 1.9F, "lune.biome.bare_ice_stone");
+        put("jagged_peaks", 0.0F, 0.05F, 0.95F, 0.0F, 0.1F, 1.9F, "lune.biome.bare_stone_dangerous_falls");
+        put("stony_peaks", 0.0F, 0.05F, 1.0F, 0.0F, 0.1F, 1.8F, "lune.biome.bare_stone");
+        put("stony_shore", 0.0F, 0.1F, 1.0F, 0.1F, 0.6F, 1.4F, "lune.biome.bare_stone_waterline");
+        put("snowy_slopes", 0.05F, 0.1F, 0.8F, 0.0F, 0.1F, 1.7F, "lune.biome.snow_over_stone");
+        put("windswept_hills", 0.2F, 0.3F, 0.95F, 0.0F, 0.1F, 1.6F, "lune.biome.exposed_stone_coal");
+        put("windswept_gravelly_hills", 0.15F, 0.3F, 0.9F, 0.3F, 0.1F, 1.6F, "lune.biome.gravel_stone");
 
         // Water and shore. Expensive to cross, which is what keeps the bot out of the sea.
-        put("beach", 0.05F, 0.2F, 0.1F, 1.0F, 0.8F, 1.0F, "sand and water, no trees");
-        put("snowy_beach", 0.05F, 0.2F, 0.1F, 0.9F, 0.8F, 1.0F, "sand and ice, no trees");
-        put("river", 0.2F, 0.3F, 0.1F, 0.4F, 1.0F, 1.5F, "crossable water, trees on the banks");
-        put("frozen_river", 0.15F, 0.2F, 0.1F, 0.4F, 1.0F, 1.2F, "walkable ice");
-        put("ocean", 0.0F, 0.15F, 0.0F, 0.2F, 1.0F, 3.0F, "open water, a long swim");
-        put("deep_ocean", 0.0F, 0.1F, 0.0F, 0.1F, 1.0F, 3.5F, "deep open water");
-        put("warm_ocean", 0.0F, 0.2F, 0.0F, 0.3F, 1.0F, 3.0F, "open water over reef");
-        put("lukewarm_ocean", 0.0F, 0.15F, 0.0F, 0.2F, 1.0F, 3.0F, "open water");
-        put("deep_lukewarm_ocean", 0.0F, 0.1F, 0.0F, 0.1F, 1.0F, 3.5F, "deep open water");
-        put("cold_ocean", 0.0F, 0.15F, 0.0F, 0.2F, 1.0F, 3.0F, "cold open water");
-        put("deep_cold_ocean", 0.0F, 0.1F, 0.0F, 0.1F, 1.0F, 3.5F, "deep cold water");
-        put("frozen_ocean", 0.0F, 0.1F, 0.0F, 0.1F, 0.9F, 2.5F, "ice over water");
-        put("deep_frozen_ocean", 0.0F, 0.05F, 0.0F, 0.1F, 0.9F, 3.0F, "ice over deep water");
+        put("beach", 0.05F, 0.2F, 0.1F, 1.0F, 0.8F, 1.0F, "lune.biome.sand_water_trees");
+        put("snowy_beach", 0.05F, 0.2F, 0.1F, 0.9F, 0.8F, 1.0F, "lune.biome.sand_ice_trees");
+        put("river", 0.2F, 0.3F, 0.1F, 0.4F, 1.0F, 1.5F, "lune.biome.crossable_water_trees_banks");
+        put("frozen_river", 0.15F, 0.2F, 0.1F, 0.4F, 1.0F, 1.2F, "lune.biome.walkable_ice");
+        put("ocean", 0.0F, 0.15F, 0.0F, 0.2F, 1.0F, 3.0F, "lune.biome.open_water_long_swim");
+        put("deep_ocean", 0.0F, 0.1F, 0.0F, 0.1F, 1.0F, 3.5F, "lune.biome.deep_open_water");
+        put("warm_ocean", 0.0F, 0.2F, 0.0F, 0.3F, 1.0F, 3.0F, "lune.biome.open_water_over_reef");
+        put("lukewarm_ocean", 0.0F, 0.15F, 0.0F, 0.2F, 1.0F, 3.0F, "lune.biome.open_water");
+        put("deep_lukewarm_ocean", 0.0F, 0.1F, 0.0F, 0.1F, 1.0F, 3.5F, "lune.biome.deep_open_water");
+        put("cold_ocean", 0.0F, 0.15F, 0.0F, 0.2F, 1.0F, 3.0F, "lune.biome.cold_open_water");
+        put("deep_cold_ocean", 0.0F, 0.1F, 0.0F, 0.1F, 1.0F, 3.5F, "lune.biome.deep_cold_water");
+        put("frozen_ocean", 0.0F, 0.1F, 0.0F, 0.1F, 0.9F, 2.5F, "lune.biome.ice_over_water");
+        put("deep_frozen_ocean", 0.0F, 0.05F, 0.0F, 0.1F, 0.9F, 3.0F, "lune.biome.ice_over_deep_water");
     }
 
     private static void put(String path, float wood, float food, float stone, float sand, float water,

@@ -47,6 +47,19 @@ public final class TaskStore {
         return instance;
     }
 
+    /**
+     * Name prefix marking a training attempt.
+     *
+     * <p>These are scratch. They are removed when the lesson is left and dropped again on load, so
+     * a crash mid-puzzle cannot leave one sitting in the task list looking like work the player
+     * started and forgot - which is exactly what it would look like.</p>
+     */
+    public static final String TRAINING_PREFIX = "Training: ";
+
+    public static boolean isTrainingAttempt(TaskGraph task) {
+        return task != null && task.name != null && task.name.startsWith(TRAINING_PREFIX);
+    }
+
     public List<TaskGraph> all() {
         return List.copyOf(tasks);
     }
@@ -57,6 +70,28 @@ public final class TaskStore {
 
     public Optional<TaskGraph> byName(String name) {
         return tasks.stream().filter(task -> task.name.equalsIgnoreCase(name)).findFirst();
+    }
+
+    /** The starter job with this id, if the player still has it. */
+    public Optional<TaskGraph> bySeededId(String seededId) {
+        if (seededId == null) {
+            return Optional.empty();
+        }
+        return tasks.stream().filter(task -> seededId.equals(task.seededId)).findFirst();
+    }
+
+    /**
+     * What a stored task name is called on screen.
+     *
+     * <p>For the Run Task card's dropdown, which lists the names tasks are saved under. The value
+     * it writes into the node has to stay the saved name - that is how the card finds the task
+     * again - so only the label changes.</p>
+     */
+    public static String displayNameOf(String storedName) {
+        if (storedName == null || storedName.isEmpty()) {
+            return "";
+        }
+        return get().byName(storedName).map(TaskGraph::displayName).orElse(storedName);
     }
 
     public TaskGraph create(String name) {
@@ -74,15 +109,39 @@ public final class TaskStore {
     }
 
     /**
-     * Restores only the built-in tasks that are missing by name. Existing tasks, including edited
-     * copies of a built-in task, are left untouched.
+     * Takes ownership of a graph built in code, replacing any task already using its name.
+     *
+     * <p>Replacement rather than {@link #uniqueName}, because this is how a training attempt reaches
+     * the editor: reopening a lesson should hand back that lesson, not add it beside four abandoned
+     * numbered copies of itself. Everything the player authors arrives through {@link #create} or
+     * {@link #importFrom}, and both of those still uniquify.</p>
+     */
+    public TaskGraph adopt(TaskGraph task) {
+        if (task == null || task.nodes == null || task.name == null) {
+            return null;
+        }
+        normalize(task);
+        tasks.removeIf(existing -> existing.name.equalsIgnoreCase(task.name));
+        tasks.add(task);
+        save();
+        return task;
+    }
+
+    /**
+     * Restores only the built-in tasks that are missing. Existing tasks, including edited copies of
+     * a built-in task, are left untouched.
+     *
+     * <p>Matched on the seeded id rather than the name, because the name is what the player is
+     * free to change and what used to be the only thing to match on. A renamed starter job is
+     * still that job; a save written before ids existed is recognised by the name it shipped
+     * under, which {@link #normalize} has already turned back into an id by this point.</p>
      *
      * @return the number of built-in tasks restored
      */
     public int restoreMissingDefaults() {
         int restored = 0;
         for (TaskGraph defaultTask : DefaultTasks.create()) {
-            if (byName(defaultTask.name).isEmpty()) {
+            if (!alreadyPresent(tasks, defaultTask)) {
                 tasks.add(defaultTask);
                 restored++;
             }
@@ -91,6 +150,46 @@ public final class TaskStore {
             save();
         }
         return restored;
+    }
+
+    /**
+     * Gives a task saved before starter jobs had ids the id it should have had.
+     *
+     * <p>The name is the only evidence of which job it is, and it is good evidence: an untouched
+     * starter job still carries the name it shipped under. A renamed one is not recognised, which
+     * is the same answer the name match gave before ids existed.</p>
+     */
+    static void adoptSeededId(TaskGraph task) {
+        if (task != null && task.seededId == null && task.name != null) {
+            task.seededId = DefaultTasks.SEEDED_NAMES.get(task.name);
+        }
+    }
+
+    /**
+     * Whether a starter job is already in this list, so a restore leaves it alone.
+     *
+     * <p>By id first, so a job the player renamed is still recognised as theirs, and by the name it
+     * shipped under as well - which catches a save from before ids that {@link #adoptSeededId} has
+     * not been over, and is the check this used to do on its own.</p>
+     */
+    static boolean alreadyPresent(List<TaskGraph> existing, TaskGraph seeded) {
+        for (TaskGraph task : existing) {
+            if (seeded.seededId != null && seeded.seededId.equals(task.seededId)) {
+                return true;
+            }
+            if (task.name != null && task.name.equalsIgnoreCase(seeded.name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Called only after the hidden restore-button gesture; normal defaults never include it. */
+    public TaskGraph unlockSecretTasks() {
+        int before = tasks.size();
+        TaskGraph task = SecretTasks.restoreInto(tasks);
+        if (tasks.size() != before) save();
+        return task;
     }
 
     /** Ensures a name doesn't collide, since tasks are referenced by name from other tasks. */
@@ -168,6 +267,10 @@ public final class TaskStore {
             }
             imported.nodes.removeIf(node -> node == null || node.commandId == null);
             normalize(imported);
+            // A copy of a starter job is a task of the player's own, however it was made. Keeping
+            // the id would give them two tasks claiming to be job 3, and a restore would then see
+            // job 3 as present and decline to bring back the one they actually deleted.
+            imported.seededId = null;
             imported.name = uniqueName(imported.name);
             tasks.add(imported);
             save();
@@ -218,6 +321,7 @@ public final class TaskStore {
             if (loaded != null) {
                 loaded.stream()
                         .filter(task -> task != null && task.name != null && task.nodes != null)
+                        .filter(task -> !isTrainingAttempt(task))
                         .peek(TaskStore::normalize)
                         .forEach(store.tasks::add);
             }
@@ -246,6 +350,7 @@ public final class TaskStore {
     /** Adds editor/runtime defaults introduced after older task JSON was written. */
     private static void normalize(TaskGraph task) {
         task.nodes.removeIf(java.util.Objects::isNull);
+        adoptSeededId(task);
         if (task.cableAnchors == null) {
             task.cableAnchors = new java.util.LinkedHashMap<>();
         }
