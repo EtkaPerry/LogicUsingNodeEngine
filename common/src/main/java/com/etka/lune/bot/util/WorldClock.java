@@ -118,10 +118,27 @@ public final class WorldClock {
 
     /** The in-game time as a 24-hour clock, where tick zero is 06:00. */
     public static String clock(long dayTime) {
+        return clockOf(minuteOfDay(dayTime));
+    }
+
+    /**
+     * The in-game time as minutes since midnight, where tick zero is 06:00.
+     *
+     * <p>The number behind {@link #clock}, split out because a card comparing against 20:00 needs
+     * the value rather than the rendering, and two ways of working out what o'clock it is would
+     * eventually disagree by a minute.</p>
+     */
+    public static long minuteOfDay(long dayTime) {
         long time = normalise(dayTime);
         long hour = Math.floorMod(time / TICKS_PER_HOUR + SUNRISE_HOUR, 24L);
         long minute = time % TICKS_PER_HOUR * 60L / TICKS_PER_HOUR;
-        return String.format(Locale.ROOT, "%02d:%02d", hour, minute);
+        return hour * 60L + minute;
+    }
+
+    /** Minutes since midnight written as a 24-hour clock, for whichever clock supplied them. */
+    public static String clockOf(long minuteOfDay) {
+        long minutes = Math.floorMod(minuteOfDay, 24L * 60L);
+        return String.format(Locale.ROOT, "%02d:%02d", minutes / 60L, minutes % 60L);
     }
 
     private static long normalise(long dayTime) {

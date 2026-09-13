@@ -29,6 +29,7 @@ import com.etka.lune.bot.task.TunnelTask;
 import com.etka.lune.bot.task.GotoTask;
 import com.etka.lune.bot.task.SpeedrunTask;
 import com.etka.lune.bot.task.ConditionTask;
+import com.etka.lune.bot.task.CountdownTask;
 import com.etka.lune.bot.task.EatTask;
 import com.etka.lune.bot.task.BoatTask;
 import com.etka.lune.bot.task.BridgeTask;
@@ -36,6 +37,7 @@ import com.etka.lune.bot.task.BuildPortalTask;
 import com.etka.lune.bot.task.DepositTask;
 import com.etka.lune.bot.task.DirectionalGotoTask;
 import com.etka.lune.bot.task.ExploreTask;
+import com.etka.lune.bot.util.ClockSource;
 import com.etka.lune.bot.util.HeadScanner;
 import com.etka.lune.bot.util.WorldClock;
 import com.etka.lune.bot.task.SmeltTask;
@@ -132,6 +134,10 @@ public final class CommandRegistry {
     private static final List<String> COMPARISONS = List.of(
             "Less than", "At most", "Equal to", "At least", "Greater than", "Not equal");
 
+    /** A clock is asked whether it has got there yet, not by how much. */
+    private static final List<String> CLOCK_COMPARISONS = List.of(
+            ConditionTask.BEFORE, ConditionTask.AT_OR_AFTER);
+
     /** Widths of look, narrowest first. Each one widens on its own when it finds nothing. */
     private static final List<String> SCAN_STYLES = List.of(
             "Glance ahead", "Look around", "Full turn");
@@ -194,6 +200,8 @@ public final class CommandRegistry {
             Map.entry("check_player", "Logic & Conditions"),
             Map.entry("check_distance", "Logic & Conditions"),
             Map.entry("check_time", "Logic & Conditions"),
+            Map.entry("check_clock", "Logic & Conditions"),
+            Map.entry("countdown", "Logic & Conditions"),
             Map.entry("tunnel", "Mining & Building"),
             Map.entry("stripmine", "Mining & Building"),
             Map.entry("bridge", "Mining & Building"),
@@ -318,6 +326,22 @@ public final class CommandRegistry {
         register(new CommandDef("check_time", List.of(
                 new Param.Choice("phase", WorldClock.phaseNames(), WorldClock.Phase.DAY.label())
         ), def -> ConditionTask.worldTime(def.choiceValue("phase"))));
+
+        // The hour is asked for as two numbers rather than a typed "20:00", so there is no format
+        // to get wrong and no way to save a card that reads 25:70.
+        register(new CommandDef("check_clock", List.of(
+                new Param.Choice("clock", ClockSource.labels(), ClockSource.SYSTEM.label()),
+                new Param.Choice("comparison", CLOCK_COMPARISONS, ConditionTask.BEFORE),
+                new Param.Ints("hour", 20, 0, 23),
+                new Param.Ints("minute", 0, 0, 59)
+        ), def -> ConditionTask.clockTime(def.choiceValue("clock"), def.choiceValue("comparison"),
+                def.intValue("hour"), def.intValue("minute"))));
+
+        register(new CommandDef("countdown", List.of(
+                new Param.Ints("amount", 20, 1, 9999),
+                new Param.Choice("unit", CountdownTask.Unit.labels(), CountdownTask.Unit.MINUTES.label())
+        ), def -> new CountdownTask(def.intValue("amount"),
+                CountdownTask.Unit.fromLabel(def.choiceValue("unit")))));
 
         register(new CommandDef("check_distance", List.of(
                 new Param.Choice("waypoint", () -> WaypointStore.get().names(), ""),

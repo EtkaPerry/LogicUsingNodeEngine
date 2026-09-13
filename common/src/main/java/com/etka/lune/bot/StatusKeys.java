@@ -302,6 +302,7 @@ public final class StatusKeys {
 
         put(WAITING,
                 "lune.status.collect_crafting_table.waiting_table_drop",
+                "lune.status.countdown.remaining",
                 "lune.status.fish.waiting_bite_caught",
                 "lune.status.fish.waiting_bobber",
                 "lune.status.fish.waiting_bobber_reach_water_caught",

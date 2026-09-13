@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.tab;
 
+import com.etka.lune.util.Durations;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.bot.BotStatistics;
@@ -874,17 +875,7 @@ public class MainTab extends LuneTab {
     }
 
     private static String formatDuration(long ticks) {
-        long totalSeconds = Math.max(0L, ticks) / 20L;
-        long hours = totalSeconds / 3600L;
-        long minutes = (totalSeconds % 3600L) / 60L;
-        long seconds = totalSeconds % 60L;
-        if (hours > 0L) {
-            return Lang.get("lune.gui.main.duration_hours", hours, minutes, seconds);
-        }
-        if (minutes > 0L) {
-            return Lang.get("lune.gui.main.duration_minutes", minutes, seconds);
-        }
-        return Lang.get("lune.gui.main.duration_seconds", seconds);
+        return Durations.ofTicks(ticks);
     }
 
     private static String fit(String value, int maxWidth) {

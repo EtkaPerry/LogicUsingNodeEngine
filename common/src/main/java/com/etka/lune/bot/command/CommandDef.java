@@ -1,12 +1,16 @@
 package com.etka.lune.bot.command;
 
 import com.etka.lune.bot.Task;
+import com.etka.lune.util.Durations;
 import com.etka.lune.util.Lang;
+import com.etka.lune.bot.task.ConditionTask;
 import com.etka.lune.bot.task.ConditionText;
+import com.etka.lune.bot.task.CountdownTask;
 import com.etka.lune.bot.task.PlaceBlockTask;
 import com.etka.lune.bot.task.StepPolicy;
 import com.etka.lune.bot.task.SaveWaypointTask;
 import com.etka.lune.bot.util.InventoryHelper;
+import com.etka.lune.bot.util.WorldClock;
 import net.minecraft.core.BlockPos;
 import com.etka.lune.bot.catalog.BlockTarget;
 import com.etka.lune.bot.catalog.CraftPattern;
@@ -77,6 +81,8 @@ public final class CommandDef {
                     Lang.get("lune.card.distance_blocks", waypointName()),
                     choiceValue("comparison"), intValue("distance"));
             case "check_time" -> Lang.get("lune.card.if_overworld_clock_says_success", Param.Choice.optionLabel(choiceValue("phase")));
+            case "check_clock" -> clockDescription();
+            case "countdown" -> countdownDescription(repeat);
             case "stay_near" -> stayNearDescription(repeat);
             case "self_preservation" -> selfPreservationDescription(repeat);
             case "chop" -> actionDescription(Lang.get("lune.card.fell_trees_within_blocks_stopping_after", intValue("radius"), limitDescription(intValue("limit"), "logs")));
@@ -112,6 +118,41 @@ public final class CommandDef {
             case "button" -> Lang.get("lune.card.press_button_control_send_one_pulse");
             default -> actionDescription(lowerFirst(description()));
         };
+    }
+
+    /**
+     * A whole sentence per rule, rather than one frame with the rule dropped into it.
+     *
+     * <p>"before 20:00" and "at or after 20:00" do not sit in the same place in every language -
+     * Turkish puts the hour first and the word after it - so a single frame with a translated
+     * comparison slotted in comes out as word salad in exactly the languages nobody testing it
+     * reads.</p>
+     */
+    private String clockDescription() {
+        String clock = Param.Choice.optionLabel(choiceValue("clock"));
+        String time = WorldClock.clockOf(intValue("hour") * 60L + intValue("minute"));
+        return ConditionTask.AT_OR_AFTER.equals(choiceValue("comparison"))
+                ? Lang.get("lune.card.if_clock_reached_success", clock, time)
+                : Lang.get("lune.card.if_clock_before_success", clock, time);
+    }
+
+    /**
+     * A countdown is a wait, so the sentence leads with how long it is.
+     *
+     * <p>It also says "real time", because that is the whole difference between this card and the
+     * Timer beside it in the palette, and a player choosing between them has no other way to see
+     * it.</p>
+     */
+    private String countdownDescription(int repeat) {
+        String duration = Durations.describe(intValue("amount")
+                * CountdownTask.Unit.fromLabel(choiceValue("unit")).seconds());
+        if (repeat == 0) {
+            return Lang.get("lune.card.lune_counts_down_starts_again", duration);
+        }
+        if (repeat == 1) {
+            return Lang.get("lune.card.lune_waits_real_time_gives_success", duration);
+        }
+        return Lang.get("lune.card.lune_waits_real_time_times_gives_success", duration, repeat);
     }
 
     private String selectItemDescription() {

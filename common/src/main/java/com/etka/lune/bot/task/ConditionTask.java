@@ -5,6 +5,7 @@ import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
+import com.etka.lune.bot.util.ClockSource;
 import com.etka.lune.bot.util.InventoryHelper;
 import com.etka.lune.bot.util.WorldClock;
 import com.etka.lune.waypoint.Waypoint;
@@ -33,8 +34,21 @@ public final class ConditionTask implements Task {
         ITEM_COUNT,
         PLAYER_VALUE,
         WAYPOINT_DISTANCE,
-        WORLD_TIME
+        WORLD_TIME,
+        CLOCK_TIME
     }
+
+    /**
+     * The two ways a Check Clock card can read a time of day.
+     *
+     * <p>Not the six numeric comparisons the other conditions use. "Time of day at most 1200" is
+     * both correct and unreadable, and the two questions anybody actually asks a clock are whether
+     * it is still before an hour and whether it has got there.</p>
+     *
+     * <p>Identifiers, written into saved tasks: only their rendering is translated.</p>
+     */
+    public static final String BEFORE = "Before";
+    public static final String AT_OR_AFTER = "At or after";
 
     private final Kind kind;
     private final Item item;
@@ -78,6 +92,20 @@ public final class ConditionTask implements Task {
         return new ConditionTask(Kind.WORLD_TIME, null, phase, null, null, 0);
     }
 
+    /**
+     * Asks a clock - the world's or the computer's - whether it has reached a given hour.
+     *
+     * <p>The companion to {@link #worldTime}: that one answers "is it dark?", this one answers "is
+     * it eight yet?". A job told to run until 20:00 is this card's Success edge looping back into
+     * the work and its Fail edge leaving.</p>
+     *
+     * @param clock a {@link ClockSource} label
+     */
+    public static ConditionTask clockTime(String clock, String comparison, int hour, int minute) {
+        int target = Math.floorMod(hour, 24) * 60 + Math.floorMod(minute, 60);
+        return new ConditionTask(Kind.CLOCK_TIME, null, clock, null, comparison, target);
+    }
+
     @Override
     public String name() {
         return switch (kind) {
@@ -85,6 +113,7 @@ public final class ConditionTask implements Task {
             case PLAYER_VALUE -> Lang.get("lune.command.check_player.name");
             case WAYPOINT_DISTANCE -> Lang.get("lune.command.check_distance.name");
             case WORLD_TIME -> Lang.get("lune.command.check_time.name");
+            case CLOCK_TIME -> Lang.get("lune.command.check_clock.name");
         };
     }
 
@@ -95,6 +124,7 @@ public final class ConditionTask implements Task {
             case PLAYER_VALUE -> Lang.get("lune.command.check_player.name");
             case WAYPOINT_DISTANCE -> Lang.get("lune.command.check_distance.name");
             case WORLD_TIME -> Lang.get("lune.command.check_time.name");
+            case CLOCK_TIME -> Lang.get("lune.command.check_clock.name");
         });
     }
 
@@ -115,6 +145,7 @@ public final class ConditionTask implements Task {
             case PLAYER_VALUE -> checkPlayerValue(ctx);
             case WAYPOINT_DISTANCE -> checkWaypointDistance(ctx);
             case WORLD_TIME -> checkWorldTime(ctx);
+            case CLOCK_TIME -> checkClockTime(ctx);
         };
     }
 
@@ -179,6 +210,39 @@ public final class ConditionTask implements Task {
         return matches ? TaskStatus.SUCCESS : TaskStatus.FAILED;
     }
 
+    /**
+     * A line per rule, because the rule is not a word that can be dropped into a shared frame:
+     * languages disagree about whether "before" comes before the hour or after it.
+     */
+    private TaskStatus checkClockTime(BotContext ctx) {
+        ClockSource clock = ClockSource.fromLabel(metric);
+        long now = clock.minuteOfDay(ctx.level);
+        outputs.put(outputPort(), WorldClock.clockOf(now));
+        boolean matches = clockMatches(comparison, now, threshold);
+        status.set(AT_OR_AFTER.equals(comparison)
+                        ? "lune.status.condition.clock_at_or_after"
+                        : "lune.status.condition.clock_before",
+                com.etka.lune.bot.command.Param.Choice.optionLabel(clock.label()),
+                WorldClock.clockOf(now),
+                WorldClock.clockOf(threshold),
+                matches ? Lang.get("lune.gui.blueprint.success") : Lang.get("lune.gui.blueprint.fail"));
+        return matches ? TaskStatus.SUCCESS : TaskStatus.FAILED;
+    }
+
+    /**
+     * Whether a clock reading satisfies a Before / At or after rule, both in minutes past midnight.
+     *
+     * <p>Deliberately a plain comparison with no wrap-around cleverness. "Before 20:00" is true
+     * again at one in the morning, because that is what a clock does and what the player reading
+     * the card will predict. A job meant to stop overnight wants two of these cards, not a rule
+     * that guesses which side of midnight was intended.</p>
+     */
+    public static boolean clockMatches(String comparison, long nowMinute, long targetMinute) {
+        return AT_OR_AFTER.equals(comparison)
+                ? nowMinute >= targetMinute
+                : nowMinute < targetMinute;
+    }
+
     private TaskStatus result(String subject, double actual) {
         outputs.put(outputPort(), format(actual));
         boolean passed = compare(actual, comparison, threshold);
@@ -192,6 +256,7 @@ public final class ConditionTask implements Task {
             case PLAYER_VALUE -> "value";
             case WAYPOINT_DISTANCE -> "distance";
             case WORLD_TIME -> "time";
+            case CLOCK_TIME -> "clock";
         };
     }
 

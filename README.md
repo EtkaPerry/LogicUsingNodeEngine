@@ -121,7 +121,7 @@ Every card defines a distinct capability that can be combined with others:
 | **Items & Crafting** | `Get Tools` (smart autonomous material gatherer & crafter), `Craft` (recipe & 3x3 grid), `Smelt` (furnaces), `Deposit` (chests), `Select Item` |
 | **Combat** | `Kill` (targeted mob), `Hunt Creepers`, `Hunt Skeletons`, `Hunt Endermen`, `Hunt Blazes` |
 | **Survival & Safety** | `Eat` (hunger management), `Sleep` (beds), `Self Preservation` (companion combat & hazard avoidance), `Stay Near` (leash radius) |
-| **Logic & Flow** | `START`, `End`, `Always` (continuous power), `Pulse` (metronome clock), `While` (condition monitor), `Check Item Count`, `Check Player`, `Check Distance`, `Check Time`, `Timer`, `Counter`, `Signal Relay`, `Observer`, `Button`, `Run Task` |
+| **Logic & Flow** | `START`, `End`, `Always` (continuous power), `Pulse` (metronome clock), `While` (condition monitor), `Check Item Count`, `Check Player`, `Check Distance`, `Check Time` (day/night phase), `Check Clock` (until 20:00, on the game or system clock), `Timer` (pulse delay in game ticks), `Countdown` (20 minutes, 5 hours, 2 days &mdash; real time), `Counter`, `Signal Relay`, `Observer`, `Button`, `Run Task` |
 | **Grand Missions** | `Complete Game` (experimental multi-stage progression route &mdash; see the note on routines 5 and 6) |
 
 ---
@@ -266,6 +266,6 @@ For bug reports, issues, and feature proposals:
 
 ## License
 
-Lune is distributed under a **Personal Use License**. You are free to play with it, modify it for your personal use, fork it on GitHub, and feature it in videos or streams. The unmodified mod may be hosted on Modrinth and included in free Modrinth modpacks with attribution retained. See [LICENSE](LICENSE) for complete legal terms.
+Lune is distributed under a **Personal Use License**. You are free to play with it, modify it for your personal use, fork it on GitHub, and feature it in videos or streams. Free Modrinth modpacks may list Lune — the entry links to the official Modrinth project, so Modrinth serves the author's own file; bundling or re-uploading a copy is not permitted. See [LICENSE](LICENSE) for complete legal terms.
 
 Direct licensing inquiries to: `<18562724+EtkaPerry@users.noreply.github.com>`.
