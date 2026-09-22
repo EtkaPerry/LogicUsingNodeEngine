@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.bot.LuneProfiler;
@@ -49,17 +50,25 @@ public final class DebugOverlay {
         }
         Minecraft mc = Minecraft.getInstance();
         // Hide while a screen is open: the panel already shows this, and it would sit under the UI.
-        if (mc.player == null || mc.screen != null) {
+        if (mc.player == null || Screens.current(mc) != null) {
             return;
         }
 
         DebugInfo debug = BotEngine.get().getDebug();
         List<Line> lines = buildLines(mc, debug, config);
 
-        int width = 0;
+        // The label column is measured rather than padded. Minecraft's font is proportional, so
+        // the spaces this used to pad labels with lined nothing up: "task" and "queued" are
+        // different widths before a single space is added, and two of the labels were padded to a
+        // different length again. One measured column puts every value at the same x.
+        int labels = 0;
+        int values = 0;
         for (Line line : lines) {
-            width = Math.max(width, mc.font.width(line.text()));
+            labels = Math.max(labels, mc.font.width(line.label()));
+            values = Math.max(values, mc.font.width(line.text()));
         }
+        int gap = mc.font.width(" ") * 2;
+        int width = labels + gap + values;
         int height = lines.size() * LINE_HEIGHT + MARGIN;
 
         extractor.fill(2, 2, MARGIN * 2 + width + 4, height + 6, BACKGROUND);
@@ -67,12 +76,35 @@ public final class DebugOverlay {
         var text = extractor.textRenderer();
         int y = MARGIN + 2;
         for (Line line : lines) {
-            text.accept(MARGIN + 2, y, Component.literal(line.text()).withColor(line.colour()));
+            if (!line.label().isEmpty()) {
+                text.accept(MARGIN + 2, y,
+                        Component.literal(line.label()).withColor(line.colour()));
+            }
+            text.accept(MARGIN + 2 + labels + gap, y,
+                    Component.literal(line.text()).withColor(line.colour()));
             y += LINE_HEIGHT;
         }
     }
 
-    private record Line(String text, int colour) {}
+    /**
+     * One row: the name of the thing on the left, its value on the right.
+     *
+     * <p>Two fields rather than one pre-joined string, because the join is what decides the
+     * alignment and only the renderer knows how wide the column ended up.</p>
+     */
+    private record Line(String label, String text, int colour) {
+
+        /**
+         * A row with no label of its own, drawn in the value column.
+         *
+         * <p>Which is where it belongs: an unlabelled row is the row above it continuing - the
+         * older thoughts under "now", the profiler's own sub-table under its heading - so lining
+         * it up with the values rather than the labels is what says so.</p>
+         */
+        static Line continuing(String text, int colour) {
+            return new Line("", text, colour);
+        }
+    }
 
     /**
      * The profiler readout: worst self-time first, with how many times each ran.
@@ -87,16 +119,16 @@ public final class DebugOverlay {
         }
         List<LuneProfiler.Row> rows = LuneProfiler.rows();
         long worst = LuneProfiler.worstTickMicros();
-        lines.add(new Line(Lang.get("lune.gui.debug.profile_worst_tick_ms", worst / 1000, worst / 100 % 10, (LuneProfiler.worstTickLabel().isEmpty() ? "" : " in " + LuneProfiler.worstTickLabel())),
+        lines.add(Line.continuing(Lang.get("lune.gui.debug.profile_worst_tick_ms", worst / 1000, worst / 100 % 10, (LuneProfiler.worstTickLabel().isEmpty() ? "" : " in " + LuneProfiler.worstTickLabel())),
                 worst > 40_000 ? BAD : worst > 15_000 ? HEADING : LABEL));
         if (rows.isEmpty()) {
-            lines.add(new Line("        measuring...", LABEL));
+            lines.add(Line.continuing(Lang.get("lune.gui.debug.measuring"), LABEL));
             return;
         }
         int ticks = LuneProfiler.ticksInWindow();
         for (LuneProfiler.Row row : rows) {
             long perTick = row.selfMicros() / ticks;
-            lines.add(new Line(String.format(Lang.get("lune.gui.debug.16s_5d_us_tick_4d_us_call_x_d"),
+            lines.add(Line.continuing(String.format(Lang.get("lune.gui.debug.16s_5d_us_tick_4d_us_call_x_d"),
                             trim(row.label()), perTick, row.averageMicros(), row.calls()),
                     perTick > 2000 ? BAD : VALUE));
         }
@@ -108,15 +140,15 @@ public final class DebugOverlay {
 
     private static List<Line> buildLines(Minecraft mc, DebugInfo debug, BotConfig config) {
         List<Line> lines = new ArrayList<>();
-        lines.add(new Line("Lune  " + debug.state, HEADING));
-        lines.add(new Line("task    " + debug.taskName, VALUE));
+        lines.add(new Line("Lune", debug.state, HEADING));
+        lines.add(new Line("task", debug.taskName, VALUE));
 
         if (debug.taskTicks > 0) {
-            lines.add(new Line("age     " + debug.taskTicks + " ticks", LABEL));
+            lines.add(new Line("age", debug.taskTicks + " ticks", LABEL));
         }
 
         if (!debug.nextTask.isEmpty()) {
-            lines.add(new Line("queued  " + debug.nextTask, LABEL));
+            lines.add(new Line("queued", debug.nextTask, LABEL));
         }
 
         // Thought history: newest first, no consecutive duplicates, capped at 7. This is the bot's
@@ -133,17 +165,19 @@ public final class DebugOverlay {
             if (i == 0 && hasActiveTask && debug.thoughtRepeat > 1) {
                 text += " x" + debug.thoughtRepeat;
             }
-            String prefix = i == 0 ? (hasActiveTask ? "now     " : "last    ") : "        ";
-            lines.add(new Line(prefix + text, colour));
+            // Only the newest thought is labelled; the ones under it are the same column
+            // continuing, which the empty label now expresses directly.
+            String label = i > 0 ? "" : hasActiveTask ? "now" : "last";
+            lines.add(new Line(label, text, colour));
         }
 
         if (debug.queueSize > 0) {
-            lines.add(new Line("queue   " + debug.queueSize, LABEL));
+            lines.add(new Line("queue", String.valueOf(debug.queueSize), LABEL));
         }
 
         if (!debug.learningAction.isEmpty() || !debug.learningMemory.isEmpty()) {
             String policy = debug.learningAction.isEmpty() ? "-" : debug.learningAction;
-            lines.add(new Line("learn   " + policy + "  reward "
+            lines.add(new Line("learn", policy + "  reward "
                     + String.format(java.util.Locale.ROOT, "%.1f", debug.learningReward)
                     + "  updates " + debug.learningUpdates
                     + (debug.learningBestTicksPerUnit > 0.0
@@ -155,7 +189,7 @@ public final class DebugOverlay {
             String timing = debug.automaticUsualTicks > 0
                     ? " " + debug.automaticTicks + "/" + debug.automaticUsualTicks + " ticks"
                     : " " + debug.automaticTicks + " ticks (baseline)";
-            lines.add(new Line("auto    " + debug.automaticVerdict + timing
+            lines.add(new Line("auto", debug.automaticVerdict + timing
                     + (debug.automaticBestTicks > 0
                         ? "  best " + debug.automaticBestTicks + " ticks" : "")
                     + (debug.automaticReason.isEmpty() ? "" : " - " + debug.automaticReason),
@@ -163,16 +197,16 @@ public final class DebugOverlay {
         }
 
         BlockPos feet = mc.player.blockPosition();
-        lines.add(new Line("at      " + feet.getX() + " " + feet.getY() + " " + feet.getZ()
+        lines.add(new Line("at", feet.getX() + " " + feet.getY() + " " + feet.getZ()
                 + "   yaw " + Mth.floor(Mth.wrapDegrees(mc.player.getYRot())), LABEL));
 
         if (config.debugPathDetail) {
             if (!debug.intent.isEmpty()) {
-                lines.add(new Line("intent  " + debug.intent, VALUE));
+                lines.add(new Line("intent", debug.intent, VALUE));
             }
             if (debug.movementTarget != null) {
                 String label = debug.movementLabel.isEmpty() ? "route waypoint" : debug.movementLabel;
-                lines.add(new Line("move    " + label + " " + debug.movementTarget.toShortString()
+                lines.add(new Line("move", label + " " + debug.movementTarget.toShortString()
                         + "  " + distance(feet, debug.movementTarget), MOVE_MARKER));
             }
             if (debug.placementTarget != null) {
@@ -181,14 +215,14 @@ public final class DebugOverlay {
                 if (!debug.placementVerdict.isEmpty()) {
                     placement += " - " + debug.placementVerdict;
                 }
-                lines.add(new Line("place   " + placement, PLACE_MARKER));
+                lines.add(new Line("place", placement, PLACE_MARKER));
             }
             if (debug.breakTarget != null) {
                 String breaking = debug.breakBlock + " " + debug.breakTarget.toShortString();
                 if (!debug.breakVerdict.isEmpty()) {
                     breaking += " - " + debug.breakVerdict;
                 }
-                lines.add(new Line("break   " + breaking, BREAK_MARKER));
+                lines.add(new Line("break", breaking, BREAK_MARKER));
             }
             if (!debug.targetLabel.isEmpty() || debug.targetPos != null) {
                 String target = debug.targetLabel.isEmpty() ? "candidate" : debug.targetLabel;
@@ -198,7 +232,7 @@ public final class DebugOverlay {
                 if (!debug.targetVerdict.isEmpty()) {
                     target += " - " + debug.targetVerdict;
                 }
-                lines.add(new Line("target  " + target, debug.targetVerdict.startsWith("visible")
+                lines.add(new Line("target", target, debug.targetVerdict.startsWith("visible")
                         ? VALUE : WARN));
             }
             if (debug.searchAnchor != null || debug.searchLimit > 0) {
@@ -217,44 +251,44 @@ public final class DebugOverlay {
                 if (!debug.searchHeading.isEmpty()) {
                     search += "  " + debug.searchHeading;
                 }
-                lines.add(new Line("scan    " + search, LABEL));
+                lines.add(new Line("scan", search, LABEL));
             }
             if (!debug.memory.isEmpty()) {
-                lines.add(new Line("memory  " + debug.memory, LABEL));
+                lines.add(new Line("memory", debug.memory, LABEL));
             }
             if (!debug.learningContext.isEmpty()) {
-                lines.add(new Line("state   " + debug.learningContext, LABEL));
+                lines.add(new Line("state", debug.learningContext, LABEL));
             }
             if (!debug.missionProgress.isEmpty()) {
-                lines.add(new Line("mission " + debug.missionProgress, VALUE));
+                lines.add(new Line("mission", debug.missionProgress, VALUE));
             }
             if (!debug.missionMemory.isEmpty()) {
-                lines.add(new Line("remember " + debug.missionMemory, LABEL));
+                lines.add(new Line("remember", debug.missionMemory, LABEL));
             }
             if (!debug.missionLoop.isEmpty()) {
-                lines.add(new Line("loop    " + debug.missionLoop,
+                lines.add(new Line("loop", debug.missionLoop,
                         debug.missionLoop.startsWith("possible loop") ? BAD : WARN));
             }
             if (!debug.giveUp.isEmpty()) {
-                lines.add(new Line("limits  " + debug.giveUp, WARN));
+                lines.add(new Line("limits", debug.giveUp, WARN));
             }
             if (!debug.nextDecision.isEmpty()) {
-                lines.add(new Line("next    " + debug.nextDecision + debug.decisionRepeatSuffix(), VALUE));
+                lines.add(new Line("next", debug.nextDecision + debug.decisionRepeatSuffix(), VALUE));
             }
             if (!debug.obstruction.isEmpty()) {
                 String obstruction = debug.obstruction;
                 if (debug.obstructionPos != null) {
                     obstruction += " " + debug.obstructionPos.toShortString();
                 }
-                lines.add(new Line("block   " + obstruction, WARN));
+                lines.add(new Line("block", obstruction, WARN));
             }
         }
 
-        lines.add(new Line("goal    " + debug.goal, VALUE));
+        lines.add(new Line("goal", debug.goal, VALUE));
 
         if (debug.currentNode != null) {
             BlockPos node = debug.currentNode;
-            lines.add(new Line("node    " + node.getX() + " " + node.getY() + " " + node.getZ()
+            lines.add(new Line("node", node.getX() + " " + node.getY() + " " + node.getZ()
                     + "   [" + debug.pathIndex + "/" + debug.pathLength + "]", VALUE));
         }
 
@@ -262,36 +296,36 @@ public final class DebugOverlay {
         // closer to its current waypoint.
         if (debug.noProgressTicks > 0) {
             int colour = debug.noProgressTicks > 20 ? BAD : WARN;
-            lines.add(new Line("stalled " + debug.noProgressTicks + " ticks", colour));
+            lines.add(new Line("stalled", debug.noProgressTicks + " ticks", colour));
         }
         if (debug.goalNoProgressTicks > 0) {
             int colour = debug.goalNoProgressTicks > 180 ? BAD : WARN;
-            lines.add(new Line("goalstall " + debug.goalNoProgressTicks + " ticks", colour));
+            lines.add(new Line("goalstall", debug.goalNoProgressTicks + " ticks", colour));
         }
 
-        lines.add(new Line("keys    " + debug.keys, VALUE));
+        lines.add(new Line("keys", debug.keys, VALUE));
 
         if (config.debugPathDetail) {
-            lines.add(new Line("astar   " + debug.nodesExpanded + "/" + debug.nodeBudget + " nodes  "
+            lines.add(new Line("astar", debug.nodesExpanded + "/" + debug.nodeBudget + " nodes  "
                     + String.format("%.1f", debug.searchMillis) + " ms  "
                     + (debug.reachedGoal ? "full" : "partial"),
                     debug.reachedGoal ? LABEL : WARN));
-            lines.add(new Line("repaths " + debug.repaths, LABEL));
+            lines.add(new Line("repaths", String.valueOf(debug.repaths), LABEL));
         }
 
         if (!debug.lastEvent.isEmpty()) {
-            lines.add(new Line("last    " + debug.lastEvent, WARN));
+            lines.add(new Line("last", debug.lastEvent, WARN));
         }
 
         if (!debug.runTraceFile.isEmpty()) {
-            lines.add(new Line("trace   " + debug.runTraceFile, LABEL));
+            lines.add(new Line("trace", debug.runTraceFile, LABEL));
         }
 
         if (config.debugPathDetail && !debug.decisions.isEmpty()) {
             List<String> decisions = new ArrayList<>(debug.decisions);
             Collections.reverse(decisions);
             for (int i = 1; i < Math.min(4, decisions.size()); i++) {
-                lines.add(new Line("trace   " + decisions.get(i), LABEL));
+                lines.add(new Line("trace", decisions.get(i), LABEL));
             }
         }
         return lines;

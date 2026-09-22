@@ -224,6 +224,16 @@ public abstract class Param<T> {
          */
         private final UnaryOperator<String> labels;
         private final boolean ownLabels;
+        /**
+         * Which picker edits this choice, or null for the inline dropdown.
+         *
+         * <p>The dropdown shows five rows and scrolls by the wheel, which is the right shape for
+         * the eight or ten values nearly every card offers and hopeless for a registry. A choice
+         * with thousands of values says so here and gets a panel with a search box instead; the
+         * value, the label and everything saved to disk are unchanged, so this is a statement
+         * about how it is edited and nothing else.</p>
+         */
+        private String pickerId;
 
         public Choice(String id, List<String> options, String initial) {
             this(id, () -> options, initial);
@@ -256,6 +266,20 @@ public abstract class Param<T> {
          */
         public boolean labelsItsOwnOptions() {
             return ownLabels;
+        }
+
+        /** The picker for a choice whose values are sounds out of the registry. */
+        public static final String SOUND_PICKER = "sound";
+
+        /** Says this choice is edited by {@code pickerId} rather than by the inline dropdown. */
+        public Choice editedBy(String pickerId) {
+            this.pickerId = pickerId;
+            return this;
+        }
+
+        /** The picker that edits this choice, or null when the inline dropdown does. */
+        public String pickerId() {
+            return pickerId;
         }
 
         /** What one of this choice's values is called on screen. */

@@ -3,6 +3,8 @@ package com.etka.lune.bot.learning;
 import com.etka.lune.Constants;
 import com.etka.lune.platform.BuildFeatures;
 import com.etka.lune.platform.Services;
+import com.etka.lune.util.Lang;
+import com.etka.lune.util.LuneLanguages;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
@@ -16,9 +18,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Random;
+import java.util.Set;
+import java.util.function.BinaryOperator;
 
 /**
  * Local, bounded persistence for policy values and explicit developer feedback.
@@ -65,6 +71,8 @@ public final class LearningStore {
         this.file = file;
         this.readOnly = readOnly;
         this.data = readOnly ? loadBundled() : load(file);
+        // A profile read under old keys is written back under the new ones at the next flush.
+        this.dirty = !readOnly && data.renamedOnLoad;
         this.policy = new TabularPolicy(data.qValues, random);
     }
 
@@ -237,6 +245,9 @@ public final class LearningStore {
             if (outcome.workUnits() > 0) {
                 performance.totalUnits += outcome.workUnits();
                 performance.totalTicks += outcome.elapsedTicks();
+                performance.lastUnits = outcome.workUnits();
+                performance.lastTicks = outcome.elapsedTicks();
+                performance.lastOutcome = data.totalSkillOutcomes;
                 double ticksPerUnit = (double) outcome.elapsedTicks() / outcome.workUnits();
                 if (performance.bestTicksPerUnit <= 0.0
                         || ticksPerUnit < performance.bestTicksPerUnit) {
@@ -365,6 +376,51 @@ public final class LearningStore {
         String state = context == null ? "unknown" : context.key();
         Performance performance = data.performance.get(state);
         return performance == null ? 0L : performance.bestTicks();
+    }
+
+    /**
+     * Everything measured for the rows a scope covers, for the card that owns that scope.
+     *
+     * <p>Read-only, and cheap in the sense that the table is bounded at
+     * {@link #MAX_PERFORMANCE_STATES} rows - but it is still a scan of all of them, so a panel
+     * drawing sixty times a second keeps the answer for a moment rather than asking every frame.</p>
+     */
+    public synchronized SkillStats skillStats(LearningScope scope) {
+        if (scope == null) {
+            return SkillStats.EMPTY;
+        }
+        List<SkillStats.Row> rows = new ArrayList<>();
+        for (Map.Entry<String, SkillPerformance> entry : data.skillPerformance.entrySet()) {
+            LearningContext context = LearningContext.parse(entry.getKey());
+            SkillPerformance performance = entry.getValue();
+            if (performance == null || !scope.matches(context)) {
+                continue;
+            }
+            rows.add(new SkillStats.Row(context, performance.runs, performance.completedRuns,
+                    performance.totalUnits, performance.totalTicks,
+                    performance.bestTicksPerUnit(), performance.lastUnits,
+                    performance.lastTicks, performance.lastOutcome,
+                    leadingTactic(entry.getKey())));
+        }
+        return SkillStats.of(rows);
+    }
+
+    /** The tactic the policy rates highest in a state, or "" where the job never had a choice. */
+    private String leadingTactic(String state) {
+        Map<String, TabularPolicy.Cell> cells = data.qValues.get(state);
+        if (cells == null || cells.size() < 2) {
+            return "";
+        }
+        String leading = "";
+        double best = Double.NEGATIVE_INFINITY;
+        for (Map.Entry<String, TabularPolicy.Cell> entry : cells.entrySet()) {
+            TabularPolicy.Cell cell = entry.getValue();
+            if (cell != null && cell.visits > 0 && cell.value > best) {
+                best = cell.value;
+                leading = entry.getKey();
+            }
+        }
+        return leading;
     }
 
     public synchronized String lastContext() {
@@ -514,7 +570,166 @@ public final class LearningStore {
         if (loaded.recentSessions == null) loaded.recentSessions = new ArrayList<>();
         if (loaded.performance == null) loaded.performance = new LinkedHashMap<>();
         if (loaded.skillPerformance == null) loaded.skillPerformance = new LinkedHashMap<>();
+        renameWordedUnits(loaded);
         return loaded;
+    }
+
+    /** Where the language file names every unit a job can be counted in. */
+    private static final String UNIT_KEYS = "lune.unit.";
+    private static final String UNIT_ENTRY = "unit=";
+    private static final String PREFERENCE_SEPARATOR = "::";
+
+    /**
+     * Rows keyed while the unit was a word rather than an identifier.
+     *
+     * <p>Until a row's unit became {@link LearningScope#unitId(String)}, the phase carried the
+     * progress bar's unit as rendered: {@code unit=blocks} in English, {@code unit=blok} in
+     * Turkish. The same job then had a row per language, and none of them could be reached once
+     * the wording moved. The identifiers are the English words, so a row written in English is
+     * already right. One written under another bundled language's word is renamed here, and where
+     * the identifier's row already exists the two are folded together by the rules
+     * {@code the run harness} merges snapshots with: counts add up, the best pace is
+     * the lower one, and "last time" is the newer of the two. A word Lune has no unit for - a
+     * hunt once named its drop - is left as it is rather than guessed at.</p>
+     */
+    private static void renameWordedUnits(Data loaded) {
+        Map<String, String> words = unitWords();
+        if (words.isEmpty()) {
+            return;
+        }
+        Map<String, SkillPerformance> skills =
+                renamed(loaded.skillPerformance, words, LearningStore::mergeSkill);
+        Map<String, Map<String, TabularPolicy.Cell>> values =
+                renamed(loaded.qValues, words, LearningStore::mergeCells);
+        Map<String, Preference> preferences = new LinkedHashMap<>();
+        for (Map.Entry<String, Preference> entry : loaded.preferences.entrySet()) {
+            String key = entry.getKey();
+            int separator = key == null ? -1 : key.lastIndexOf(PREFERENCE_SEPARATOR);
+            if (separator > 0) {
+                key = renamedKey(key.substring(0, separator), words) + key.substring(separator);
+            }
+            put(preferences, key, entry.getValue(), LearningStore::mergePreference);
+        }
+        String lastContext = renamedKey(loaded.lastContext, words);
+        loaded.renamedOnLoad = !skills.keySet().equals(loaded.skillPerformance.keySet())
+                || !values.keySet().equals(loaded.qValues.keySet())
+                || !preferences.keySet().equals(loaded.preferences.keySet())
+                || !Objects.equals(lastContext, loaded.lastContext);
+        loaded.skillPerformance = skills;
+        loaded.qValues = values;
+        loaded.preferences = preferences;
+        loaded.lastContext = lastContext;
+    }
+
+    /**
+     * Every word a bundled language has for a unit of work, mapped to that unit's identifier.
+     * English first, so an identifier maps to itself before any translation can claim it.
+     */
+    private static Map<String, String> unitWords() {
+        Map<String, String> english = LuneLanguages.load(LuneLanguages.ENGLISH);
+        List<String> keys = english.keySet().stream()
+                .filter(key -> key.startsWith(UNIT_KEYS)).sorted().toList();
+        Set<String> codes = new LinkedHashSet<>();
+        codes.add(LuneLanguages.ENGLISH);
+        codes.add(Lang.selected());
+        codes.addAll(LuneLanguages.available());
+        codes.remove(LuneLanguages.GAME_DEFAULT);
+        Map<String, String> words = new LinkedHashMap<>();
+        for (String code : codes) {
+            Map<String, String> lines = LuneLanguages.ENGLISH.equals(code)
+                    ? english : LuneLanguages.load(code);
+            for (String key : keys) {
+                String word = lines.get(key);
+                if (word != null && !word.isBlank()) {
+                    words.putIfAbsent(word.trim(), LearningScope.unitId(key));
+                }
+            }
+        }
+        return words;
+    }
+
+    /** {@code key} with a worded unit replaced by its identifier, or {@code key} as it was. */
+    static String renamedKey(String key, Map<String, String> words) {
+        LearningContext context = LearningContext.parse(key);
+        if (context == null || !context.phase().contains(UNIT_ENTRY)) {
+            return key;
+        }
+        String[] entries = context.phase().split(";", -1);
+        boolean changed = false;
+        for (int i = 0; i < entries.length; i++) {
+            if (!entries[i].startsWith(UNIT_ENTRY)) {
+                continue;
+            }
+            String id = words.get(entries[i].substring(UNIT_ENTRY.length()));
+            if (id != null && !entries[i].equals(UNIT_ENTRY + id)) {
+                entries[i] = UNIT_ENTRY + id;
+                changed = true;
+            }
+        }
+        return changed
+                ? new LearningContext(context.mission(), context.task(), context.dimension(),
+                        String.join(";", entries)).key()
+                : key;
+    }
+
+    private static <V> Map<String, V> renamed(Map<String, V> rows, Map<String, String> words,
+                                              BinaryOperator<V> merge) {
+        Map<String, V> result = new LinkedHashMap<>();
+        for (Map.Entry<String, V> entry : rows.entrySet()) {
+            put(result, renamedKey(entry.getKey(), words), entry.getValue(), merge);
+        }
+        return result;
+    }
+
+    private static <V> void put(Map<String, V> into, String key, V value, BinaryOperator<V> merge) {
+        V existing = into.get(key);
+        into.put(key, existing == null ? value : value == null ? existing : merge.apply(existing, value));
+    }
+
+    private static SkillPerformance mergeSkill(SkillPerformance into, SkillPerformance from) {
+        into.runs += from.runs;
+        into.completedRuns += from.completedRuns;
+        into.totalUnits += from.totalUnits;
+        into.totalTicks += from.totalTicks;
+        // Zero means "never measured", not "instant"; only a real pace can become the best one.
+        if (from.bestTicksPerUnit > 0.0
+                && (into.bestTicksPerUnit <= 0.0 || from.bestTicksPerUnit < into.bestTicksPerUnit)) {
+            into.bestTicksPerUnit = from.bestTicksPerUnit;
+        }
+        if (from.lastTicks > 0 && (into.lastTicks <= 0 || from.lastOutcome > into.lastOutcome)) {
+            into.lastUnits = from.lastUnits;
+            into.lastTicks = from.lastTicks;
+            into.lastOutcome = from.lastOutcome;
+        }
+        return into;
+    }
+
+    private static Map<String, TabularPolicy.Cell> mergeCells(Map<String, TabularPolicy.Cell> into,
+                                                              Map<String, TabularPolicy.Cell> from) {
+        for (Map.Entry<String, TabularPolicy.Cell> entry : from.entrySet()) {
+            TabularPolicy.Cell added = entry.getValue();
+            if (added == null) {
+                continue;
+            }
+            TabularPolicy.Cell cell = into.computeIfAbsent(entry.getKey(),
+                    ignored -> new TabularPolicy.Cell());
+            int visits = cell.visits + added.visits;
+            // A cell with no visits carries no evidence, so it must not drag the mean toward zero.
+            if (visits > 0) {
+                cell.value = (cell.value * cell.visits + added.value * added.visits) / visits;
+                cell.visits = visits;
+            }
+        }
+        return into;
+    }
+
+    private static Preference mergePreference(Preference into, Preference from) {
+        into.positive += from.positive;
+        into.negative += from.negative;
+        if (from.lastFeedback != null && !from.lastFeedback.isEmpty()) {
+            into.lastFeedback = from.lastFeedback;
+        }
+        return into;
     }
 
     private Performance performance(String state) {
@@ -593,6 +808,8 @@ public final class LearningStore {
         public Map<String, Performance> performance = new LinkedHashMap<>();
         /** Normalised work-rate baselines keyed by skill LearningContext.key(). */
         public Map<String, SkillPerformance> skillPerformance = new LinkedHashMap<>();
+        /** Set while reading when rows were renamed, so the file is written back under the new keys. */
+        public transient boolean renamedOnLoad;
     }
 
     public static final class Performance {
@@ -627,6 +844,16 @@ public final class LearningStore {
         public long totalUnits;
         public long totalTicks;
         public double bestTicksPerUnit;
+        /** The most recent finished episode that produced something, so a card can say "last time". */
+        public long lastUnits;
+        public long lastTicks;
+        /**
+         * Which of the profile's outcomes wrote the two above: the running count of skill
+         * outcomes at the time. Rows are compared on it to find the newest across a whole job. A
+         * clock would do the same, except that a count is exact, survives a wrong system clock
+         * and can be asserted on. Zero on every row written before this was kept.
+         */
+        public long lastOutcome;
 
         public double usualTicksPerUnit() {
             if (totalUnits <= 0 || totalTicks <= 0) {

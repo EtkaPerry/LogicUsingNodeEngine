@@ -6,10 +6,13 @@ import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.MovementHelper;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.phys.Vec3;
+
+import java.util.Locale;
 
 /**
  * Moves a block or two sideways without turning.
@@ -69,7 +72,12 @@ public final class StepTask implements Task {
     /** English on purpose: this is the learner's row key, and is never shown. */
     @Override
     public String learningId() {
-        return Task.learningName("Step " + side.label().toLowerCase() + " " + blocks);
+        return Task.learningName("Step " + side.label().toLowerCase(Locale.ROOT) + " " + blocks);
+    }
+
+    @Override
+    public LearningScope learningScope() {
+        return LearningScope.of(learningId(), "lune.unit.blocks");
     }
 
     @Override
@@ -79,7 +87,7 @@ public final class StepTask implements Task {
 
     @Override
     public TaskProgress progress() {
-        return new TaskProgress(arrived ? blocks : 0, blocks, Lang.get("lune.card.blocks_unit"));
+        return new TaskProgress(arrived ? blocks : 0, blocks, Lang.get("lune.unit.blocks"));
     }
 
     @Override

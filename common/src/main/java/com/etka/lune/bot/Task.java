@@ -1,8 +1,10 @@
 package com.etka.lune.bot;
 
 import com.etka.lune.bot.learning.LearningContext;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.learning.TaskLearning;
 
+import com.etka.lune.compat.Screens;
 import java.util.List;
 import java.util.Map;
 
@@ -64,7 +66,7 @@ public interface Task {
         }
         if (ctx.player.containerMenu != ctx.player.inventoryMenu) {
             ctx.player.closeContainer();
-            ctx.mc.setScreen(null);
+            Screens.open(ctx.mc, null);
         }
         ctx.input.reset();
     }
@@ -121,7 +123,16 @@ public interface Task {
         return false;
     }
 
-    /** Discrete state used for choosing among this task's safe strategy variants. */
+    /**
+     * Discrete state used for choosing among this task's safe strategy variants.
+     *
+     * <p>The unit is the one {@link #learningScope()} names, written as an identifier:
+     * {@code unit=logs} for {@code lune.unit.logs}. Not {@link TaskProgress#unit()}. That is the
+     * progress bar's word in the player's language, and keyed on it the same job wrote
+     * {@code unit=logs} in English and {@code unit=kütük} in Turkish - one row per language, each
+     * unreachable the moment the wording changed. Taking the unit from the scope also makes the
+     * card and the key agree by construction.</p>
+     */
     default LearningContext learningContext(BotContext ctx) {
         String dimension = ctx == null || ctx.level == null
                 ? "unknown"
@@ -129,8 +140,7 @@ public interface Task {
         TaskProgress progress = learningProgress();
         String phase = progress == null
                 ? "job"
-                : "size=" + sizeBucket(progress.target()) + ";unit="
-                        + (progress.unit().isBlank() ? "work" : progress.unit());
+                : "size=" + sizeBucket(progress.target()) + ";unit=" + learningScope().unitId();
         return new LearningContext("skill", learningId(), dimension, phase);
     }
 
@@ -179,6 +189,22 @@ public interface Task {
             return "batch";
         }
         return "large";
+    }
+
+    /**
+     * The rows of the learned profile this task measures into, as far as its parameters can say.
+     *
+     * <p>{@link #learningContext(BotContext)} names the exact row, and only once the bot is in a
+     * world. The editor has no world and still puts on a card what its job has measured, so this
+     * is the half of the key the card fixes by itself. A task that builds its phase from
+     * parameters says so here with the same entries - built by the same helper, so the two
+     * cannot drift apart - and a task whose whole phase is decided at run time gives the skill
+     * alone. Whatever is named here must be what the context writes, or the card reports on rows
+     * its job never touches. The unit is shared by construction: the default context writes this
+     * scope's {@link LearningScope#unitId()}, and the card renders the same key.</p>
+     */
+    default LearningScope learningScope() {
+        return LearningScope.of(learningId());
     }
 
     /**

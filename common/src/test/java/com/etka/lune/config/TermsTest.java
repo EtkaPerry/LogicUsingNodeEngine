@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -53,6 +54,41 @@ class TermsTest {
         for (Terms.Point point : Terms.POINTS) {
             assertFalse(point.label().isBlank());
             assertFalse(point.detail().isBlank());
+        }
+    }
+
+    /**
+     * Every line of the page resolves to words rather than to its own key.
+     *
+     * <p>{@link com.etka.lune.util.Lang} returns the key when nothing has been written for it, so
+     * a typo in one of these turns the sentence somebody is agreeing to into
+     * {@code lune.terms.point.fair.label} - which is still a tick box, still above an Accept
+     * button, and no longer consent to anything. That failure is silent everywhere else.</p>
+     */
+    @Test
+    void everyLineOnThePageIsRealText() {
+        assertNotEquals("lune.terms.title", Terms.title());
+        assertNotEquals("lune.terms.intro", Terms.intro());
+        assertNotEquals("lune.terms.footnote", Terms.footnote());
+        for (Terms.Point point : Terms.POINTS) {
+            assertNotEquals(point.labelKey(), point.label(),
+                    point.labelKey() + " has no line written for it");
+            assertNotEquals(point.detailKey(), point.detail(),
+                    point.detailKey() + " has no line written for it");
+        }
+    }
+
+    /**
+     * The points hold keys, not sentences.
+     *
+     * <p>Which is what lets the page be read in the player's own language, and what stops the
+     * wording being frozen at class-load in whichever language happened to be open first.</p>
+     */
+    @Test
+    void thePointsAreStoredAsKeys() {
+        for (Terms.Point point : Terms.POINTS) {
+            assertTrue(point.labelKey().startsWith("lune.terms."), point.labelKey());
+            assertTrue(point.detailKey().startsWith("lune.terms."), point.detailKey());
         }
     }
 

@@ -5,6 +5,7 @@ import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.knowledge.OreKnowledge;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.path.WaterEscape;
+import com.etka.lune.compat.Hands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.tags.BlockTags;
@@ -213,7 +214,7 @@ public final class BlockBreaker {
         }
         destroying = true;
         destroyingState = state;
-        ctx.player.swing(InteractionHand.MAIN_HAND);
+        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
         ctx.debug.breaking(pos, blockName, "breaking");
         return Progress.WORKING;
     }

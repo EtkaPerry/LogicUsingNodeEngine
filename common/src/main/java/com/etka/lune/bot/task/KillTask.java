@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.compat.Hands;
+import com.etka.lune.compat.Mobs;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
@@ -8,6 +10,7 @@ import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.catalog.ToolCatalog;
 import com.etka.lune.bot.learning.LearningContext;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.util.BlockPlacer;
@@ -41,6 +44,7 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -196,19 +200,29 @@ public final class KillTask implements Task {
     }
 
     @Override
+    public LearningScope learningScope() {
+        return LearningScope.of("combat", "lune.unit.kills", combatPhase());
+    }
+
+    @Override
     public LearningContext learningContext(BotContext ctx) {
+        return new LearningContext("skill", "combat",
+                ctx.level.dimension().identifier().toString(), String.join(";", combatPhase()));
+    }
+
+    /** The situation a fight is keyed on; every part of it is one of the card's parameters. */
+    private String[] combatPhase() {
         String targetKey = targets.stream()
                 .map(type -> BuiltInRegistries.ENTITY_TYPE.getKey(type).toString())
                 .sorted()
                 .limit(4)
                 .collect(Collectors.joining(","));
-        String phase = "targets=" + (targetKey.isBlank() ? "none" : targetKey)
-                + ";radius=" + (radius <= 16 ? "near" : radius <= 48 ? "medium" : "wide")
-                + ";weapon=" + options.weapon().name().toLowerCase()
-                + ";shield=" + options.useShield()
-                + ";enderman=" + options.endermanSafety().name().toLowerCase();
-        return new LearningContext("skill", "combat",
-                ctx.level.dimension().identifier().toString(), phase);
+        return new String[] {
+                "targets=" + (targetKey.isBlank() ? "none" : targetKey),
+                "radius=" + (radius <= 16 ? "near" : radius <= 48 ? "medium" : "wide"),
+                "weapon=" + options.weapon().name().toLowerCase(Locale.ROOT),
+                "shield=" + options.useShield(),
+                "enderman=" + options.endermanSafety().name().toLowerCase(Locale.ROOT)};
     }
 
     @Override
@@ -447,7 +461,7 @@ public final class KillTask implements Task {
             ctx.input.jump = false;
             openingHitDone = true;
             ctx.gameMode.attack(ctx.player, target);
-            ctx.player.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+            Hands.swing(ctx.player, net.minecraft.world.InteractionHand.MAIN_HAND);
 
             if (tactic == Tactic.HIT_AND_RUN && target.isAlive()) {
                 phase = Phase.BACK_OFF;
@@ -908,7 +922,7 @@ public final class KillTask implements Task {
         }
 
         ctx.gameMode.useItem(ctx.player, InteractionHand.MAIN_HAND);
-        ctx.player.swing(InteractionHand.MAIN_HAND);
+        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
         status.set("lune.status.kill.placing_enderman_boat");
         return TaskStatus.RUNNING;
     }
@@ -1074,20 +1088,20 @@ public final class KillTask implements Task {
     }
 
     private static boolean isEnderman(LivingEntity entity) {
-        return entity.getType() == EntityType.ENDERMAN;
+        return entity.getType() == Mobs.ENDERMAN;
     }
 
     private static boolean isRangedThreat(LivingEntity entity) {
-        return entity.getType() == EntityType.SKELETON
-                || entity.getType() == EntityType.STRAY
-                || entity.getType() == EntityType.BOGGED
-                || entity.getType() == EntityType.PILLAGER
-                || entity.getType() == EntityType.BLAZE
-                || entity.getType() == EntityType.GHAST
-                || entity.getType() == EntityType.SHULKER
-                || entity.getType() == EntityType.VEX
-                || entity.getType() == EntityType.GUARDIAN
-                || entity.getType() == EntityType.ELDER_GUARDIAN;
+        return entity.getType() == Mobs.SKELETON
+                || entity.getType() == Mobs.STRAY
+                || entity.getType() == Mobs.BOGGED
+                || entity.getType() == Mobs.PILLAGER
+                || entity.getType() == Mobs.BLAZE
+                || entity.getType() == Mobs.GHAST
+                || entity.getType() == Mobs.SHULKER
+                || entity.getType() == Mobs.VEX
+                || entity.getType() == Mobs.GUARDIAN
+                || entity.getType() == Mobs.ELDER_GUARDIAN;
     }
 
     /**

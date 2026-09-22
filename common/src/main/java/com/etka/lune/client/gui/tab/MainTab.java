@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.tab;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Durations;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotEngine;
@@ -11,6 +12,7 @@ import com.etka.lune.bot.AutoRun;
 import com.etka.lune.bot.task.TaskRunner;
 import com.etka.lune.bot.util.Vision;
 import com.etka.lune.config.BotConfig;
+import com.etka.lune.client.gui.Accessibility;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.LuneTab;
 import com.etka.lune.client.gui.widget.DashboardStatsPanel;
@@ -46,15 +48,10 @@ public class MainTab extends LuneTab {
     private static final int BODY_TOP = DashboardFrame.BODY_TOP;
     private static final int BUTTON_GAP = DashboardFrame.BUTTON_GAP;
     private static final int PANEL_HEADER = 0xD0222D3A;
-    private static final int RUNNING = 0xFF69E391;
-    private static final int PAUSED = 0xFFFFC15C;
-    private static final int IDLE = 0xFF9299A6;
 
     private final Button pauseButton;
     private final Button clearButton;
     private final Button stopButton;
-    /** Kept as a hidden compatibility list for the queue data; the dashboard now shows saved tasks. */
-    private final ListPanel<Task> queueList;
     private final ListPanel<TaskGraph> launchList;
     private final DashboardStatsPanel statisticsPanel;
     private final Button statisticsCurrentButton;
@@ -65,7 +62,6 @@ public class MainTab extends LuneTab {
     private final VerticalSplitter bottomTasksSplitter;
     private final VerticalSplitter bottomSafetyVitalsSplitter;
     private final VerticalSplitter bottomSafetyWorldSplitter;
-    private final VerticalSplitter bottomStatisticsSplitter;
     private BiConsumer<TaskGraph, Boolean> taskEditorOpener = (task, rename) -> {};
     private StatisticsScope statisticsScope = StatisticsScope.CURRENT;
 
@@ -85,7 +81,6 @@ public class MainTab extends LuneTab {
                 .size(92, CONTROL_H).build());
         stopButton = add(Button.builder(Component.literal(Lang.get("lune.gui.main.stop_all")), b -> BotEngine.get().stopAll())
                 .size(76, CONTROL_H).build());
-        queueList = add(new ListPanel<>(0, 0, 10, 10, Task::name, task -> {}));
         launchList = add(new ListPanel<>(0, 0, 10, 10, TaskGraph::describe, task -> {}));
         launchList.setActions(List.of(
                 new ListPanel.RowAction<>(GuiIcons.Icon.PLAY, Lang.get("lune.gui.main.start"), this::launch,
@@ -111,8 +106,6 @@ public class MainTab extends LuneTab {
                 this::resizeBottomSafetyVitals));
         bottomSafetyWorldSplitter = add(new VerticalSplitter(0, 0, 1, 1,
                 this::resizeBottomSafetyWorld));
-        bottomStatisticsSplitter = add(new VerticalSplitter(0, 0, 1, 1,
-                this::resizeBottomStatistics));
     }
 
     /** Connects the dashboard's row actions to the screen's existing task editor. */
@@ -135,9 +128,6 @@ public class MainTab extends LuneTab {
 
         // Saved tasks stay available while a run is active. The current run and queue are visible
         // in Recent Activity and Current Working Node instead of replacing this useful list.
-        queueList.setItems(engine.getQueue());
-        queueList.visible = false;
-        queueList.active = false;
         launchList.setItems(TaskStore.get().all());
         launchList.visible = true;
         launchList.active = true;
@@ -159,7 +149,7 @@ public class MainTab extends LuneTab {
         }
         BotEngine.get().runNow(new TaskRunner(task));
         if (BotConfig.get().closePanelOnRun) {
-            Minecraft.getInstance().setScreen(null);
+            Screens.open(Minecraft.getInstance(), null);
         }
     }
 
@@ -251,8 +241,6 @@ public class MainTab extends LuneTab {
         bottomSafetyVitalsSplitter.active = true;
         bottomSafetyWorldSplitter.visible = true;
         bottomSafetyWorldSplitter.active = true;
-        bottomStatisticsSplitter.visible = true;
-        bottomStatisticsSplitter.active = true;
         placeSplitter(bottomTasksSplitter, frame.tasks(), frame.safetyVitals());
         placeSplitter(bottomSafetyVitalsSplitter, frame.safetyVitals(), frame.safetyWorld());
         placeSplitter(bottomSafetyWorldSplitter, frame.safetyWorld(), frame.statistics());
@@ -304,13 +292,6 @@ public class MainTab extends LuneTab {
         }
     }
 
-    private void resizeBottomStatistics(int dx) {
-        bottomSafetyWorldWidth += dx;
-        if (area.width() > 0) {
-            layout(area);
-        }
-    }
-
     private static void place(Button button, int x, int y, int width) {
         place(button, x, y, width, CONTROL_H);
     }
@@ -349,8 +330,8 @@ public class MainTab extends LuneTab {
         drawSafetyWorldCard(extractor, frame.safetyWorld(), mc);
         drawStatisticsCard(extractor, frame.statistics());
         extractor.textRenderer().accept(frame.left(), frame.hintY(),
-                Component.literal(fit(Lang.get("lune.gui.main.k_pause_resume_shift_k_stop_everything"), frame.width()))
-                        .withColor(LuneScreen.TEXT_DIM));
+                Component.literal(fit(Lang.get("lune.gui.main.c_pause_resume_shift_c_stop_everything"), frame.width()))
+                        .withColor(Accessibility.dim()));
         drawTaskActionTooltip(extractor, mouseX, mouseY);
     }
 
@@ -399,7 +380,7 @@ public class MainTab extends LuneTab {
                                 debug.nextTask.isBlank() ? Lang.get("lune.gui.main.nothing_queued") : debug.nextTask,
                                 LuneScreen.TEXT),
                 new Row(4, Lang.get("lune.gui.main.last"), firstNonBlank(engine.getLastMessage(), Lang.get("lune.gui.main.recent_activity")),
-                        LuneScreen.TEXT_DIM)));
+                        Accessibility.dim())));
     }
 
     private void drawRecentActivityCard(GuiGraphicsExtractor extractor, DashboardFrame.Card card,
@@ -412,8 +393,8 @@ public class MainTab extends LuneTab {
         drawRows(extractor, card, 62, List.of(
                 new Row(1, Lang.get("lune.gui.main.last"), last, LuneScreen.TEXT),
                 new Row(2, Lang.get("lune.gui.main.why_stopped"), reason, engine.getCurrent() != null || engine.getLastMessage().isBlank()
-                        ? LuneScreen.TEXT_DIM : PAUSED),
-                new Row(3, Lang.get("lune.gui.main.event"), event, LuneScreen.TEXT_DIM),
+                        ? Accessibility.dim() : Accessibility.colour(Accessibility.Mark.WARN)),
+                new Row(3, Lang.get("lune.gui.main.event"), event, Accessibility.dim()),
                 new Row(4, Lang.get("lune.gui.main.decision"), firstNonBlank(decision, "-"), LuneScreen.ACCENT)));
     }
 
@@ -422,7 +403,7 @@ public class MainTab extends LuneTab {
         drawPanelHeader(extractor, card, Lang.get("lune.gui.main.current_working_node"));
         if (current == null) {
             drawRows(extractor, card, 62, List.of(
-                    new Row(1, Lang.get("lune.gui.main.node"), Lang.get("lune.gui.main.active_node"), LuneScreen.TEXT_DIM),
+                    new Row(1, Lang.get("lune.gui.main.node"), Lang.get("lune.gui.main.active_node"), Accessibility.dim()),
                     new Row(2, Lang.get("lune.gui.main.queue"), debug.nextTask.isBlank() ? Lang.get("lune.gui.main.nothing_queued") : debug.nextTask,
                             LuneScreen.TEXT)));
             return;
@@ -441,8 +422,8 @@ public class MainTab extends LuneTab {
                         stateColour(engine, current)),
                 new Row(3, Lang.get("lune.gui.main.progress"), progressText, LuneScreen.TEXT),
                 new Row(4, Lang.get("lune.gui.main.path"), debug.pathLength <= 0 ? Lang.get("lune.gui.main.no_route") : debug.pathIndex + " / "
-                        + debug.pathLength, LuneScreen.TEXT_DIM),
-                new Row(5, Lang.get("lune.gui.main.goal"), debug.goal, LuneScreen.TEXT_DIM)));
+                        + debug.pathLength, Accessibility.dim()),
+                new Row(5, Lang.get("lune.gui.main.goal"), debug.goal, Accessibility.dim())));
     }
 
     /** Draws the heading for the persistent task list in the left bottom column. */
@@ -455,7 +436,7 @@ public class MainTab extends LuneTab {
                 : count + (count == 1 ? Lang.get("lune.gui.main.task_waiting") : Lang.get("lune.gui.main.tasks_waiting"));
         if (font.width(Lang.get("lune.gui.main.saved_tasks")) + font.width(subtitle) + 28 <= card.width()) {
             extractor.textRenderer().accept(card.x() + card.width() - 10 - font.width(subtitle),
-                    card.y() + 6, Component.literal(subtitle).withColor(LuneScreen.TEXT_DIM));
+                    card.y() + 6, Component.literal(subtitle).withColor(Accessibility.dim()));
         }
     }
 
@@ -464,8 +445,8 @@ public class MainTab extends LuneTab {
         drawPanelHeader(extractor, card, Lang.get("lune.gui.main.safety_monitor"));
         if (mc.player == null || mc.level == null) {
             drawRows(extractor, card, 64, List.of(
-                    new Row(1, "", Lang.get("lune.gui.main.world"), LuneScreen.TEXT_DIM),
-                    new Row(2, "", Lang.get("lune.gui.main.live_player_safety_data_appear_here"), LuneScreen.TEXT_DIM)));
+                    new Row(1, "", Lang.get("lune.gui.main.world"), Accessibility.dim()),
+                    new Row(2, "", Lang.get("lune.gui.main.live_player_safety_data_appear_here"), Accessibility.dim())));
             return;
         }
 
@@ -476,17 +457,17 @@ public class MainTab extends LuneTab {
                 + formatOne(mc.player.getMaxHealth()), healthColour(mc.player.getHealth(),
                 mc.player.getMaxHealth())));
         rows.add(new Row(priority++, Lang.get("lune.gui.main.hunger"), mc.player.getFoodData().getFoodLevel() + " / 20",
-                mc.player.getFoodData().getFoodLevel() <= 8 ? PAUSED : LuneScreen.TEXT));
+                mc.player.getFoodData().getFoodLevel() <= 8 ? Accessibility.colour(Accessibility.Mark.WARN) : LuneScreen.TEXT));
         if (config.dashboardShowEnemies) {
-            rows.add(new Row(priority++, Lang.get("lune.gui.main.enemies"), visibleEnemies(mc) + Lang.get("lune.gui.main.visible"), PAUSED));
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.enemies"), visibleEnemies(mc) + Lang.get("lune.gui.main.visible"), Accessibility.colour(Accessibility.Mark.WARN)));
         }
         rows.add(new Row(priority++, Lang.get("lune.gui.main.inventory"), occupiedSlots(mc.player) + "/"
                 + mc.player.getInventory().getContainerSize() + Lang.get("lune.gui.main.used"), LuneScreen.TEXT));
         rows.add(new Row(priority++, Lang.get("lune.gui.main.air"), mc.player.getAirSupply() + " / " + mc.player.getMaxAirSupply(),
-                mc.player.getAirSupply() < mc.player.getMaxAirSupply() / 3 ? PAUSED : LuneScreen.TEXT));
+                mc.player.getAirSupply() < mc.player.getMaxAirSupply() / 3 ? Accessibility.colour(Accessibility.Mark.WARN) : LuneScreen.TEXT));
         if (config.dashboardShowSaturation) {
             rows.add(new Row(priority++, Lang.get("lune.gui.main.saturation"), formatOne(mc.player.getFoodData().getSaturationLevel()),
-                    LuneScreen.TEXT_DIM));
+                    Accessibility.dim()));
         }
         if (config.dashboardShowItemConditions) {
             rows.add(new Row(priority++, Lang.get("lune.gui.main.main_hand"), itemCondition(mc.player.getMainHandItem()),
@@ -503,8 +484,8 @@ public class MainTab extends LuneTab {
         drawPanelHeader(extractor, card, Lang.get("lune.gui.main.safety_world"));
         if (mc.player == null || mc.level == null) {
             drawRows(extractor, card, 64, List.of(
-                    new Row(1, "", Lang.get("lune.gui.main.world"), LuneScreen.TEXT_DIM),
-                    new Row(2, "", Lang.get("lune.gui.main.live_world_data_appear_here"), LuneScreen.TEXT_DIM)));
+                    new Row(1, "", Lang.get("lune.gui.main.world"), Accessibility.dim()),
+                    new Row(2, "", Lang.get("lune.gui.main.live_world_data_appear_here"), Accessibility.dim())));
             return;
         }
 
@@ -519,27 +500,27 @@ public class MainTab extends LuneTab {
         rows.add(new Row(priority++, Lang.get("lune.gui.main.dimension"), mc.level.dimension().identifier().toString(),
                 LuneScreen.TEXT));
         if (config.dashboardShowSeed) {
-            rows.add(new Row(priority++, Lang.get("lune.gui.main.seed"), seed, LuneScreen.TEXT_DIM));
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.seed"), seed, Accessibility.dim()));
         }
         if (config.dashboardShowFacing) {
             rows.add(new Row(priority++, Lang.get("lune.gui.main.facing"), Mth.floor(Mth.wrapDegrees(mc.player.getYRot())) + "°",
                     LuneScreen.TEXT));
         }
         if (config.dashboardShowLight) {
-            rows.add(new Row(priority++, Lang.get("lune.gui.main.light"), lightLevel(mc), LuneScreen.TEXT_DIM));
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.light"), lightLevel(mc), Accessibility.dim()));
         }
         if (config.dashboardShowEnvironment) {
             String environment = environmentKey(mc.player);
             rows.add(new Row(priority++, Lang.get("lune.gui.main.state"), Lang.get(environment),
-                    environment.equals("lune.gui.main.safe") ? LuneScreen.TEXT_DIM : PAUSED));
+                    environment.equals("lune.gui.main.safe") ? Accessibility.dim() : Accessibility.colour(Accessibility.Mark.WARN)));
         }
         if (config.dashboardShowExperience) {
             rows.add(new Row(priority++, Lang.get("lune.gui.main.xp"), experience(mc.player), LuneScreen.TEXT));
         }
         if (config.dashboardShowEffects) {
-            rows.add(new Row(priority++, Lang.get("lune.gui.main.effects"), activeEffects(mc.player), LuneScreen.TEXT_DIM));
+            rows.add(new Row(priority++, Lang.get("lune.gui.main.effects"), activeEffects(mc.player), Accessibility.dim()));
         }
-        rows.add(new Row(priority, Lang.get("lune.gui.main.input"), Lang.get("lune.gui.main.live_player_world"), LuneScreen.TEXT_DIM));
+        rows.add(new Row(priority, Lang.get("lune.gui.main.input"), Lang.get("lune.gui.main.live_player_world"), Accessibility.dim()));
         drawRows(extractor, card, 64, rows);
     }
 
@@ -591,15 +572,15 @@ public class MainTab extends LuneTab {
 
         lines.add(DashboardStatsPanel.Line.section(Lang.get("lune.gui.main.overview")));
         statLine(lines, Lang.get("lune.gui.main.worked_time"), formatDuration(statistics.workedTicks), LuneScreen.TEXT);
-        statLine(lines, Lang.get("lune.gui.main.runs"), number(statistics.counter("runs")), LuneScreen.TEXT_DIM);
+        statLine(lines, Lang.get("lune.gui.main.runs"), number(statistics.counter("runs")), Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.tasks_finished"), number(statistics.tasksCompleted), LuneScreen.TEXT);
         statLine(lines, Lang.get("lune.gui.main.tasks_failed"), number(statistics.tasksFailed),
-                statistics.tasksFailed == 0 ? LuneScreen.TEXT_DIM : PAUSED);
+                statistics.tasksFailed == 0 ? Accessibility.Mark.NEUTRAL : Accessibility.Mark.WARN);
         statLine(lines, Lang.get("lune.gui.main.success_rate"), percent(statistics.tasksCompleted, attempted),
-                attempted == 0 ? LuneScreen.TEXT_DIM : statistics.tasksFailed == 0 ? RUNNING : PAUSED);
+                attempted == 0 ? Accessibility.Mark.NEUTRAL : statistics.tasksFailed == 0 ? Accessibility.Mark.GOOD : Accessibility.Mark.WARN);
         statLine(lines, Lang.get("lune.gui.main.average_task"), perUnit(statistics.workedTicks, attempted), LuneScreen.TEXT);
         statLine(lines, Lang.get("lune.gui.main.longest_task"), formatDuration(statistics.peak("task_ticks")),
-                LuneScreen.TEXT_DIM);
+                Accessibility.dim());
 
         lines.add(DashboardStatsPanel.Line.section(Lang.get("lune.gui.main.work")));
         statLine(lines, Lang.get("lune.gui.main.blocks_broken"), number(statistics.blocksBroken), LuneScreen.ACCENT);
@@ -620,54 +601,55 @@ public class MainTab extends LuneTab {
         statLine(lines, Lang.get("lune.gui.main.swum"), distance(statistics, "swim_cm"), LuneScreen.TEXT);
         statLine(lines, Lang.get("lune.gui.main.climbed"), distance(statistics, "climb_cm"), LuneScreen.TEXT);
         statLine(lines, Lang.get("lune.gui.main.descended"), distance(statistics, "descend_cm"), LuneScreen.TEXT);
-        statLine(lines, Lang.get("lune.gui.main.jumps"), number(statistics.counter("jumps")), LuneScreen.TEXT_DIM);
+        statLine(lines, Lang.get("lune.gui.main.jumps"), number(statistics.counter("jumps")), Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.travel_speed"), perMinute(statistics.counter("distance_cm") / 100L,
-                statistics.workedTicks, Lang.get("lune.gui.main.blocks_per_minute")), LuneScreen.TEXT_DIM);
+                statistics.workedTicks, Lang.get("lune.gui.main.blocks_per_minute")), Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.farthest_out"), blocks(statistics.peak("home_cm") / 100.0D),
-                LuneScreen.TEXT_DIM);
+                Accessibility.dim());
 
         lines.add(DashboardStatsPanel.Line.section(Lang.get("lune.gui.main.navigation")));
         statLine(lines, Lang.get("lune.gui.main.route_searches"), number(searches), LuneScreen.TEXT);
         statLine(lines, Lang.get("lune.gui.main.dead_ends"), number(failedSearches),
-                failedSearches == 0 ? LuneScreen.TEXT_DIM : PAUSED);
+                failedSearches == 0 ? Accessibility.Mark.NEUTRAL : Accessibility.Mark.WARN);
         statLine(lines, Lang.get("lune.gui.main.routes_found"), percent(searches - failedSearches, searches),
-                searches == 0 ? LuneScreen.TEXT_DIM : failedSearches == 0 ? RUNNING : LuneScreen.TEXT);
-        statLine(lines, Lang.get("lune.gui.main.search_time"), millis(statistics.counter("path_micros")), LuneScreen.TEXT_DIM);
+                searches == 0 ? Accessibility.Mark.NEUTRAL : failedSearches == 0 ? Accessibility.Mark.GOOD : Accessibility.Mark.WARN);
+        statLine(lines, Lang.get("lune.gui.main.search_time"), millis(statistics.counter("path_micros")), Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.average_search"),
                 millis(divide(statistics.counter("path_micros"), searches)), LuneScreen.TEXT);
         statLine(lines, Lang.get("lune.gui.main.average_nodes"),
-                number(divide(statistics.counter("path_nodes"), searches)), LuneScreen.TEXT_DIM);
+                number(divide(statistics.counter("path_nodes"), searches)), Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.longest_route"), Lang.get("lune.gui.main.route_nodes", number(statistics.peak("path_length"))),
-                LuneScreen.TEXT_DIM);
+                Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.stalls_recovered"), number(stalls),
-                stalls == 0 ? LuneScreen.TEXT_DIM : PAUSED);
+                stalls == 0 ? Accessibility.Mark.NEUTRAL : Accessibility.Mark.WARN);
 
         lines.add(DashboardStatsPanel.Line.section(Lang.get("lune.gui.main.survival")));
-        statLine(lines, Lang.get("lune.gui.main.deaths"), number(deaths), deaths == 0 ? LuneScreen.TEXT_DIM : PAUSED);
+        statLine(lines, Lang.get("lune.gui.main.deaths"), number(deaths),
+                deaths == 0 ? Accessibility.Mark.NEUTRAL : Accessibility.Mark.BAD);
         statLine(lines, Lang.get("lune.gui.main.health_lost"), health(statistics.counter("health_lost_tenths")),
                 LuneScreen.TEXT);
         statLine(lines, Lang.get("lune.gui.main.biggest_hit"), health(statistics.peak("hit_tenths")), LuneScreen.TEXT);
         statLine(lines, Lang.get("lune.gui.main.close_calls"), number(closeCalls),
-                closeCalls == 0 ? LuneScreen.TEXT_DIM : PAUSED);
+                closeCalls == 0 ? Accessibility.Mark.NEUTRAL : Accessibility.Mark.WARN);
         statLine(lines, Lang.get("lune.gui.main.mobs_killed"), number(statistics.counter("mobs_killed")), LuneScreen.TEXT);
         statLine(lines, Lang.get("lune.gui.main.escapes"), number(dangers),
-                dangers == 0 ? LuneScreen.TEXT_DIM : LuneScreen.TEXT);
+                dangers == 0 ? Accessibility.dim() : LuneScreen.TEXT);
         statLine(lines, Lang.get("lune.gui.main.from_monsters"), number(statistics.counter("danger_monster")),
-                LuneScreen.TEXT_DIM);
-        statLine(lines, Lang.get("lune.gui.main.from_lava"), number(statistics.counter("danger_lava")), LuneScreen.TEXT_DIM);
+                Accessibility.dim());
+        statLine(lines, Lang.get("lune.gui.main.from_lava"), number(statistics.counter("danger_lava")), Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.from_drowning"), number(statistics.counter("danger_drowning")),
-                LuneScreen.TEXT_DIM);
-        statLine(lines, Lang.get("lune.gui.main.from_falls"), number(statistics.counter("danger_fall")), LuneScreen.TEXT_DIM);
+                Accessibility.dim());
+        statLine(lines, Lang.get("lune.gui.main.from_falls"), number(statistics.counter("danger_fall")), Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.from_fireballs"), number(statistics.counter("danger_fireball")),
-                LuneScreen.TEXT_DIM);
+                Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.heal_up"), number(statistics.counter("danger_health")),
-                LuneScreen.TEXT_DIM);
+                Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.fireballs_batted"), number(statistics.counter("fireballs_batted")),
                 LuneScreen.TEXT);
 
         if (BotConfig.get().dashboardShowLearning) {
             lines.add(DashboardStatsPanel.Line.section(Lang.get("lune.gui.main.learning")));
-            statLine(lines, Lang.get("lune.gui.main.profile"), engine.getLearning().displaySummary(), LuneScreen.TEXT_DIM);
+            statLine(lines, Lang.get("lune.gui.main.profile"), engine.getLearning().displaySummary(), Accessibility.dim());
         }
         return lines;
     }
@@ -675,6 +657,19 @@ public class MainTab extends LuneTab {
     private static void statLine(List<DashboardStatsPanel.Line> lines, String label, String value,
                                  int colour) {
         lines.add(DashboardStatsPanel.Line.metric(label, value, colour));
+    }
+
+    /**
+     * A row whose colour is the whole message, so it also gets a mark when one is wanted.
+     *
+     * <p>"0" in grey and "3" in amber differ by more than the digit; "100%" in green and "92%" in
+     * amber differ by nothing else at all. These are the rows where reading the colour is reading
+     * the row, so they are the ones that carry a glyph in colour-blind-safe mode.</p>
+     */
+    private static void statLine(List<DashboardStatsPanel.Line> lines, String label, String value,
+                                 Accessibility.Mark mark) {
+        lines.add(DashboardStatsPanel.Line.metric(label, Accessibility.marked(value, mark),
+                Accessibility.colour(mark)));
     }
 
     private static String number(long value) {
@@ -738,7 +733,7 @@ public class MainTab extends LuneTab {
                         .withColor(row.colour()));
             } else {
                 text.accept(textX, y, Component.literal(fit(row.label(), availableLabelWidth))
-                        .withColor(LuneScreen.TEXT_DIM));
+                        .withColor(Accessibility.dim()));
                 text.accept(textX + availableLabelWidth, y,
                         Component.literal(fit(row.value(), card.width() - availableLabelWidth - 20))
                                 .withColor(row.colour()));
@@ -748,34 +743,15 @@ public class MainTab extends LuneTab {
         }
     }
 
-    private static void drawMetricRows(GuiGraphicsExtractor extractor, DashboardFrame.Card card,
-                                       int x, int y, int width, List<Row> rows, int visibleLines) {
-        int labelWidth = Math.min(68, Math.max(42, width / 3));
-        int valueWidth = Math.max(1, width - labelWidth);
-        int availableLines = Math.min(card.rows(), visibleLines);
-        int drawn = 0;
-        for (Row row : rows.stream().sorted(java.util.Comparator.comparingInt(Row::priority)).toList()) {
-            if (drawn >= availableLines) {
-                break;
-            }
-            extractor.textRenderer().accept(x, y,
-                    Component.literal(row.label()).withColor(LuneScreen.TEXT_DIM));
-            extractor.textRenderer().accept(x + labelWidth, y,
-                    Component.literal(fit(row.value(), valueWidth)).withColor(row.colour()));
-            y += card.lineHeight();
-            drawn++;
-        }
-    }
-
     private static int stateColour(BotEngine engine, Task current) {
         if (current == null) {
-            return IDLE;
+            return Accessibility.colour(Accessibility.Mark.NEUTRAL);
         }
-        return engine.isPaused() ? PAUSED : RUNNING;
+        return engine.isPaused() ? Accessibility.colour(Accessibility.Mark.WARN) : Accessibility.colour(Accessibility.Mark.GOOD);
     }
 
     private static int healthColour(float health, float maxHealth) {
-        return health <= maxHealth / 3.0F ? PAUSED : LuneScreen.TEXT;
+        return health <= maxHealth / 3.0F ? Accessibility.colour(Accessibility.Mark.WARN) : LuneScreen.TEXT;
     }
 
     private static String firstNonBlank(String first, String fallback) {

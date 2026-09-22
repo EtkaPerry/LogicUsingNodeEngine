@@ -2,11 +2,14 @@ package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.compat.Hands;
+import com.etka.lune.compat.Mobs;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.WhileMonitor;
 import com.etka.lune.bot.learning.LearningContext;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.learning.TaskLearning;
 import com.etka.lune.bot.catalog.BlockCatalog;
 import com.etka.lune.bot.path.Goals;
@@ -17,6 +20,7 @@ import com.etka.lune.bot.util.BoatHelper;
 import com.etka.lune.bot.util.BucketHelper;
 import com.etka.lune.bot.util.FireballDeflect;
 import com.etka.lune.bot.util.InventoryHelper;
+import com.etka.lune.mods.WornItems;
 import com.etka.lune.bot.path.WaterEscape;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
@@ -26,7 +30,6 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Enemy;
@@ -50,10 +53,13 @@ import net.minecraft.world.phys.Vec3;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 
 /** A While circuit that acts only while it actively handles immediate danger. */
 public final class SelfPreservationTask implements WhileMonitor {
 
+    /** The skill every recovery episode measures under, whatever threat it answered. */
+    private static final String RECOVERY_SKILL = "self-preservation";
     private static final int MAX_ESCAPE_ATTEMPTS = 3;
     /** Do not let a blocked retreat spend an entire creeper fuse in the route executor. */
     private static final int MAX_MONSTER_RECOVERY_TICKS = 20;
@@ -87,6 +93,26 @@ public final class SelfPreservationTask implements WhileMonitor {
     private static final int MAX_ENDERMAN_SHELTER_TICKS = 30;
     /** Do not let a ranged mob pin the player in a completed pillar forever. */
     private static final int RANGED_STRAFE_SWITCH_TICKS = 24;
+    /**
+     * Ticks of an emergency spent on one block before the escape direction is rotated.
+     * <p>
+     * Under half a second, because a Creeper's fuse is thirty ticks and the bot has to have given
+     * up on a blocked direction and be moving down another one well inside that.
+     */
+    private static final int EMERGENCY_STALL_TICKS = 8;
+    /**
+     * Ticks the shield may be held against an archer without the gap closing.
+     *
+     * <p>Twenty seconds, which no ordinary approach needs: the walk in is a few seconds even across
+     * an arena. It exists for the archer that cannot be reached at all - across a ravine, on a
+     * ledge - where holding is safe, achieves nothing, and starves the card that was actually
+     * given the job.</p>
+     */
+    private static final int MAX_SHIELD_HOLD_TICKS = 400;
+    /** How much nearer counts as closing rather than drifting. */
+    private static final double CLOSING_PROGRESS = 0.5;
+    /** How much of a step has to lie along an axis before that key is worth pressing. */
+    private static final double STEP_COMPONENT = 0.35;
 
     /**
      * How far the player must already have dropped before the clutch takes the controls, in
@@ -281,6 +307,15 @@ public final class SelfPreservationTask implements WhileMonitor {
     private boolean rangedStrafeLeft;
     /** Number of blocks in the current emergency wall; keep the cover bounded and useful. */
     private int coverHeight;
+    /** Where the bot was standing when an escape direction was last asked for, and for how long. */
+    private BlockPos emergencyFeet;
+    private int emergencyStallTicks;
+    private int emergencyTurnBias;
+    /** How long the shield has been up without the archer getting any nearer, and how near it got. */
+    private int shieldHoldTicks;
+    private double shieldHoldClosest = Double.MAX_VALUE;
+    /** Set once the hold has had its twenty seconds; the ordinary evade takes the rest. */
+    private boolean shieldHoldSpent;
     /** Once a Creeper escape has reached the pillar, do not re-equip blocks every tick. */
     private boolean pillarSecured;
     /** Endermen are handled under a two-block roof; they must never enter the normal melee branch. */
@@ -380,6 +415,12 @@ public final class SelfPreservationTask implements WhileMonitor {
     public boolean automaticSkillLearning() {
         // This monitor is normally infinite. Each actual threat owns a bounded child episode.
         return false;
+    }
+
+    /** What the card measures is its recoveries, which are keyed on the threat they answered. */
+    @Override
+    public LearningScope learningScope() {
+        return LearningScope.of(RECOVERY_SKILL);
     }
 
     @Override
@@ -626,7 +667,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         } else if (episodeThreat == Threat.FIREBALL && fireball != null) {
             LivingEntity shooter = FireballDeflect.shooter(fireball);
             boolean canDeflect = FireballDeflect.swingPossible(ctx.player);
-            boolean canDodge = safeEmergencyDirection(ctx, sidestep(ctx, fireball)) != null;
+            boolean canDodge = safeEmergencyDirection(ctx, sidestep(ctx, fireball), false) != null;
             actions = SelfPreservationPolicy.fireballActions(canDeflect, canDodge);
             phase = "threat=fireball;shooter=" + (shooter == null
                             ? "unknown" : shooter.getType().getDescriptionId())
@@ -647,10 +688,10 @@ public final class SelfPreservationTask implements WhileMonitor {
                     + ";boat=" + boat + ";boat-time=" + boatTime;
         } else {
             actions = List.of(SelfPreservationPolicy.DIRECT);
-            phase = "threat=" + episodeThreat.name().toLowerCase()
+            phase = "threat=" + episodeThreat.name().toLowerCase(Locale.ROOT)
                     + ";health=" + SelfPreservationPolicy.healthBucket(ctx.player.getHealth());
         }
-        LearningContext context = new LearningContext("skill", "self-preservation",
+        LearningContext context = new LearningContext("skill", RECOVERY_SKILL,
                 ctx.level.dimension().identifier().toString(), phase);
         return new RecoveryEpisode(episodeThreat, context, actions);
     }
@@ -681,12 +722,18 @@ public final class SelfPreservationTask implements WhileMonitor {
 
         @Override
         public String name() {
-            return "Self Preservation " + episodeThreat.name().toLowerCase();
+            return "Self Preservation " + episodeThreat.name().toLowerCase(Locale.ROOT);
         }
 
         @Override
         public LearningContext learningContext(BotContext ctx) {
             return context;
+        }
+
+        /** The row was chosen when the episode was, so the scope is exactly that row. */
+        @Override
+        public LearningScope learningScope() {
+            return LearningScope.of(context.task(), null, context.phase().split(";"));
         }
 
         @Override
@@ -883,7 +930,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             fireballDodgeLeft = !fireballDodgeLeft;
         }
         ctx.input.reset();
-        Vec3 step = safeEmergencyDirection(ctx, sidestep(ctx, fireball));
+        Vec3 step = safeEmergencyDirection(ctx, sidestep(ctx, fireball), false);
         if (step == null) {
             status.set("lune.status.self_preservation.nowhere_to_step_from_fireball");
             return TaskStatus.RUNNING;
@@ -952,6 +999,16 @@ public final class SelfPreservationTask implements WhileMonitor {
         }
         if (SelfPreservationPolicy.COUNTERATTACK_FIRST.equals(recoveryStrategy)) {
             return emergencyMeleeCombat(ctx);
+        }
+        // An archer cannot be outrun, and this is where the bot kept trying. The first answer to a
+        // monster is a walking retreat, which is right for anything that has to reach you and
+        // exactly wrong for something that does not: three measured deaths tonight were spent
+        // jogging across open ground with "escaping Skeleton - 24 blocks left" on the screen,
+        // taking an arrow every twenty ticks for the whole of it. The defence below knows what to
+        // do instead - hold the shield and close if there is one, put a wall up or bring the sword
+        // if there is not - and all of it beats a footrace against something that shoots.
+        if (isRangedThreat(hostile) && !floatsOutOfReach(ctx, hostile)) {
+            return emergencyMonsterDefense(ctx, Lang.get("lune.reason.cannot_outrun_arrows"));
         }
         // GotoTask can remain RUNNING while its partial route shuffles at a waypoint. That is
         // acceptable for ordinary travel, but a creeper fuse is not a route-search budget: after a
@@ -1049,7 +1106,7 @@ public final class SelfPreservationTask implements WhileMonitor {
 
         // Placement aims at the support face, so movement is applied after it and wins for this
         // tick. Jumping lets the player clear a one-block lip instead of standing in the fuse.
-        Vec3 safeAway = safeEmergencyDirection(ctx, away);
+        Vec3 safeAway = safeEmergencyDirection(ctx, away, true);
         if (safeAway == null) {
             return emergencyMonsterDefense(ctx, Lang.get("lune.reason.no_safe_emergency_step"));
         }
@@ -1226,6 +1283,14 @@ public final class SelfPreservationTask implements WhileMonitor {
             return emergencyMeleeCombat(ctx);
         }
 
+        // A shield is cover you are already carrying. Building a second one competes with the
+        // evasion for the same ticks and loses to it - see canShieldAgainstArrows.
+        if (canShieldAgainstArrows(ctx)) {
+            coverBase = null;
+            coverTicks = 0;
+            return advanceBehindShield(ctx);
+        }
+
         Block material = emergencyMaterial(ctx);
         EmergencyBuild cover = buildCover(ctx, material);
         if (cover == EmergencyBuild.BUILDING) {
@@ -1299,7 +1364,7 @@ public final class SelfPreservationTask implements WhileMonitor {
                 && ctx.player.getAttackStrengthScale(0.0F) >= 1.0F
                 && ctx.look.isLookingAt(ctx.player, hostile.getEyePosition(), 15.0F)) {
             ctx.gameMode.attack(ctx.player, hostile);
-            ctx.player.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+            Hands.swing(ctx.player, net.minecraft.world.InteractionHand.MAIN_HAND);
             status.set("lune.status.self_preservation.fighting_from_emergency_cover", hostile.getName().getString());
             return TaskStatus.RUNNING;
         }
@@ -1366,7 +1431,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         boolean attacked = ctx.player.getAttackStrengthScale(0.0F) >= 1.0F;
         if (attacked) {
             ctx.gameMode.attack(ctx.player, hostile);
-            ctx.player.swing(InteractionHand.MAIN_HAND);
+            Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
         }
 
         // Backpedalling is the safest default, but it can be aimed directly into the wall of a
@@ -1383,7 +1448,7 @@ public final class SelfPreservationTask implements WhileMonitor {
                     ? new Vec3(-desired.z, 0.0, desired.x)
                     : new Vec3(desired.z, 0.0, -desired.x);
         }
-        Vec3 safeDirection = safeEmergencyDirection(ctx, desired);
+        Vec3 safeDirection = safeEmergencyDirection(ctx, desired, true);
         if (safeDirection != null) {
             ctx.look.urgent();
         ctx.look.lookAt(ctx.player, ctx.player.position().add(safeDirection));
@@ -1422,7 +1487,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             away = away.normalize();
         }
 
-        Vec3 safeAway = safeEmergencyDirection(ctx, away);
+        Vec3 safeAway = safeEmergencyDirection(ctx, away, true);
         if (safeAway == null) {
             return emergencyCreeperFallback(ctx, reason);
         }
@@ -1474,7 +1539,7 @@ public final class SelfPreservationTask implements WhileMonitor {
                 && ctx.player.getAttackStrengthScale(0.0F) >= 1.0F;
         if (attacked) {
             ctx.gameMode.attack(ctx.player, hostile);
-            ctx.player.swing(InteractionHand.MAIN_HAND);
+            Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
         }
 
         Block material = emergencyMaterial(ctx);
@@ -1512,7 +1577,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         } else {
             away = away.normalize();
         }
-        Vec3 safeAway = safeEmergencyDirection(ctx, away);
+        Vec3 safeAway = safeEmergencyDirection(ctx, away, true);
         if (safeAway == null) {
             ctx.input.reset();
             status.set("lune.status.self_preservation.holding_safe_ground_while_evading", hostile.getName().getString());
@@ -1528,7 +1593,186 @@ public final class SelfPreservationTask implements WhileMonitor {
         return TaskStatus.RUNNING;
     }
 
+    /**
+     * Puts the carried shield between the bot and an archer.
+     *
+     * <h2>Why this is the safety card's business</h2>
+     *
+     * <p>The Hunt and Kill cards raise a shield of their own while they are the ones swinging
+     * ({@code KillTask.raiseShieldIfUseful}), but the moment a Skeleton gets dangerous enough for
+     * the Self Preservation card to take the controls, that handling stops and nothing replaces it.
+     * A measured run with a shield in the off hand and an iron sword in the main hand died at 69
+     * seconds to two Skeletons without raising it once: 1400 ticks in which the only keys ever
+     * pressed were movement keys. Blocking is not another card's job being smuggled in here - it is
+     * this card doing the one it has, with the equipment the player already gave the bot.</p>
+     *
+     * <h2>What it does not do</h2>
+     *
+     * <p>It does not equip a shield, craft one, or move one into the off hand: a bot sent out
+     * without a shield evades exactly as it did before. It does not raise one against something a
+     * shield cannot answer - a Creeper's blast is not blocked by it, and the Ghast branch wants the
+     * hand free to bat the fireball back.</p>
+     *
+     * @param faceThreat when the bot is not going anywhere, so the head can be aimed at the shooter
+     * @return whether the shield is up, which the caller must not then cancel with a sprint
+     */
+    /**
+     * Whether the shield in the off hand is an answer to what is currently shooting.
+     *
+     * <p>Also what decides that a wall is not needed. Building one and stepping out of the firing
+     * lane are two plans that undo each other, and the emergency re-chose between them every tick:
+     * one tick placing a block, the next sprinting off the spot it was placing from, then back -
+     * the measured death went from 13 health to 0 through four states that each lasted one to four
+     * ticks and none of which ever finished. A raised shield already stops the arrows, so when
+     * there is one there is nothing for the wall to add and nothing left to argue with.</p>
+     */
+    private boolean canShieldAgainstArrows(BotContext ctx) {
+        return !shieldHoldSpent
+                && hostile != null && isRangedThreat(hostile) && !(hostile instanceof Creeper)
+                && !floatsOutOfReach(ctx, hostile)
+                && (ctx.player.getItemBySlot(EquipmentSlot.OFFHAND).is(Items.SHIELD)
+                        || InventoryHelper.anyMatch(ctx.player, stack -> stack.is(Items.SHIELD)));
+    }
+
+    /**
+     * Faces the archer from behind the shield and walks it down.
+     *
+     * <h2>Why facing is the whole thing</h2>
+     *
+     * <p>A shield only stops what comes at the front of it, so where the head is pointed <em>is</em>
+     * the defence. The first attempt at this raised the shield inside the existing strafe, which
+     * aims the head along whatever direction it is moving - and the two states then took turns: one
+     * tick looking at the Skeleton, the next looking where it was stepping, back and forth at up to
+     * sixty degrees a tick. The journal reads yaw -88, -153, -187, -219, -234, -241: a bot spinning
+     * on the spot with a raised shield facing everywhere except at the arrows, taking one every
+     * twenty ticks until it died. Blocking without facing is not blocking.</p>
+     *
+     * <h2>And why it walks in rather than away</h2>
+     *
+     * <p>Backing off keeps the range open, which is the Skeleton's whole advantage: it shoots
+     * forever and the bot arrives at the edge of the arena with no health left. Behind a raised
+     * shield the walk is free, so it closes, and swings when the target is in reach - a shield does
+     * not stop the sword, and a Skeleton that is never hit keeps shooting until one of them runs
+     * out of health. That is also what a person does with a shield and a sword.</p>
+     */
+    private TaskStatus advanceBehindShield(BotContext ctx) {
+        stopRecovery(ctx);
+        String name = hostile.getName().getString();
+        boolean up = holdShieldAgainstArrows(ctx, true);
+        if (!up) {
+            // The swap into the off hand lands next tick. Stand still behind nothing for one tick
+            // rather than charging an archer with the shield still in the pack.
+            ctx.input.reset();
+            status.set("lune.status.self_preservation.holding_shield_against", name);
+            return TaskStatus.RUNNING;
+        }
+
+        double distance = ctx.player.distanceTo(hostile);
+        if (distance <= EMERGENCY_ATTACK_REACH) {
+            shieldHoldTicks = 0;
+            shieldHoldClosest = distance;
+            ctx.input.reset();
+            if (ctx.player.getAttackStrengthScale(0.0F) >= 1.0F
+                    && ctx.look.isLookingAt(ctx.player, hostile.getEyePosition(), 15.0F)) {
+                ctx.gameMode.attack(ctx.player, hostile);
+                Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+                status.set("lune.status.self_preservation.fighting_from_emergency_cover", name);
+                return TaskStatus.RUNNING;
+            }
+            status.set("lune.status.self_preservation.holding_shield_against", name);
+            return TaskStatus.RUNNING;
+        }
+
+        // Closing counts as progress; anything else is on the clock. A shield that stops the arrows
+        // and never ends the fight is not a defence, it is a pause - and the job underneath gets
+        // none of those ticks. After this the ordinary evade takes over for the rest of the
+        // episode, which at least keeps moving.
+        if (distance < shieldHoldClosest - CLOSING_PROGRESS) {
+            shieldHoldClosest = distance;
+            shieldHoldTicks = 0;
+        } else if (++shieldHoldTicks > MAX_SHIELD_HOLD_TICKS) {
+            shieldHoldSpent = true;
+            return evadeRangedThreat(ctx);
+        }
+
+        Vec3 toward = hostile.position().subtract(ctx.player.position());
+        toward = new Vec3(toward.x, 0.0, toward.z);
+        if (toward.lengthSqr() < 1.0E-4) {
+            ctx.input.reset();
+            status.set("lune.status.self_preservation.holding_shield_against", name);
+            return TaskStatus.RUNNING;
+        }
+        toward = toward.normalize();
+        Vec3 safeDirection = safeEmergencyDirection(ctx, toward, true);
+        if (safeDirection == null) {
+            ctx.input.reset();
+            status.set("lune.status.self_preservation.holding_shield_against", name);
+            return TaskStatus.RUNNING;
+        }
+
+        // Walk where the feet are allowed to go, not where the head is pointed.
+        //
+        // This used to press forward, which moves along the head - and the head is on the archer,
+        // so a detour could not be walked without turning the shield away from the arrows. The
+        // answer was to stand still whenever the safe direction was more than about forty-five
+        // degrees off the straight line, and that deadlocked against the escape-stall rotation:
+        // standing still for eight ticks rotates the preference order, a rotated direction is by
+        // construction not straight at the archer, so it was refused, so the bot went on standing
+        // still. One measured run held this position for 456 seconds - 76% of it - on open ground,
+        // at full health, with no movement key pressed at all, while the task underneath cycled
+        // uselessly. Strafe keys separate the two: the shield keeps facing the archer while the
+        // feet take whatever opening the terrain offers.
+        Vec3 facing = Vec3.directionFromRotation(0.0F, ctx.player.getYRot());
+        facing = new Vec3(facing.x, 0.0, facing.z);
+        facing = facing.lengthSqr() < 1.0E-4 ? toward : facing.normalize();
+        Vec3 leftward = new Vec3(facing.z, 0.0, -facing.x);
+        double ahead = safeDirection.dot(facing);
+        double across = safeDirection.dot(leftward);
+        ctx.input.forward = ahead > STEP_COMPONENT;
+        ctx.input.backward = ahead < -STEP_COMPONENT;
+        ctx.input.left = across > STEP_COMPONENT;
+        ctx.input.right = across < -STEP_COMPONENT;
+        // Sprinting cancels the block.
+        ctx.input.sprint = false;
+        ctx.input.jump = needsEmergencyJump(ctx, safeDirection);
+        status.set("lune.status.self_preservation.holding_shield_against", name);
+        return TaskStatus.RUNNING;
+    }
+
+    private boolean holdShieldAgainstArrows(BotContext ctx, boolean faceThreat) {
+        if (!canShieldAgainstArrows(ctx)) {
+            return false;
+        }
+        // Carrying a shield and holding one are not the same thing, and only the Kill and Hunt
+        // cards ever moved one into the off hand. A task whose only combat card is this one -
+        // Cov Self Preservation is exactly that - met two Skeletons with the shield in its pack and
+        // died at 104 seconds without it ever leaving the pack. Taking it out is the same handoff
+        // this card already does for a carried weapon a few branches down, for the same reason.
+        if (!ctx.player.getItemBySlot(EquipmentSlot.OFFHAND).is(Items.SHIELD)) {
+            InventoryHelper.equipOffhand(ctx, stack -> stack.is(Items.SHIELD));
+            // The swap lands in the inventory this tick and is in hand on the next one; blocking
+            // has not started yet, so the caller must not be told it is behind a shield.
+            return false;
+        }
+        if (faceThreat) {
+            ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
+            ctx.look.urgent();
+            ctx.look.lookAt(ctx.player, hostile.getEyePosition());
+        }
+        if (!ctx.player.isUsingItem()) {
+            ctx.gameMode.useItem(ctx.player, InteractionHand.OFF_HAND);
+        }
+        return true;
+    }
+
     private TaskStatus evadeRangedThreat(BotContext ctx) {
+        // Every route into evading an archer goes through here, and a carried shield changes the
+        // answer for all of them: face it and walk it down rather than zig-zag in the open. Kept at
+        // this door rather than at each caller so no later branch can reintroduce a strafe that
+        // turns the shield away from the arrows.
+        if (canShieldAgainstArrows(ctx)) {
+            return advanceBehindShield(ctx);
+        }
         stopRecovery(ctx);
         if (++rangedStrafeTicks >= RANGED_STRAFE_SWITCH_TICKS) {
             rangedStrafeTicks = 0;
@@ -1560,7 +1804,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             // Create space while the sword recovers instead of standing in melee range.
             desired = toHostile.scale(-1.0).add(strafe).normalize();
         }
-        Vec3 safeDirection = safeEmergencyDirection(ctx, desired);
+        Vec3 safeDirection = safeEmergencyDirection(ctx, desired, true);
         if (safeDirection == null) {
             ctx.input.reset();
             status.set("lune.status.self_preservation.holding_safe_ground_while_evading", hostile.getName().getString());
@@ -1644,6 +1888,15 @@ public final class SelfPreservationTask implements WhileMonitor {
         if (material == null) {
             return EmergencyBuild.UNAVAILABLE;
         }
+        // Jumping needs somewhere to jump into, which is the same rule PillarUpTask states for the
+        // ordinary climb - and here it is not merely futile but fatal. A Creeper found the bot
+        // inside its own prospecting staircase: it jumped into the tunnel roof, placed a block at
+        // its feet anyway, and finished the run on `dmg=inWall`, suffocating at full health. The
+        // block two above the feet is where the head goes; if something is already there, this is
+        // not an escape.
+        if (!MovementHelper.isPassable(ctx.level, ctx.player.blockPosition().above(2))) {
+            return EmergencyBuild.UNAVAILABLE;
+        }
         if (pillarBlock != null && !BlockPlacer.isReplaceable(ctx, pillarBlock)) {
             return EmergencyBuild.SECURED;
         }
@@ -1701,7 +1954,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             // A failed roof is deterministic here. Move only along a visibly safe direction and
             // keep the camera below the Enderman instead of falling into the normal attack path.
             Vec3 away = awayFrom(ctx, hostile);
-            Vec3 safeAway = safeEmergencyDirection(ctx, away);
+            Vec3 safeAway = safeEmergencyDirection(ctx, away, true);
             if (safeAway != null) {
                 ctx.look.lookAt(ctx.player, ctx.player.position().add(safeAway.scale(0.75)));
                 ctx.input.forward = true;
@@ -1806,7 +2059,34 @@ public final class SelfPreservationTask implements WhileMonitor {
     }
 
     /** Return a horizontal direction whose next local step is visibly standable. */
-    private static Vec3 safeEmergencyDirection(BotContext ctx, Vec3 desired) {
+    /**
+     * A horizontal escape direction that has somewhere to land, preferring the one asked for.
+     *
+     * <h2>Why it also counts ticks</h2>
+     *
+     * <p>Every candidate here is judged by what is under the next block, and a direction can pass
+     * that test and still be a wall the bot walks into: a tree trunk, a ledge it cannot climb, the
+     * corner it is already wedged in. The check is deterministic, so the same wrong answer comes
+     * back every tick for as long as the danger lasts - and a run measured against a Creeper spent
+     * 67 ticks holding forward and sprint at one block position, "retreating", until the Creeper
+     * caught up and took 16 of its 20 health. It did it again nine hundred ticks later.</p>
+     *
+     * <p>So the feet are remembered between calls. When they have not changed for
+     * {@link #EMERGENCY_STALL_TICKS} the preference order is rotated and a different direction
+     * wins - which is the same rule the rest of the bot already follows, that being stuck is never
+     * an acceptable resting state. Anything that does move resets it, so an escape that is working
+     * is never second-guessed.</p>
+     *
+     * <p>Standing still on purpose is not being stuck, and telling them apart is the caller's job:
+     * {@code walking} is false for the branches that hold their ground. Batting a fireball back
+     * means holding position for as long as the shot takes to arrive, and counting those ticks as a
+     * stall rotated the dodge away from the sidestep it had chosen - in the run that found this,
+     * the bot took nine fireballs and caught fire in an arena where the same code had previously
+     * taken none.</p>
+     *
+     * @param walking whether the caller will press forward along whatever comes back
+     */
+    private Vec3 safeEmergencyDirection(BotContext ctx, Vec3 desired, boolean walking) {
         if (!ctx.player.onGround() || ctx.player.isInWater() || ctx.player.isInLava()) {
             return null;
         }
@@ -1818,7 +2098,16 @@ public final class SelfPreservationTask implements WhileMonitor {
         double[] turns = {0.0, Math.PI / 4.0, -Math.PI / 4.0, Math.PI / 2.0,
                 -Math.PI / 2.0, 3.0 * Math.PI / 4.0, -3.0 * Math.PI / 4.0, Math.PI};
         BlockPos feet = ctx.player.blockPosition();
-        for (double turn : turns) {
+        if (!walking || !feet.equals(emergencyFeet)) {
+            emergencyFeet = feet.immutable();
+            emergencyStallTicks = 0;
+            emergencyTurnBias = 0;
+        } else if (++emergencyStallTicks >= EMERGENCY_STALL_TICKS) {
+            emergencyStallTicks = 0;
+            emergencyTurnBias++;
+        }
+        for (int offset = 0; offset < turns.length; offset++) {
+            double turn = turns[Math.floorMod(offset + emergencyTurnBias, turns.length)];
             Vec3 direction = new Vec3(Math.cos(baseAngle + turn), 0.0,
                     Math.sin(baseAngle + turn));
             int dx = direction.x > 0.25 ? 1 : direction.x < -0.25 ? -1 : 0;
@@ -1868,6 +2157,14 @@ public final class SelfPreservationTask implements WhileMonitor {
         if (entity == null) {
             return false;
         }
+        // A Drowned is only a thrower when it is holding the trident, which about one in sixteen
+        // are. Asking the hand rather than the species keeps the other fifteen on the melee
+        // branch, where they belong. A measured run died to one: 41 ticks of trident damage with
+        // the shield in its off hand and the archer branch never reached, because "drowned" was
+        // not on this list and could not have been - the species is not the question.
+        if (entity.getMainHandItem().is(net.minecraft.world.item.Items.TRIDENT)) {
+            return true;
+        }
         String id = entity.getType().getDescriptionId();
         return id.endsWith(".skeleton") || id.endsWith(".stray") || id.endsWith(".bogged")
                 || id.endsWith(".pillager") || id.endsWith(".blaze") || id.endsWith(".ghast")
@@ -1876,7 +2173,7 @@ public final class SelfPreservationTask implements WhileMonitor {
     }
 
     private static boolean isEnderman(LivingEntity entity) {
-        return entity != null && entity.getType() == EntityType.ENDERMAN;
+        return entity != null && entity.getType() == Mobs.ENDERMAN;
     }
 
     private LivingEntity nearestThreat(BotContext ctx) {
@@ -2113,7 +2410,8 @@ public final class SelfPreservationTask implements WhileMonitor {
     }
 
     private static boolean wearingElytra(Player player) {
-        return player.getItemBySlot(EquipmentSlot.CHEST).is(Items.ELYTRA);
+        // The chest slot, or a Curios or Trinkets back slot: it flies the same from either.
+        return WornItems.isWearing(player, Items.ELYTRA);
     }
 
     private static boolean hasWaterBucket(Player player) {
@@ -2970,6 +3268,9 @@ public final class SelfPreservationTask implements WhileMonitor {
         monsterEscapes = 0;
         trackedHostileId = -1;
         monsterRecoveryTicks = 0;
+        shieldHoldTicks = 0;
+        shieldHoldClosest = Double.MAX_VALUE;
+        shieldHoldSpent = false;
         rememberedHostile = null;
         lastHostileSeenTick = Integer.MIN_VALUE;
         safeTicks = 0;

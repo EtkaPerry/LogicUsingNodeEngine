@@ -14,16 +14,16 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Writes the waypoint list from inside a routine: save where the bot is standing, move a saved
+ * Writes the waypoint list from inside a task: save where the bot is standing, move a saved
  * place to where it is standing now, or forget one.
  * <p>
  * Waypoints were something only a person at the screen could create, which made them useless for
- * the thing a bot is actually for. A routine that walks out to find a village, or digs down to a
+ * the thing a bot is actually for. A task that walks out to find a village, or digs down to a
  * vein, or is about to cross an ocean, knows the one moment worth remembering - and it is not a
  * moment anybody is sitting there to catch.
  * <p>
  * Saving without a name is allowed, and picks one: see {@link WaypointNames}. Refusing would make
- * the commonest case - a routine that has no opinion about what to call this hole in the ground -
+ * the commonest case - a task that has no opinion about what to call this hole in the ground -
  * the one that fails.
  * <p>
  * One tick, like a condition: it either wrote something or it says why it could not.
@@ -115,7 +115,7 @@ public final class SaveWaypointTask implements Task {
                 String chosen = named ? name : WaypointNames.suggest(store.names());
                 store.captureHere(chosen);
                 // The store declines to write when no world scope is active, and says so in the
-                // log rather than to the routine. Reading it back is how this card knows.
+                // log rather than to the task. Reading it back is how this card knows.
                 yield store.byName(chosen)
                         .map(saved -> {
                             status.set("lune.status.save_waypoint.saved", saved.describe(), (named ? "" : Lang.get("lune.status.save_waypoint.random_name")));

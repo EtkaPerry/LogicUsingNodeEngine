@@ -2,11 +2,15 @@ package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.compat.Hands;
+import com.etka.lune.compat.Mobs;
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.learning.LearningContext;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.catalog.ToolCatalog;
 import com.etka.lune.bot.knowledge.BiomeScout;
 import com.etka.lune.bot.memory.CraftingTableMemory;
@@ -51,6 +55,7 @@ import net.minecraft.tags.FluidTags;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -2656,12 +2661,12 @@ public final class SpeedrunTask implements Task {
          * - eating one is poison - and tropical fish are not food at all.
          */
         private static final Set<EntityType<?>> OVERWORLD_FOOD_ANIMALS = Set.of(
-                EntityType.COW, EntityType.PIG, EntityType.SHEEP, EntityType.CHICKEN,
-                EntityType.RABBIT, EntityType.SALMON, EntityType.COD);
+                Mobs.COW, Mobs.PIG, Mobs.SHEEP, Mobs.CHICKEN,
+                Mobs.RABBIT, Mobs.SALMON, Mobs.COD);
         /** The same list without the swimming half, used whenever anything on land is in sight. */
         private static final Set<EntityType<?>> LAND_FOOD_ANIMALS = Set.of(
-                EntityType.COW, EntityType.PIG, EntityType.SHEEP, EntityType.CHICKEN,
-                EntityType.RABBIT);
+                Mobs.COW, Mobs.PIG, Mobs.SHEEP, Mobs.CHICKEN,
+                Mobs.RABBIT);
 
         private final int wanted;
         private final boolean opportunistic;
@@ -3091,7 +3096,7 @@ public final class SpeedrunTask implements Task {
 
         private void publishFoodDebug(BotContext ctx) {
             int maxRoams = FoodSearchPolicy.maxSourceRoams(emergencySourceSearch);
-            ctx.debug.intent = "food policy: " + state.name().toLowerCase()
+            ctx.debug.intent = "food policy: " + state.name().toLowerCase(Locale.ROOT)
                     + (ctx.level.dimension() == Level.NETHER
                     ? " (Nether fallback may hunt visible hoglins)"
                     : " (Overworld prefers farm, village and shipwreck food)");
@@ -3195,7 +3200,7 @@ public final class SpeedrunTask implements Task {
                 return null;
             }
             Set<EntityType<?>> targets = ctx.level.dimension() == Level.NETHER
-                    ? Set.of(EntityType.HOGLIN)
+                    ? Set.of(Mobs.HOGLIN)
                     : overworldTargets(ctx);
             if (targets.isEmpty()) {
                 // Nothing here worth stopping for.
@@ -4238,7 +4243,7 @@ public final class SpeedrunTask implements Task {
         private static void closeMenu(BotContext ctx) {
             if (ctx.player.containerMenu != ctx.player.inventoryMenu) {
                 ctx.player.closeContainer();
-                ctx.mc.setScreen(null);
+                Screens.open(ctx.mc, null);
             }
         }
 
@@ -4339,6 +4344,9 @@ public final class SpeedrunTask implements Task {
      */
     private static final class LavaCastPortalTask implements Task {
 
+        /** The one situation a cast is keyed on: it always builds the full fourteen-block frame. */
+        private static final String LAVA_CAST_PHASE = "frame=complete-fourteen";
+
         /** A pool noticed earlier in the run, so this does not start its search from nothing. */
         private final BlockPos rememberedLava;
 
@@ -4392,9 +4400,14 @@ public final class SpeedrunTask implements Task {
         }
 
         @Override
+        public LearningScope learningScope() {
+            return LearningScope.of("lava-cast-portal", "lune.unit.frame_blocks", LAVA_CAST_PHASE);
+        }
+
+        @Override
         public LearningContext learningContext(BotContext ctx) {
             return new LearningContext("skill", "lava-cast-portal",
-                    ctx.level.dimension().identifier().toString(), "frame=complete-fourteen");
+                    ctx.level.dimension().identifier().toString(), LAVA_CAST_PHASE);
         }
 
         @Override
@@ -4432,7 +4445,7 @@ public final class SpeedrunTask implements Task {
 
         @Override
         public TaskStatus onTick(BotContext ctx) {
-            ctx.debug.intent = "portal phase: " + state.name().toLowerCase();
+            ctx.debug.intent = "portal phase: " + state.name().toLowerCase(Locale.ROOT);
             ctx.debug.memory = "water source " + position(waterSource)
                     + ", lava source " + position(lavaSource)
                     + ", base " + position(base);
@@ -4779,7 +4792,7 @@ public final class SpeedrunTask implements Task {
             if (ctx.look.isLookingAt(ctx.player, hit, 15.0F)) {
                 ctx.gameMode.useItemOn(ctx.player, InteractionHand.MAIN_HAND,
                         new BlockHitResult(hit, Direction.UP, support, false));
-                ctx.player.swing(InteractionHand.MAIN_HAND);
+                Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
             }
             status.set("lune.status.speedrun.lighting_portal");
             return TaskStatus.RUNNING;

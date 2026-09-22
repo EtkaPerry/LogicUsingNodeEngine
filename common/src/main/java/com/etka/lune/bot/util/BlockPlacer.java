@@ -1,5 +1,6 @@
 package com.etka.lune.bot.util;
 
+import com.etka.lune.compat.Hands;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.path.MovementHelper;
@@ -121,7 +122,7 @@ public final class BlockPlacer {
                 return false;
             }
             BlockState state = blockItem.getBlock().defaultBlockState();
-            return state.blocksMotion() && !state.isAir();
+            return MovementHelper.blocksMotion(state) && !state.isAir();
         });
         if (slot < 0) {
             return null;
@@ -210,7 +211,7 @@ public final class BlockPlacer {
 
         ctx.gameMode.useItemOn(ctx.player, InteractionHand.MAIN_HAND,
                 new BlockHitResult(hit, face, support, false));
-        ctx.player.swing(InteractionHand.MAIN_HAND);
+        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
         if (ctx.level.getBlockState(pos).is(block)) {
             ctx.debug.blocksPlaced++;
             ctx.debug.placement(pos, blockName, "placed");

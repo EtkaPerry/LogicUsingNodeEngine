@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The smelting dropdown asks the game what its options are called.
  *
- * <p>Those four options name real items, and Minecraft already ships their names in every language
+ * <p>Every option names a real item, and Minecraft already ships their names in every language
  * it supports. A second copy in Lune's own file is a second thing to translate, a second thing to
  * get wrong, and - for a player running a language nobody has translated Lune into - a dropdown
  * reading "Raw Iron" above a furnace that says "Rohes Eisen".</p>
@@ -47,7 +47,7 @@ class SmeltOptionNamesTest {
             assertFalse(Lang.has(key), key + " should have been removed in favour of the item name");
         }
 
-        assertEquals(List.of("Cobblestone", "Raw Copper", "Raw Gold", "Raw Iron"),
+        assertEquals(List.of("Ancient Debris", "Cobblestone", "Raw Copper", "Raw Gold", "Raw Iron"),
                 input.options().stream().map(input::label).sorted().toList());
     }
 

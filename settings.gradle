@@ -23,7 +23,52 @@ plugins {
 // Must match the folder name (see https://youtrack.jetbrains.com/issue/IDEA-317606)
 rootProject.name = 'lune'
 includeBuild('build-logic')
+
+// ---------------------------------------------------------------------------
+// Minecraft target.
+//
+// One source tree builds for several Minecraft versions. Everything that depends on the version -
+// NeoForm, Fabric API, NeoForge, Forge and the range the jars declare - lives in
+// gradle/versions/<mc>.properties, chosen with -Pmc=<mc> and defaulting to the mc line in
+// gradle.properties. Every line of that file becomes a project property on every module, so the
+// convention scripts read minecraft_version, neoforge_version and the rest exactly as if they were
+// still in gradle.properties. A -P on the command line still wins over the file, which is the
+// precedence Gradle has anyway.
+//
+// Adding a Minecraft version is one new file under gradle/versions; the release build offers
+// whatever it finds there.
+// ---------------------------------------------------------------------------
+def mc = providers.gradleProperty('mc').orNull
+if (!mc) {
+    throw new GradleException('No Minecraft target: set mc=<version> in gradle.properties or pass -Pmc=<version>.')
+}
+def targetFile = new File(rootDir, "gradle/versions/${mc}.properties")
+if (!targetFile.isFile()) {
+    def known = new File(rootDir, 'gradle/versions')
+            .listFiles({ File f -> f.name.endsWith('.properties') } as FileFilter)
+            .collect { it.name - '.properties' }
+            .sort()
+    // PowerShell splits a bare -Pmc=26.3 at the dot and Gradle receives mc=26; the quoted form or
+    // --project-prop survives it. Bash and cmd pass either spelling through untouched.
+    def hint = mc.contains('.') ? ''
+            : " (PowerShell? write \"-Pmc=${mc}.x\" with the quotes, or --project-prop mc=${mc}.x)"
+    throw new GradleException("No toolchain for Minecraft ${mc}: expected ${targetFile}. Known targets: ${known}${hint}")
+}
+def target = new Properties()
+targetFile.withInputStream { target.load(it) }
+gradle.beforeProject { project ->
+    target.each { key, value ->
+        if (!project.hasProperty(key as String)) {
+            project.ext.set(key as String, value)
+        }
+    }
+}
+
 include('common')
 include('fabric')
-include('forge')
 include('neoforge')
+// Forge lags a Minecraft release by weeks. An empty forge_version in the target file means there is
+// no build for it yet, and the :forge module is simply not part of that target.
+if (target.getProperty('forge_version')) {
+    include('forge')
+}

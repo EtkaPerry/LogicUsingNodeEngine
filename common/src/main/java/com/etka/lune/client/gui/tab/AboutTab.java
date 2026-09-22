@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.tab;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.Links;
 import com.etka.lune.client.gui.LuneScreen;
@@ -8,6 +9,7 @@ import com.etka.lune.client.gui.TermsScreen;
 import com.etka.lune.config.Terms;
 import com.etka.lune.platform.BuildInfo;
 import com.etka.lune.platform.Services;
+import java.net.URI;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
@@ -94,12 +96,12 @@ public class AboutTab extends LuneTab {
      */
     private void openTerms() {
         Minecraft mc = Minecraft.getInstance();
-        mc.setScreen(new TermsScreen(mc.screen, null));
+        Screens.open(mc, new TermsScreen(Screens.current(mc), null));
     }
 
     /** Vanilla's own link confirmation: it shows the address, and returns here either way. */
     private static Button.OnPress openLink(String url) {
-        return button -> ConfirmLinkScreen.confirmLinkNow(Minecraft.getInstance().screen, url);
+        return button -> ConfirmLinkScreen.confirmLinkNow(Screens.current(Minecraft.getInstance()), URI.create(url));
     }
 
     @Override

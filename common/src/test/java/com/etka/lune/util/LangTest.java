@@ -149,6 +149,11 @@ class LangTest {
             // Section headers are grouped by their name and drawn through a lookup on it.
             return source.contains("\"lune.gui.section.\"");
         }
+        if (key.startsWith("lune.cheat.")
+                && (key.endsWith(".name") || key.endsWith(".about"))) {
+            // One pair of lines per cheat, reached through Cheats.Mode rather than by name.
+            return source.contains("\"lune.cheat.\" + id()");
+        }
         if (key.startsWith("lune.training.")) {
             return source.contains("\"lune.training.\" + id");
         }

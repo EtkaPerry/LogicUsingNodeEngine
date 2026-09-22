@@ -5,7 +5,7 @@ import com.etka.lune.bot.input.BotInput;
 import com.etka.lune.bot.input.LookController;
 import com.etka.lune.bot.learning.LearningSession;
 import com.etka.lune.bot.learning.LearningStore;
-import com.etka.lune.bot.util.OmniscientAccess;
+import com.etka.lune.bot.util.Cheats;
 import com.etka.lune.config.BotConfig;
 import net.minecraft.core.BlockPos;
 import net.minecraft.client.Minecraft;
@@ -73,13 +73,13 @@ public final class BotContext {
         player.sendSystemMessage(Component.literal(Lang.get("lune.gui.bot_context.lune", message)));
     }
 
-    /** Effective omniscient mining setting, including the current world's authority boundary. */
+    /** Effective omniscient mining cheat, including the current world's authority boundary. */
     public boolean omniscientMining() {
-        return config.omniscientMining && OmniscientAccess.isAllowed(mc);
+        return Cheats.isActive(Cheats.Mode.MINING, mc);
     }
 
-    /** Effective omniscient harvesting setting, including the current world's authority boundary. */
+    /** Effective omniscient harvesting cheat, including the current world's authority boundary. */
     public boolean omniscientHarvesting() {
-        return config.omniscientHarvesting && OmniscientAccess.isAllowed(mc);
+        return Cheats.isActive(Cheats.Mode.HARVEST, mc);
     }
 }

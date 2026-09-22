@@ -110,7 +110,7 @@ class SafetyOptionParamTest {
 
     @Test
     void theSuggestedCardCarriesEveryParameterTheCommandDeclares() {
-        // TaskSafety is what the editor and the mascot offer when a routine has no guard. A tactic
+        // TaskSafety is what the editor and the mascot offer when a task has no guard. A tactic
         // missing from that map is a switch the offered card cannot be configured with.
         Set<String> declared = card().params().stream().map(Param::id)
                 .collect(Collectors.toCollection(LinkedHashSet::new));

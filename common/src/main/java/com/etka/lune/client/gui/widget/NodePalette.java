@@ -65,6 +65,33 @@ public final class NodePalette {
     private static final Pins COLOUR_BLIND = new Pins(
             0xFFF2F2F2, 0xFF56B4E9, 0xFFD55E00, 0xFFF0E442, 0xFFCC79A7, 0xFF8A6B7D, 0xFFE69F00);
 
+    /** A sticky note or a group frame: the paper, its edge and the ink on it. */
+    public record Paper(int border, int body, int text) {}
+
+    /**
+     * The colours a note or a frame can be.
+     *
+     * <p>Fixed rather than themed, unlike a card. A card's colour says what kind of card it is, so
+     * it follows the theme that decides how the whole board looks; a note's colour is the player's
+     * own filing system - red for the bit that keeps breaking, green for the bit that works - and a
+     * theme change that reshuffled their filing would be a theme change that lost information.</p>
+     */
+    private static final Paper[] PAPERS = {
+            new Paper(0xFFE0A83C, 0xE03A2E14, 0xFFF5DFA6),
+            new Paper(0xFFE07A7A, 0xE03A1C1C, 0xFFF5C4C4),
+            new Paper(0xFF6FBF87, 0xE0173322, 0xFFBFE8CD),
+            new Paper(0xFF57A8E0, 0xE0142C3E, 0xFFBEDDF5),
+            new Paper(0xFFA07BD8, 0xE0231A3A, 0xFFD5C6F2),
+            new Paper(0xFF8FA0B4, 0xE01E2229, 0xFFD3DAE3)};
+
+    public static Paper paper(int index) {
+        return PAPERS[Math.floorMod(index, PAPERS.length)];
+    }
+
+    public static int paperCount() {
+        return PAPERS.length;
+    }
+
     private NodePalette() {}
 
     public static Pins pins() {

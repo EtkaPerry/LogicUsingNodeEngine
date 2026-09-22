@@ -8,7 +8,7 @@ import java.util.random.RandomGenerator;
 /**
  * Names for places nobody named.
  *
- * <p>A routine that saves where it is standing usually has nothing useful to call it - the whole
+ * <p>A task that saves where it is standing usually has nothing useful to call it - the whole
  * point of the card is that it runs while nobody is watching. Refusing to save without a name makes
  * the common case the one that fails; a place called {@code Papatya} is a place you can find in the
  * list, walk to, and rename if you care.</p>

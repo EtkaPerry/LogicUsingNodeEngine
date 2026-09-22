@@ -9,9 +9,9 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * The course: ten routines with one card missing from each, ordered easiest first.
+ * The course: ten tasks with one card missing from each, ordered easiest first.
  *
- * <p>Every puzzle is a routine that <em>runs</em> once it is fixed, in the shapes the seeded jobs in
+ * <p>Every puzzle is a task that <em>runs</em> once it is fixed, in the shapes the seeded jobs in
  * {@link com.etka.lune.task.DefaultTasks} already use. That is deliberate. A puzzle invented purely
  * to have an answer teaches a shape nobody will meet again; these teach the four things a player has
  * to know before their own graphs stop surprising them - where power comes from, that order is
@@ -20,14 +20,14 @@ import java.util.Set;
  * <h2>Steps 3 and 4 are the two that cost real runs</h2>
  *
  * <p>Step 3 is the failure the benchmark notes record: two of six wood-benchmark runs ended
- * with the player dead, one drowned and one beaten to nothing, because the routine had no Self
+ * with the player dead, one drowned and one beaten to nothing, because the task had no Self
  * Preservation card. Step 4 is the other one: four of fifteen measured runs froze for five to eight
  * minutes because a loop had no card in it that moved the bot. Both are taught here as puzzles
  * rather than as paragraphs because both look completely fine on the canvas until they are not.</p>
  */
 public final class TrainingCourse {
 
-    /** Editor spacing, matched to the seeded jobs so a solved puzzle looks like a shipped routine. */
+    /** Editor spacing, matched to the seeded jobs so a solved puzzle looks like a shipped task. */
     private static final int STEP_X = 208;
     private static final int STEP_Y = 132;
 
@@ -50,7 +50,7 @@ public final class TrainingCourse {
             new TrainingLesson("tool", "gettool",
                     List.of("select_item", "loot"),
                     // Position is the lesson. A Get Tools wired in after Mine is a graph the audit
-                    // has no complaint about and a routine that still swings bare hands at stone.
+                    // has no complaint about and a task that still swings bare hands at stone.
                     "mine",
                     TrainingCourse::missingTool),
 
@@ -92,7 +92,7 @@ public final class TrainingCourse {
         return LESSONS.stream().filter(lesson -> lesson.id().equals(id)).findFirst();
     }
 
-    // --- the broken routines -------------------------------------------------
+    // --- the broken tasks -------------------------------------------------
 
     /** Chop and Loot, correctly wired to each other, with no power source above them. */
     private static TaskGraph missingStart() {
@@ -108,7 +108,7 @@ public final class TrainingCourse {
         return task;
     }
 
-    /** START straight into Mine, with auto-tool off so the missing pickaxe is the routine's problem. */
+    /** START straight into Mine, with auto-tool off so the missing pickaxe is the task's problem. */
     private static TaskGraph missingTool() {
         TaskGraph task = new TaskGraph();
         TaskNode mine = node("mine", "mine", Map.of(
@@ -120,7 +120,7 @@ public final class TrainingCourse {
         mine.onSuccess = loot.id;
         mine.onFailure = loot.id;
         // Closed off deliberately. With Loot's Success pin left open, a card merely dropped on the
-        // canvas is picked up by list-order fallthrough and joins the routine at the end - which is
+        // canvas is picked up by list-order fallthrough and joins the task at the end - which is
         // the one place this particular card is no use, and the puzzle would have accepted it.
         loot.onSuccess = end.id;
         loot.onFailure = end.id;

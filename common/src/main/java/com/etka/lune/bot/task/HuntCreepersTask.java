@@ -1,6 +1,6 @@
 package com.etka.lune.bot.task;
 
-import net.minecraft.world.entity.EntityType;
+import com.etka.lune.compat.Mobs;
 import net.minecraft.world.item.Items;
 
 /** Dedicated Creeper hunter; the general Kill command remains available separately. */
@@ -13,7 +13,7 @@ public final class HuntCreepersTask extends HuntMobTask {
     }
 
     public HuntCreepersTask(int wanted, KillOptions options) {
-        super(EntityType.CREEPER, Items.GUNPOWDER, "Creepers", wanted,
+        super(Mobs.CREEPER, Items.GUNPOWDER, "Creepers", wanted,
                 options);
     }
 }

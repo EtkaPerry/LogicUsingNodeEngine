@@ -8,6 +8,7 @@ import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.learning.LearningContext;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.learning.LearningStore;
 import com.etka.lune.bot.learning.SkillOutcome;
 import com.etka.lune.bot.memory.BlockMemory;
@@ -100,6 +101,14 @@ public final class MineTask implements Task {
     private static final int TREE_DROP_ATTEMPT_DEADLINE = 80;
     /** Let a decision remain visible instead of replacing it with another scan one tick later. */
     private static final int DECISION_TICKS = 12;
+    /**
+     * How far below a log footing may be and still leave it within arm's length.
+     * <p>
+     * Eyes sit 1.6 above the feet and a log's centre is half a block up, so standing one column
+     * across puts the two 4.03 apart vertically at five blocks down - the last whole block that
+     * still fits inside {@link #REACH} with the same margin {@link #reachableMiningPosition} uses.
+     */
+    private static final int TREE_STANCE_DROP = 5;
     /** How far the bot must move before a look around counts as a look from somewhere new. */
     private static final int RESCAN_DISTANCE = 3;
     /**
@@ -124,6 +133,22 @@ public final class MineTask implements Task {
     private static final int REACH_CHECKS_PER_TICK = 12;
     /** Two seconds between "is there somewhere better now" checks during a long approach. */
     private static final int RECONSIDER_INTERVAL_TICKS = 40;
+    /**
+     * How much lower a log of the committed tree has to be before the walk is re-aimed at it.
+     * <p>
+     * Two blocks is inside the same armful and would only trade one reachable log for another;
+     * three is the difference between a log that can be cut from the ground and one that cannot.
+     */
+    private static final int TREE_RETARGET_DROP = 3;
+    /**
+     * How much walk has to be left before the log this walk is aimed at may be swapped.
+     * <p>
+     * {@link MinePolicy} refuses to second-guess a short approach at all, and for the same reason:
+     * a swap costs a fresh scan and a fresh route, and near the tree there is nothing left to save.
+     * Without this the swap fired two blocks from the trunk - the bot walked further, swung less,
+     * and a fifty-log run came back with forty-four.
+     */
+    private static final double TREE_RETARGET_MIN_WALK = 8.0;
     /**
      * Ticks of standing on the same block, mining nothing, before the step gives up and hands back.
      * <p>
@@ -316,8 +341,17 @@ public final class MineTask implements Task {
     private boolean caveEntryTried;
     /** Ticks until the committed target is checked against whatever has since loaded. */
     private int reconsiderTicks = RECONSIDER_INTERVAL_TICKS;
+    /** The same interval for the committed tree's own "is the trunk in view yet" question. */
+    private int treeRetargetTicks = RECONSIDER_INTERVAL_TICKS;
     private BlockPos scanCentre;
     private int scanTicks;
+    /**
+     * Logs already judged for footing, keyed like the index on the settled scan anchor.
+     * <p>
+     * The sweep asks the same question of the same candidates every tick until the bot moves, and
+     * the answer only changes when the ground does. Cleared wherever the scan itself restarts.
+     */
+    private final java.util.Map<Long, Boolean> footing = new java.util.HashMap<>();
     private final HeadScanner headScanner = new HeadScanner();
     /** A narrow-then-wide local scan used to finish branches of the already committed tree. */
     private final HeadScanner treeScanner = new HeadScanner(HeadScanner.Style.GLANCE);
@@ -404,14 +438,32 @@ public final class MineTask implements Task {
         return !finishCurrentTree;
     }
 
+    /**
+     * Chop Wood measures per tree, under {@code tree-chopping}, and never opens a block-mining
+     * episode - see {@link #automaticSkillLearning()}. Its rows are keyed on what the bot finds
+     * under the tree, so a card can only claim the skill; a Mine card fixes its whole situation.
+     */
+    @Override
+    public LearningScope learningScope() {
+        return finishCurrentTree
+                ? LearningScope.of("tree-chopping", "lune.unit.logs")
+                : LearningScope.of("block-mining", "lune.unit.blocks", miningPhase());
+    }
+
     @Override
     public LearningContext learningContext(BotContext ctx) {
         String dimension = ctx.level.dimension().identifier().toString();
-        String phase = "targets=" + targetKey()
-                + ";amount=" + MiningPolicy.amountBucket(limit)
-                + ";radius=" + MiningPolicy.radiusBucket(radius)
-                + ";prospect=" + prospect;
-        return new LearningContext("skill", "block-mining", dimension, phase);
+        return new LearningContext("skill", "block-mining", dimension,
+                String.join(";", miningPhase()));
+    }
+
+    /** The situation a mining episode is keyed on; every part of it is one of the card's parameters. */
+    private String[] miningPhase() {
+        return new String[] {
+                "targets=" + targetKey(),
+                "amount=" + MiningPolicy.amountBucket(limit),
+                "radius=" + MiningPolicy.radiusBucket(radius),
+                "prospect=" + prospect};
     }
 
     @Override
@@ -427,13 +479,13 @@ public final class MineTask implements Task {
     @Override
     public TaskProgress progress() {
         return limit <= 0 ? null : new TaskProgress(mined, limit,
-                Lang.get(finishCurrentTree ? "lune.unit.logs" : "lune.card.blocks_unit"));
+                Lang.get(finishCurrentTree ? "lune.unit.logs" : "lune.unit.blocks"));
     }
 
     @Override
     public TaskProgress learningProgress() {
         return new TaskProgress(mined, limit <= 0 ? Math.max(1, mined) : limit,
-                Lang.get(finishCurrentTree ? "lune.unit.logs" : "lune.card.blocks_unit"));
+                Lang.get(finishCurrentTree ? "lune.unit.logs" : "lune.unit.blocks"));
     }
 
     @Override
@@ -484,7 +536,7 @@ public final class MineTask implements Task {
         taskTicks = 0;
         unreachable.clear();
         approachedFromAfar.clear();
-        unreachable.addAll(BlockMemory.get().getUnreachable());
+        unreachable.addAll(BlockMemory.get().getUnreachable(ctx.player.blockPosition()));
         unreachable.addAll(seededUnreachable);
         stallAnchor = null;
         stallMined = 0;
@@ -828,7 +880,7 @@ public final class MineTask implements Task {
         if (inReach && !ctx.omniscientMining() && !Vision.isReachable(ctx, target)) {
             String reason = Vision.inspect(ctx, target).verdict();
             unreachable.add(target.asLong());
-            BlockMemory.get().markUnreachable(target);
+            BlockMemory.get().markUnreachable(target, ctx.player.blockPosition());
             stopBreaking(ctx);
             if (exposingBlocker) {
                 exposingBlocker = false;
@@ -992,7 +1044,7 @@ public final class MineTask implements Task {
         if (targetWorkTicks > MAX_TARGET_WORK_TICKS) {
             BlockPos failed = exposingBlocker && exposureOre != null ? exposureOre : target;
             unreachable.add(failed.asLong());
-            BlockMemory.get().markUnreachable(failed);
+            BlockMemory.get().markUnreachable(failed, ctx.player.blockPosition());
             stopBreaking(ctx);
             if (clearingPassage) {
                 clearPassagePlan();
@@ -1016,7 +1068,7 @@ public final class MineTask implements Task {
         if (progress == BlockBreaker.Progress.HAZARD) {
             status.set(breaker.getFailureReason());
             unreachable.add(target.asLong());
-            BlockMemory.get().markUnreachable(target);
+            BlockMemory.get().markUnreachable(target, ctx.player.blockPosition());
             stopBreaking(ctx);
             if (clearingPassage) {
                 clearPassagePlan();
@@ -1073,7 +1125,7 @@ public final class MineTask implements Task {
                     return TaskStatus.RUNNING;
                 }
                 unreachable.add(target.asLong());
-                BlockMemory.get().markUnreachable(target);
+                BlockMemory.get().markUnreachable(target, ctx.player.blockPosition());
                 clearTarget(ctx);
                 if (finishCurrentTree && treeAnchor != null) {
                     abandonCurrentTree(ctx, "lune.status.mine.tree_no_position");
@@ -1094,7 +1146,7 @@ public final class MineTask implements Task {
             approach.start(ctx);
         }
 
-        if (reconsiderTarget(ctx)) {
+        if (reconsiderTarget(ctx) || takeLowerLogOfTree(ctx)) {
             return TaskStatus.RUNNING;
         }
 
@@ -1120,7 +1172,7 @@ public final class MineTask implements Task {
             // it with a clear path.
             String reason = approach.status();
             unreachable.add(target.asLong());
-            BlockMemory.get().markUnreachable(target);
+            BlockMemory.get().markUnreachable(target, ctx.player.blockPosition());
             clearTarget(ctx);
             if (finishCurrentTree && treeAnchor != null) {
                 abandonCurrentTree(ctx, "lune.status.mine.tree_unreachable_because", reason);
@@ -1158,7 +1210,7 @@ public final class MineTask implements Task {
 
         String name = ctx.level.getBlockState(target).getBlock().getName().getString();
         unreachable.add(target.asLong());
-        BlockMemory.get().markUnreachable(target);
+        BlockMemory.get().markUnreachable(target, ctx.player.blockPosition());
         clearTarget(ctx);
         ctx.debug.decide("arrived at that " + name + " " + ApproachWatch.MAX_FRUITLESS_ARRIVALS
                 + " times without moving or being able to work it; writing it off");
@@ -1212,6 +1264,15 @@ public final class MineTask implements Task {
                             || (MovementHelper.isClimbable(ctx.level, feet)
                                     && MovementHelper.hasBodyClearance(ctx.level, feet));
                     if (!occupiable) {
+                        continue;
+                    }
+                    // Standing on the canopy is not standing next to the tree. Leaves hold a
+                    // player up, so this box and the pathfinder both accept them, and the route
+                    // that gets there goes up through the foliage - which the polite first attempt
+                    // refuses and the relaxed one chews through. Every approach that ended in
+                    // "can't reach that tree cleanly" in the measured run was aimed at a perch.
+                    if (finishCurrentTree
+                            && ctx.level.getBlockState(feet.below()).is(BlockTags.LEAVES)) {
                         continue;
                     }
                     double eyeX = feet.getX() + 0.5;
@@ -1510,6 +1571,62 @@ public final class MineTask implements Task {
      *
      * @return true when the target changed and the caller should restart its approach next tick
      */
+    /**
+     * While walking to a committed tree, take its trunk once the trunk is what can be seen.
+     *
+     * <p>A tree is chosen from wherever the bot was standing, and from a distance the only part of
+     * it above the grass is the crown. {@link #visibleGroundLog} already prefers the foot of a
+     * trunk over the branch that was spotted, but only among blocks visible <em>at that moment</em>,
+     * and at twenty blocks across a savanna the foot is behind the grass while the canopy is
+     * against the sky. So the walk is aimed at a log six blocks above the ground it ends on, and
+     * the arrival spends its ticks discovering that.</p>
+     *
+     * <p>One measured savanna run walked 24 blocks to a canopy log, stood under it for 150 ticks
+     * failing to reach it, gave up - and then cut the trunk three blocks below, which had been in
+     * plain sight for the last ten blocks of the walk. This is {@link #reconsiderTarget}'s rule
+     * applied inside one tree: the committed <em>tree</em> is never given up, only the log, and
+     * only for a log of the same tree that is lower and can actually be stood beside.</p>
+     */
+    private boolean takeLowerLogOfTree(BotContext ctx) {
+        if (treeAnchor == null || target == null || currentTreeLogs.isEmpty()
+                || ctx.omniscientMining()) {
+            return false;
+        }
+        if (--treeRetargetTicks > 0) {
+            return false;
+        }
+        treeRetargetTicks = RECONSIDER_INTERVAL_TICKS;
+        if (ctx.player.blockPosition().distSqr(target)
+                < TREE_RETARGET_MIN_WALK * TREE_RETARGET_MIN_WALK) {
+            return false;
+        }
+
+        // Cheap tests first, lowest first, and the ray cast only on the ones that survive: the
+        // answer wanted is the lowest workable log, so the first one that can be seen is it.
+        List<BlockPos> lower = new ArrayList<>();
+        for (long packed : currentTreeLogs) {
+            BlockPos log = BlockPos.of(packed);
+            if (log.getY() > target.getY() - TREE_RETARGET_DROP
+                    || unreachable.contains(packed)
+                    || !targets.contains(ctx.level.getBlockState(log).getBlock())) {
+                continue;
+            }
+            lower.add(log);
+        }
+        lower.sort(java.util.Comparator.comparingInt(BlockPos::getY));
+        for (BlockPos log : lower) {
+            if (!canStandToCut(ctx, log) || !Vision.isVisible(ctx, log)) {
+                continue;
+            }
+            ctx.debug.decide("the trunk came into view " + (target.getY() - log.getY())
+                    + " blocks below the log this walk was aimed at; taking that instead");
+            clearTarget(ctx);
+            status.set("lune.status.mine.somewhere_closer_came_into_view");
+            return true;
+        }
+        return false;
+    }
+
     private boolean reconsiderTarget(BotContext ctx) {
         if (target == null || treeAnchor != null || memoryTarget) {
             return false;
@@ -2016,15 +2133,32 @@ public final class MineTask implements Task {
         // on a block to mine. A player who shuffles a block does not start their search over either.
         if (scanCentre == null || scanCentre.distSqr(centre) > RESCAN_DISTANCE * RESCAN_DISTANCE) {
             scanCentre = centre;
+            footing.clear();
             headScanner.reset(ctx.player);
             treeScanner.reset(ctx.player);
         }
 
         // Once a tree is chosen, inspect that tree again after every log instead of spinning around
         // the whole world. Aim one block above the last cut so the newly exposed trunk is visible.
+        //
+        // The search waits for the head to land, against the usual rule that a player notices a
+        // block as it swings into view. It was tried the other way, and measured: letting the sweep
+        // choose while the head was still turning cost three logs of a fifty-log run, because the
+        // block it settles on is whatever is already inside the cone - a side branch, or the log
+        // below - and the aim then has to come back for the one that was being exposed. The wider
+        // search is right to look while turning because any block it finds is work; this one is
+        // aimed at a particular block, and arriving is the cheaper half of the trip.
         if (!ctx.omniscientMining() && treeAnchor != null && treeViewPending) {
             Vec3 treeView = new Vec3(treeAnchor.getX() + 0.5, treeLookY + 0.5,
                     treeAnchor.getZ() + 0.5);
+            // The turn is not skipped when the view point is close enough to be wild - it was
+            // tried, and it deadlocked the job. A bot that starts a run on the canopy ends up
+            // inside the trunk column with the point one above the last cut at its own eye height,
+            // and the angle to it is then whatever the rounding says. Leaving the head where it
+            // was instead of turning left it pointed at the floor: the sweep saw nothing, the card
+            // reported nothing visible, Explore spotted the same log six blocks up and handed it
+            // straight back - 3000 ticks, one position, one heading, no wood. Whatever this turn
+            // costs, re-pointing the head at the trunk is what it buys.
             ctx.look.lookAt(ctx.player, treeView);
             if (!ctx.look.isLookingAt(ctx.player, treeView, 4.0F)) {
                 status.set("lune.status.mine.checking_current_tree_above_last_log");
@@ -2089,11 +2223,15 @@ public final class MineTask implements Task {
             ctx.debug.scanTicks = scanTicks;
         }
 
+        // The footing test comes after sight on purpose. It is the cheaper of the two - block reads
+        // against a ray cast - but it is also the rarer refusal, so asking it first would spend
+        // reads on every candidate in the cube to save casts on the few that are perched.
         java.util.function.BiPredicate<BlockPos, net.minecraft.world.level.block.state.BlockState> filter =
                 (pos, state) -> !prospectProtectedRoute.contains(pos.asLong())
                         && !pos.equals(deferredStump)
                         && belongsToCurrentTree(pos, state)
-                        && (ctx.omniscientMining() || Vision.isVisible(ctx, pos));
+                        && (ctx.omniscientMining() || Vision.isVisible(ctx, pos))
+                        && (!judgeFooting(ctx, state) || canStandToCut(ctx, pos));
         // Ordinary mining stays ranked from WorkSite. A committed tree may instead use the
         // skill learner's safe ordering; every candidate still passes the same tree and Vision
         // filter above, so learning changes sequence rather than knowledge or eligibility.
@@ -2519,6 +2657,78 @@ public final class MineTask implements Task {
         });
     }
 
+    /**
+     * Whether there is anywhere to stand and cut this log that is not up in the foliage.
+     *
+     * <h2>What it is for</h2>
+     *
+     * <p>Being able to see a log and being able to fell it are different questions, and the search
+     * only asked the first. A trunk continues above the arm's reach of anyone stood at its foot, so
+     * every tree ends with a log that is visible, close, and workable only by climbing - and a
+     * canopy log of the next tree along outranks a trunk base ten blocks away, because straight-line
+     * distance counts the six blocks of height as if they were six blocks of walking. They are not:
+     * the route to them goes up through leaves.</p>
+     *
+     * <p>Five approaches of one measured five-minute run were spent this way and produced no wood
+     * at all - 732 ticks, an eighth of the run, one of them oscillating for 24 seconds between two
+     * footholds on a hillside under a log it never reached. The sweep already turns down blocks it
+     * cannot see; this turns down blocks it cannot stand under, which is the same kind of fact
+     * about the world and just as visible to a person looking at the tree.</p>
+     *
+     * <h2>What counts as footing</h2>
+     *
+     * <p>Ground, and not leaves. Leaves hold a player up, so {@code canStandAt} is right to accept
+     * them and the pathfinder is right to plan over them - but a stance on top of a canopy is
+     * reached through the canopy, and once the bot is up there every following log is reached from
+     * up there too. {@link #reachableMiningPosition} already sorts stances lowest-first for that
+     * reason; this refuses the leaf perch outright rather than ranking it last.</p>
+     *
+     * <p>Only logs are judged. Ore and stone have no canopy to be perched in, and a buried block's
+     * footing is the tunnel the miner is about to dig.</p>
+     */
+    private boolean canStandToCut(BotContext ctx, BlockPos log) {
+        Boolean known = footing.get(log.asLong());
+        if (known != null) {
+            return known;
+        }
+        boolean answer = false;
+        double safeReachSqr = (REACH - 0.35) * (REACH - 0.35);
+        double logX = log.getX() + 0.5;
+        double logY = log.getY() + 0.5;
+        double logZ = log.getZ() + 0.5;
+        outer:
+        for (int dy = 1; dy >= -TREE_STANCE_DROP; dy--) {
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    BlockPos feet = log.offset(dx, dy, dz);
+                    if (!MovementHelper.canStandAt(ctx.level, feet)) {
+                        continue;
+                    }
+                    if (ctx.level.getBlockState(feet.below()).is(BlockTags.LEAVES)) {
+                        continue;
+                    }
+                    double eyeX = feet.getX() + 0.5;
+                    double eyeY = feet.getY() + 1.6;
+                    double eyeZ = feet.getZ() + 0.5;
+                    double distance = (eyeX - logX) * (eyeX - logX)
+                            + (eyeY - logY) * (eyeY - logY)
+                            + (eyeZ - logZ) * (eyeZ - logZ);
+                    if (distance <= safeReachSqr) {
+                        answer = true;
+                        break outer;
+                    }
+                }
+            }
+        }
+        footing.put(log.asLong(), answer);
+        return answer;
+    }
+
+    /** True for the wood jobs, whose targets can be perched out of reach above the ground. */
+    private boolean judgeFooting(BotContext ctx, BlockState state) {
+        return !ctx.omniscientMining() && state.is(BlockTags.LOGS);
+    }
+
     /** Finds the lowest currently visible log in the connected trunk, without committing to its tree. */
     private BlockPos visibleGroundLog(BotContext ctx, BlockPos spotted,
                                       java.util.function.BiPredicate<BlockPos,
@@ -2554,6 +2764,7 @@ public final class MineTask implements Task {
     private void resetScan(BotContext ctx) {
         scanCentre = null;
         scanTicks = 0;
+        footing.clear();
         index.invalidate();
         headScanner.reset(ctx.player);
         treeScanner.reset(ctx.player);

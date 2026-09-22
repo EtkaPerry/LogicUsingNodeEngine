@@ -20,6 +20,14 @@ public final class DebugInfo {
     // --- engine ---
     public String state = "Idle";
     public String taskName = "-";
+    /**
+     * The running task's learner key - {@code taskName}'s language-independent half.
+     *
+     * <p>Both go into the journal because they answer different questions. {@code taskName} is the
+     * sentence a person reads, in whatever language the client was running; this one is the string
+     * the profile is keyed on, and it is the only one an analysis script may compare against.</p>
+     */
+    public String taskId = "-";
     public String taskStatus = "";
     public String nextTask = "";
     public int queueSize;

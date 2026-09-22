@@ -2,6 +2,7 @@ package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.compat.Hands;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -180,7 +181,7 @@ public final class HayHarvestTask implements Task {
         if (InventoryHelper.equip(ctx, HayHarvestTask::isHoe) < 0) {
             return;
         }
-        ctx.player.drop(true);
+        Hands.dropHeld(ctx.mc, ctx.player, true);
         ctx.debug.decide("dropped the hoe; the farm is stripped and the bag is full");
     }
 

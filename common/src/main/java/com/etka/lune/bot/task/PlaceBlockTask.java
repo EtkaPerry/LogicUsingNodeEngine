@@ -19,7 +19,7 @@ import java.util.Set;
  * Puts one block in one place.
  * <p>
  * The smallest building action there is, and deliberately so: it places a block and it does not dig,
- * fetch, walk a route it was not given, or decide what to build. Everything larger is a routine made
+ * fetch, walk a route it was not given, or decide what to build. Everything larger is a task made
  * of these and of the cards beside them - a wall is this card behind a Walk, a floor is this card
  * behind a loop.
  * <p>
@@ -28,8 +28,8 @@ import java.util.Set;
  * answer has to be a spot that means the same thing whenever the pulse arrives. Three do:
  * <ul>
  *   <li>relative to the bot - in front of it, under it, over it - which is what composes with Walk;
- *   <li>a coordinate, pointed at with the crosshair while writing the routine;
- *   <li>a waypoint, by name, which the Save Waypoint card can write from inside the same routine.
+ *   <li>a coordinate, pointed at with the crosshair while writing the task;
+ *   <li>a waypoint, by name, which the Save Waypoint card can write from inside the same task.
  * </ul>
  */
 public final class PlaceBlockTask implements Task {

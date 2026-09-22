@@ -1,7 +1,9 @@
 package com.etka.lune.client.gui.widget;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.client.gui.LuneScreen;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -12,7 +14,6 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Util;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.function.Consumer;
 
@@ -97,10 +98,10 @@ public class NamePrompt extends AbstractWidget {
         }
         Minecraft mc = Minecraft.getInstance();
         Font font = mc.font;
-        int popupX = (mc.screen.width - POPUP_W) / 2;
-        int popupY = (mc.screen.height - POPUP_H) / 2;
+        int popupX = (Screens.current(mc).width - POPUP_W) / 2;
+        int popupY = (Screens.current(mc).height - POPUP_H) / 2;
 
-        extractor.fill(0, 0, mc.screen.width, mc.screen.height, DIM);
+        extractor.fill(0, 0, Screens.current(mc).width, Screens.current(mc).height, DIM);
         LuneScreen.panel(extractor, popupX, popupY, POPUP_W, POPUP_H);
 
         int lineWidth = POPUP_W - PADDING * 2 - 10;
@@ -163,8 +164,8 @@ public class NamePrompt extends AbstractWidget {
             return;
         }
         Minecraft mc = Minecraft.getInstance();
-        int popupX = (mc.screen.width - POPUP_W) / 2;
-        int popupY = (mc.screen.height - POPUP_H) / 2;
+        int popupX = (Screens.current(mc).width - POPUP_W) / 2;
+        int popupY = (Screens.current(mc).height - POPUP_H) / 2;
         if (mouseX < popupX || mouseX >= popupX + POPUP_W
                 || mouseY < popupY || mouseY >= popupY + POPUP_H) {
             close(false);
@@ -190,14 +191,14 @@ public class NamePrompt extends AbstractWidget {
             return;
         }
         switch (keyCode) {
-            case GLFW.GLFW_KEY_BACKSPACE -> {
+            case InputConstants.KEY_BACKSPACE -> {
                 if (!value.isEmpty()) {
                     value = value.substring(0, value.length() - 1);
                 }
             }
-            case GLFW.GLFW_KEY_DELETE -> value = "";
-            case GLFW.GLFW_KEY_ESCAPE -> close(false);
-            case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> close(true);
+            case InputConstants.KEY_DELETE -> value = "";
+            case InputConstants.KEY_ESCAPE -> close(false);
+            case InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER -> close(true);
             default -> {
             }
         }

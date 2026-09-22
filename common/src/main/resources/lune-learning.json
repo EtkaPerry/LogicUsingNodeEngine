@@ -3011,7 +3011,7 @@
       "totalTicks": 0,
       "bestTicksPerUnit": 0
     },
-    "skill|Hunt Sheep|minecraft:overworld|size=batch;unit=wool": {
+    "skill|Hunt Sheep|minecraft:overworld|size=batch;unit=items": {
       "runs": 26,
       "completedRuns": 26,
       "totalUnits": 52,

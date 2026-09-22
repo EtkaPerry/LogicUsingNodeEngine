@@ -1,7 +1,9 @@
 package com.etka.lune.client;
 
 import com.etka.lune.Constants;
+import com.etka.lune.client.command.LuneChatCommand;
 import com.etka.lune.client.gui.DebugOverlay;
+import com.etka.lune.compat.Screens;
 import com.etka.lune.platform.BuildFeatures;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
@@ -9,6 +11,7 @@ import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.gui.screens.worldselection.CreateWorldScreen;
 import net.minecraft.client.gui.screens.worldselection.WorldCreationUiState;
 import net.minecraftforge.client.event.AddGuiOverlayLayersEvent;
+import net.minecraftforge.client.event.RegisterClientCommandsEvent;
 import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
 import net.minecraftforge.client.event.ScreenEvent;
 import net.minecraftforge.event.TickEvent;
@@ -26,6 +29,9 @@ public final class LuneForgeClient {
 
     public static void init() {
         RegisterKeyMappingsEvent.BUS.addListener(LuneForgeClient::onRegisterKeyMappings);
+
+        RegisterClientCommandsEvent.BUS.addListener(event ->
+                event.getDispatcher().register(LuneChatCommand.build(LuneChatCommand.VANILLA)));
 
         TickEvent.ClientTickEvent.Post.BUS.addListener(event ->
                 LuneKeybinds.clientTick(Minecraft.getInstance()));
@@ -77,8 +83,8 @@ public final class LuneForgeClient {
         event.removeListener(testWorldButton);
         Button survivalWorldButton = Button.builder(testWorldButton.getMessage(), button -> {
                     Minecraft minecraft = Minecraft.getInstance();
-                    CreateWorldScreen.openFresh(minecraft, () -> minecraft.setScreen(titleScreen));
-                    if (minecraft.screen instanceof CreateWorldScreen createWorldScreen) {
+                    CreateWorldScreen.openFresh(minecraft, () -> Screens.open(minecraft, titleScreen));
+                    if (Screens.current(minecraft) instanceof CreateWorldScreen createWorldScreen) {
                         createWorldScreen.getUiState().setGameMode(WorldCreationUiState.SelectedGameMode.SURVIVAL);
                         createWorldScreen.getUiState().setAllowCommands(true);
                     }

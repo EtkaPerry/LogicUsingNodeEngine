@@ -6,6 +6,7 @@ import com.etka.lune.util.Lang;
 import com.etka.lune.bot.task.ConditionTask;
 import com.etka.lune.bot.task.ConditionText;
 import com.etka.lune.bot.task.CountdownTask;
+import com.etka.lune.bot.task.EquipTask;
 import com.etka.lune.bot.task.PlaceBlockTask;
 import com.etka.lune.bot.task.StepPolicy;
 import com.etka.lune.bot.task.SaveWaypointTask;
@@ -75,13 +76,17 @@ public final class CommandDef {
         return switch (id) {
             case "check_item" -> ConditionText.describeRule(
                     Lang.get("lune.card.inventory_count", itemName()), choiceValue("comparison"), intValue("count"));
+            // The metric names itself - "player Light level" read worse than "Light level", and the
+            // card's own title already says whose reading it is.
             case "check_player" -> ConditionText.describeRule(
-                    Lang.get("lune.card.player_metric", Param.Choice.optionLabel(choiceValue("metric"))), choiceValue("comparison"), intValue("threshold"));
+                    Param.Choice.optionLabel(choiceValue("metric")), choiceValue("comparison"), intValue("threshold"));
             case "check_distance" -> ConditionText.describeRule(
                     Lang.get("lune.card.distance_blocks", waypointName()),
                     choiceValue("comparison"), intValue("distance"));
             case "check_time" -> Lang.get("lune.card.if_overworld_clock_says_success", Param.Choice.optionLabel(choiceValue("phase")));
             case "check_clock" -> clockDescription();
+            case "check_weather" -> Lang.get("lune.card.if_the_weather_is_success", Param.Choice.optionLabel(choiceValue("weather")));
+            case "check_dimension" -> Lang.get("lune.card.if_lune_is_in_the_success", Param.Choice.optionLabel(choiceValue("dimension")));
             case "countdown" -> countdownDescription(repeat);
             case "stay_near" -> stayNearDescription(repeat);
             case "self_preservation" -> selfPreservationDescription(repeat);
@@ -100,6 +105,22 @@ public final class CommandDef {
             case "step" -> stepDescription();
             case "eat" -> actionDescription(Lang.get("lune.card.eat_until_hunger_reaches", intValue("minimum_food")));
             case "loot" -> actionDescription(Lang.get("lune.card.pick_up_nearby_dropped_items_within", intValue("radius")));
+            case "recover_death" -> actionDescription(Lang.get("lune.card.walk_back_to_death_and_collect",
+                    Param.Choice.optionLabel(choiceValue("which")), intValue("radius")));
+            case "upgrade_netherite" -> {
+                Item gear = itemValue("gear");
+                yield actionDescription(Lang.get("lune.card.upgrade_gear_to_netherite",
+                        gear == null ? Lang.get("lune.card.selected_item") : InventoryHelper.itemName(gear)));
+            }
+            case "dragon_egg" -> actionDescription(
+                    Lang.get("lune.card.knock_dragon_egg_onto_torch", intValue("radius")));
+            case "notify" -> {
+                String message = textValue("message");
+                yield actionDescription(message.isBlank()
+                        ? Lang.get("lune.card.raise_an_alert_sounding", choiceLabel("sound"))
+                        : Lang.get("lune.card.raise_an_alert_saying_sounding", message,
+                                choiceLabel("sound")));
+            }
             case "timer" -> {
                 int seconds = intValue("seconds");
                 if (repeat == 0) {
@@ -112,6 +133,10 @@ public final class CommandDef {
             }
             case "stop_game" -> stopGameDescription();
             case "select_item" -> selectItemDescription();
+            case "equip" -> actionDescription(
+                    EquipTask.What.fromLabel(choiceValue("what")) == EquipTask.What.BEST_ARMOR
+                            ? Lang.get("lune.card.put_on_best_armor_carried")
+                            : Lang.get("lune.card.wear_chosen_piece", itemName()));
             case "counter" -> Lang.get("lune.card.after_every_incoming_pulses_lune", intValue("count"));
             case "observer" -> observerDescription();
             case "end" -> Lang.get("lune.card.lune_consumes_incoming_pulse_finishes");
@@ -219,6 +244,11 @@ public final class CommandDef {
                 return boolValue("protect_monsters");
             }
         }
+        if ("equip".equals(id) && "item".equals(paramId)) {
+            // A whole-kit swap has no one item to name, and offering a row that the card will
+            // ignore is the same invitation-and-shrug the rule above is about.
+            return EquipTask.What.fromLabel(choiceValue("what")) == EquipTask.What.CHOSEN;
+        }
         if ("save_waypoint".equals(id)) {
             boolean saving = SaveWaypointTask.Action.ADD.label().equals(choiceValue("action"));
             // A new place is named, an old one is chosen from the list. Never both.
@@ -283,7 +313,7 @@ public final class CommandDef {
     /** The point of the card is what it does not do - turn - so the wording has to say that. */
     private String stepDescription() {
         int blocks = intValue("blocks");
-        return Lang.get("lune.card.lune_move_where_facing_without_turning", blocks, Lang.get(blocks == 1 ? "lune.card.block_unit" : "lune.card.blocks_unit"), lowerFirst(Param.Choice.optionLabel(choiceValue("side"))), (boolValue("careful") ? Lang.get("lune.card.sneaking_stops_block_cannot_walk_off") : Lang.get("lune.card.walking")));
+        return Lang.get("lune.card.lune_move_where_facing_without_turning", blocks, Lang.get(blocks == 1 ? "lune.card.block_unit" : "lune.unit.blocks"), lowerFirst(Param.Choice.optionLabel(choiceValue("side"))), (boolValue("careful") ? Lang.get("lune.card.sneaking_stops_block_cannot_walk_off") : Lang.get("lune.card.walking")));
     }
 
     private String stopGameDescription() {
@@ -470,6 +500,19 @@ public final class CommandDef {
 
     public String choiceValue(String paramId) {
         return ((Param.Choice) param(paramId)).get();
+    }
+
+    /**
+     * What a choice's current value is called, asked of the choice itself.
+     *
+     * <p>Not {@link Param.Choice#optionLabel}, which looks the value up under {@code lune.choice.*}
+     * and is right for the handful of words most cards offer. A choice whose values come from a
+     * registry writes its own labels - a sound is named by the game's subtitle for it - and going
+     * through the shared lookup would print the raw id into the sentence instead.</p>
+     */
+    public String choiceLabel(String paramId) {
+        Param.Choice choice = (Param.Choice) param(paramId);
+        return choice.label(choice.get());
     }
 
     public BlockTarget blockValue(String paramId) {

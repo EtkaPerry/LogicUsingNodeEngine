@@ -364,6 +364,7 @@ public final class TaskStore {
             }
         }
         task.cableAnchors.entrySet().removeIf(entry -> entry.getValue().points.isEmpty());
+        normalizeAnnotations(task);
         migrateLegacyAlways(task);
         for (TaskNode node : task.nodes) {
             if (node == null) {
@@ -482,6 +483,46 @@ public final class TaskStore {
                 }
             }
         }
+    }
+
+    /**
+     * Sticky notes and frames, made safe to draw.
+     *
+     * <p>Every task written before these existed has neither list, so both arrive null from Gson
+     * and would be a crash on the first frame of the canvas rather than a missing feature. The
+     * clamping below is for hand-edited and shared files: a note two pixels tall is not a note, and
+     * a frame naming cards that never made it through import is a frame around nothing.</p>
+     */
+    private static void normalizeAnnotations(TaskGraph task) {
+        if (task.notes == null) {
+            task.notes = new ArrayList<>();
+        }
+        task.notes.removeIf(java.util.Objects::isNull);
+        for (TaskNote note : task.notes) {
+            if (note.id == null || note.id.isBlank()) {
+                note.id = java.util.UUID.randomUUID().toString().substring(0, 8);
+            }
+            if (note.text == null) {
+                note.text = "";
+            }
+            note.clampSize();
+        }
+        if (task.groups == null) {
+            task.groups = new ArrayList<>();
+        }
+        task.groups.removeIf(java.util.Objects::isNull);
+        for (TaskGroup group : task.groups) {
+            if (group.id == null || group.id.isBlank()) {
+                group.id = java.util.UUID.randomUUID().toString().substring(0, 8);
+            }
+            if (group.title == null) {
+                group.title = "";
+            }
+            if (group.members == null) {
+                group.members = new java.util.LinkedHashSet<>();
+            }
+        }
+        TaskGroup.prune(task);
     }
 
     private static TaskCableRoute deserializeCableRoute(JsonElement json,

@@ -7,6 +7,7 @@ import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.learning.LearningContext;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.catalog.BlockCatalog;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.util.BlockPlacer;
@@ -90,12 +91,22 @@ public final class PillarUpTask implements Task {
     }
 
     @Override
+    public LearningScope learningScope() {
+        return LearningScope.of("pillar-building", "lune.unit.height_blocks", heightPhase());
+    }
+
+    @Override
     public LearningContext learningContext(BotContext ctx) {
-        String phase = "height=" + PillarPolicy.heightBucket(maxHeight)
+        // Whether there is a ceiling is only known standing under it, so it joins the key here.
+        String phase = heightPhase()
                 + ";ceiling=" + !MovementHelper.isPassable(
                         ctx.level, ctx.player.blockPosition().above(2));
         return new LearningContext("skill", "pillar-building",
                 ctx.level.dimension().identifier().toString(), phase);
+    }
+
+    private String heightPhase() {
+        return "height=" + PillarPolicy.heightBucket(maxHeight);
     }
 
     @Override

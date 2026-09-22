@@ -9,8 +9,9 @@ import java.util.List;
  * something is on her mind the pool reshapes itself - a lamp over still water when she is paused,
  * bubbles when she is thinking, a wall when she is blocked - and nothing is drawn outside the head.
  * Every mood is a row of {@code soul.png}, in the order the {@code ROW_*} constants below fix. A
- * change of mood does not cut between rows: a pool drains from the top to reveal the new shape, and
- * a pool rises from the bottom to swallow the old one.</p>
+ * change of mood does not cut between rows: a pool drains from the top to reveal the new shape, a
+ * pool rises from the bottom to swallow the old one, and between two pools the surface itself
+ * moves, sinking to a lower level or climbing to a higher one.</p>
  *
  * <p>The forms follow one rule: a soul that moves is Lune doing something, and a soul that is
  * broken, drained or blown about is something being done to her. That is why fighting is a cut she
@@ -125,6 +126,39 @@ public final class SoulAnimation {
         };
     }
 
+    /**
+     * The row of the 96 px cell where a pool's surface lies, measured off {@code soul.png}; what
+     * stands above it (a lamp, bubbles, a pillar) is not the pool. Only meaningful for rows where
+     * {@link #pool(int)} holds, and it decides which way two pools wipe: a pool drains down to a
+     * lower surface, because rising into one would eat the old pool from underneath and leave its
+     * top hanging in the air until it vanished.
+     */
+    static int surface(int row) {
+        return switch (row) {
+            case ROW_SWIMMING, ROW_SUCCESS -> 17;
+            case ROW_INVENTORY_FULL -> 21;
+            case ROW_QUIET -> 27;
+            case ROW_THINKING -> 31;
+            case ROW_WORKING -> 34;
+            case ROW_IDLE -> 35;
+            case ROW_HURT -> 47;
+            case ROW_FRAMING -> 56;
+            case ROW_RESTING, ROW_RECOVERING -> 57;
+            case ROW_TRAVEL -> 63;
+            case ROW_PAUSED, ROW_EFFECT -> 65;
+            case ROW_STALLED -> 66;
+            case ROW_HUNGRY -> 71;
+            case ROW_SEARCH, ROW_BRIDGING, ROW_FIGHT -> 72;
+            case ROW_STAIRS -> 73;
+            case ROW_LEARNING -> 74;
+            case ROW_FLEE -> 75;
+            case ROW_PILLARING -> 78;
+            case ROW_ASCENDING -> 79;
+            // Not a pool, or not measured yet: an empty head, so wipes drain into it and rise out.
+            default -> 84;
+        };
+    }
+
     /** Moods where the renderer paints her lid shut over whatever the row draws. */
     static boolean eyeShut(MascotAdvisor.Mood mood) {
         return mood == MascotAdvisor.Mood.QUIET || mood == MascotAdvisor.Mood.RESTING
@@ -177,7 +211,8 @@ public final class SoulAnimation {
             previousRow = shownRow;
             shownRow = target;
             wipeStartedAt = now;
-            wipeDown = !pool(target);
+            wipeDown = !pool(target)
+                    || (pool(previousRow) && surface(target) > surface(previousRow));
         }
         float progress = previousRow < 0 ? 1f : (now - wipeStartedAt) / (float) WIPE_MILLIS;
         if (progress >= 1f) {

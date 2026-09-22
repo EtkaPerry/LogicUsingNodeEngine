@@ -91,6 +91,20 @@ class StatusTextTest {
     }
 
     @Test
+    void theSharedEmptyStatusIsFullyBuilt() {
+        // EMPTY is a static field built by the same class initialiser that fills the empty-argument
+        // array, and for a while it was built first - so its own arguments were null and every path
+        // that read them threw. isBlank() and text() both return early on the empty key, which is
+        // why the test above passed throughout; these three do not.
+        //
+        // Task.status() hands EMPTY back for every task that has not overridden it, so the parent
+        // line below is the ordinary case, not an edge one. It killed a Cov Walk run outright.
+        assertEquals(StatusSignal.NONE, StatusText.EMPTY.signal());
+        assertEquals("", new StatusText().set(StatusText.EMPTY).text());
+        assertTrue(new StatusText().set("lune.status.detail", StatusText.EMPTY).text().length() >= 0);
+    }
+
+    @Test
     void everySignalledKeyStillExists() {
         // The table is what makes Lune's face work; a renamed status would quietly empty it.
         for (String key : StatusKeys.all().keySet()) {

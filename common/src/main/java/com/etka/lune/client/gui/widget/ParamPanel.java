@@ -5,6 +5,7 @@ import com.etka.lune.bot.command.CommandDef;
 import com.etka.lune.bot.command.Param;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.UiScale;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
@@ -99,6 +100,8 @@ public class ParamPanel extends AbstractWidget {
     private Consumer<Param.ItemChoice> onOpenItemPicker;
     private Consumer<Param.Recipe> onOpenRecipePicker;
     private Consumer<Param.Text> onOpenNamePrompt;
+    /** Opens the panel a choice too long for the dropdown asked for; see {@link Param.Choice#pickerId()}. */
+    private Consumer<Param.Choice> onOpenChoicePicker;
     private Set<String> exposedInputs = Set.of();
     private Set<String> exposedOutputs = Set.of();
     private BiConsumer<String, PortSide> onTogglePort;
@@ -134,6 +137,10 @@ public class ParamPanel extends AbstractWidget {
 
     public void setOpenNamePrompt(Consumer<Param.Text> onOpenNamePrompt) {
         this.onOpenNamePrompt = onOpenNamePrompt;
+    }
+
+    public void setOpenChoicePicker(Consumer<Param.Choice> onOpenChoicePicker) {
+        this.onOpenChoicePicker = onOpenChoicePicker;
     }
 
     public void setCommand(CommandDef command) {
@@ -239,7 +246,13 @@ public class ParamPanel extends AbstractWidget {
             if (section != null && !section.equals(previousSection)) {
                 rows.add(new SectionRow(section));
             }
-            previousSection = section;
+            // Only a named section moves the marker. A parameter nobody filed stays under whatever
+            // heading it appears beneath, which is where the reader already thinks it is; letting
+            // it blank the marker made the next filed parameter look like a new section and print
+            // the heading it was already under a second time.
+            if (section != null) {
+                previousSection = section;
+            }
             rows.add(new ParamRow(param));
             if (!expanded.contains(param.id())) {
                 continue;
@@ -438,8 +451,12 @@ public class ParamPanel extends AbstractWidget {
                     text.accept(centredX, rowY + 3,
                             Component.literal(clippedValue).withColor(
                                     enabled ? LuneScreen.ACCENT : LuneScreen.TEXT_DIM));
+                    // An ellipsis where the arrow goes, for a choice that opens a panel: the same
+                    // promise the rest of the interface makes, that a click here asks something
+                    // bigger rather than unfolding five rows in place.
                     text.accept(valueBoxX + VALUE_WIDTH - 11, rowY + 3,
-                            Component.literal(openChoice == choice ? "▾" : "▸")
+                            Component.literal(choice.pickerId() != null ? "…"
+                                            : openChoice == choice ? "▾" : "▸")
                                     .withColor(LuneScreen.TEXT_DIM));
                 } else {
                     String clippedDisplay = clipToWidth(font, display, VALUE_WIDTH - 8);
@@ -597,7 +614,7 @@ public class ParamPanel extends AbstractWidget {
         if (index < 0 || index >= rows.size()) {
             return;
         }
-        boolean shift = (event.modifiers() & org.lwjgl.glfw.GLFW.GLFW_MOD_SHIFT) != 0;
+        boolean shift = (event.modifiers() & InputConstants.MOD_SHIFT) != 0;
 
         switch (rows.get(index)) {
             case ParamRow(Param<?> param) -> {
@@ -633,7 +650,15 @@ public class ParamPanel extends AbstractWidget {
                 ints.set(ints.get() + direction);
             }
             case Param.Bool bool -> bool.toggle();
-            case Param.Choice choice -> openChoice(choice);
+            case Param.Choice choice -> {
+                // A choice with thousands of values has a panel of its own; the dropdown is five
+                // rows and a wheel, which is no way to find one sound among a registry of them.
+                if (choice.pickerId() != null && onOpenChoicePicker != null) {
+                    onOpenChoicePicker.accept(choice);
+                } else {
+                    openChoice(choice);
+                }
+            }
             case Param.Pos pos -> {
                 net.minecraft.world.entity.player.Player player = Minecraft.getInstance().player;
                 if (player == null) {

@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The names a routine gets when it saves a place without naming it. What matters is that it always
+ * The names a task gets when it saves a place without naming it. What matters is that it always
  * gets one, and never the same one twice - a card in a loop must not overwrite what it saved a
  * minute ago.
  */

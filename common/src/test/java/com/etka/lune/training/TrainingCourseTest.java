@@ -52,7 +52,7 @@ class TrainingCourseTest {
             assertTrue(lesson.isSolvedBy(attempt),
                     lesson.id() + " does not accept its own answer");
             assertEquals("", lesson.critique(attempt),
-                    lesson.id() + " still complains about a solved routine");
+                    lesson.id() + " still complains about a solved task");
         }
     }
 
@@ -75,7 +75,7 @@ class TrainingCourseTest {
             attempt.nodes.clear();
             attempt.cableAnchors.clear();
             assertFalse(lesson.isSolvedBy(attempt),
-                    lesson.id() + " is solved by throwing the routine away");
+                    lesson.id() + " is solved by throwing the task away");
         }
     }
 
@@ -97,7 +97,7 @@ class TrainingCourseTest {
     /**
      * The exact mistake the ordering lesson exists to correct must not be marked right.
      *
-     * <p>This routine passes the audit - every pin connected, every card powered - and swings bare
+     * <p>This task passes the audit - every pin connected, every card powered - and swings bare
      * hands at stone for the whole run before picking up the pickaxe. Structural correctness is not
      * the same as being in the right place, and this is the one lesson where the difference is the
      * entire point.</p>
@@ -114,7 +114,7 @@ class TrainingCourseTest {
         mine.onFailure = tool.id;
 
         assertTrue(TaskConnectionAudit.firstIssue(attempt).isEmpty(),
-                "the trap only works if the wrong-order routine is structurally fine");
+                "the trap only works if the wrong-order task is structurally fine");
         assertFalse(lesson.isSolvedBy(attempt),
                 "a pickaxe fetched after the mining was marked correct");
     }

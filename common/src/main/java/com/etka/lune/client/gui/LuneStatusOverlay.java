@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.bot.DebugInfo;
@@ -29,6 +30,7 @@ public final class LuneStatusOverlay {
     private static final int VALUE = 0xFFE6EAF0;
     private static final int PAUSED = 0xFFB6C5D8;
     private static final int MAX_WIDTH = 300;
+    /** The head, not the art cell: the card is too tight to spend a third of it on clear pixels. */
     private static final int ART_SIZE = 36;
     private static final int PADDING = 8;
     private static final MascotRenderer MASCOT = new MascotRenderer();
@@ -40,7 +42,7 @@ public final class LuneStatusOverlay {
         Minecraft mc = Minecraft.getInstance();
         BotConfig config = BotConfig.get();
         BotEngine engine = BotEngine.get();
-        if (!config.showLune || mc.player == null || mc.level == null || mc.screen != null
+        if (!config.showLune || mc.player == null || mc.level == null || Screens.current(mc) != null
                 || engine.isIdle()) {
             return;
         }
@@ -77,7 +79,7 @@ public final class LuneStatusOverlay {
             MascotAdvisor.Mood mood = engine.isPaused() ? MascotAdvisor.Mood.PAUSED
                     : engine.getCurrent() == null ? MascotAdvisor.Mood.THINKING
                     : MascotAdvisor.Mood.WORKING;
-            MASCOT.draw(extractor, mood, x + PADDING, mascotY, ART_SIZE, Util.getMillis());
+            MASCOT.drawHead(extractor, mood, x + PADDING, mascotY, ART_SIZE, Util.getMillis());
         }
         var text = extractor.textRenderer();
         int lineY = y + (height - textHeight) / 2;

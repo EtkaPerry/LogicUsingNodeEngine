@@ -1,6 +1,6 @@
 package com.etka.lune.bot.task;
 
-import net.minecraft.world.entity.EntityType;
+import com.etka.lune.compat.Mobs;
 import net.minecraft.world.item.Items;
 
 /** Dedicated Skeleton hunter with configurable shield and weapon preparation. */
@@ -13,6 +13,6 @@ public final class HuntSkeletonsTask extends HuntMobTask {
     }
 
     public HuntSkeletonsTask(int wanted, KillOptions options) {
-        super(EntityType.SKELETON, Items.BONE, "Skeletons", wanted, options);
+        super(Mobs.SKELETON, Items.BONE, "Skeletons", wanted, options);
     }
 }

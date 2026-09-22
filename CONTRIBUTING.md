@@ -6,7 +6,7 @@ Pull requests and issues are welcome. Fork the repo, make your change, open a PR
 
 Read section 4 of the [LICENSE](LICENSE). The short version:
 
-- Code, assets, documentation and routines you submit are licensed to the Author —
+- Code, assets, documentation and tasks you submit are licensed to the Author —
   perpetual, worldwide, irrevocable, royalty-free, exclusive and sublicensable — and
   you agree to sign an assignment if one is ever needed.
 - The contribution has to be your own work, and yours to give.
@@ -24,7 +24,9 @@ them. File them freely — no rights change hands, and Lune may act on them.
 - One change per PR. A pathfinder fix and a UI tweak are two PRs.
 - Match the code around you: same naming, same comment density, same idiom.
 - Comments explain *why*, not *what*. The code already says what.
-- Run the tests: `./gradlew :common:test`.
+- Run the tests: `./gradlew :common:test`. Lune builds for several Minecraft versions from one
+  tree (`gradle/versions/`); if you touched anything that talks to vanilla, run them against the
+  others too, e.g. `./gradlew :common:test -Pmc=26.3` (in PowerShell quote it: `"-Pmc=26.3"`).
 - If the change touches behaviour you can see in game, say what you saw when you ran it.
 
 ## What is unlikely to be merged

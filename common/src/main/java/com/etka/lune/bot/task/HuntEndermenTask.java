@@ -1,17 +1,18 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.compat.Mobs;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.util.InventoryHelper;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
-import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.Items;
 
 import java.util.Set;
@@ -76,6 +77,11 @@ public final class HuntEndermenTask implements Task {
     }
 
     @Override
+    public LearningScope learningScope() {
+        return LearningScope.of(learningId(), "lune.unit.pearls");
+    }
+
+    @Override
     public StatusText statusLine() {
         return status;
     }
@@ -137,26 +143,24 @@ public final class HuntEndermenTask implements Task {
 
     private TaskStatus advance(BotContext ctx, TaskStatus previous) {
         switch (state) {
-            case FIND -> {
-                if (LootTask.hasDropsNearby(ctx, LOOT_RADIUS)) {
-                    state = State.LOOT;
-                } else if (roams < MAX_ROAMS) {
-                    state = State.ROAM;
-                } else {
-                    status.set("lune.status.hunt_endermen.roamed_too_much_only_pearls", roams, MAX_ROAMS, (InventoryHelper.count(ctx.player, Items.ENDER_PEARL) - startPearls));
-                    return TaskStatus.FAILED;
-                }
-            }
+            case FIND -> state = LootTask.hasDropsNearby(ctx, LOOT_RADIUS) ? State.LOOT : State.ROAM;
             case HUNT -> {
                 state = previous == TaskStatus.FAILED ? State.ROAM : State.LOOT;
             }
             case LOOT -> {
                 state = State.ROAM;
-                roams++;
             }
             case ROAM -> {
                 state = State.HUNT;
             }
+        }
+
+        // Counted where a roam begins rather than on the way out of FIND, which this machine
+        // enters once and never returns to. The same hole was measured spinning HuntMobTask for
+        // half of a twenty-minute run; this is the same loop with pearls instead of wool.
+        if (state == State.ROAM && roams++ >= MAX_ROAMS) {
+            status.set("lune.status.hunt_endermen.roamed_too_much_only_pearls", roams, MAX_ROAMS, (InventoryHelper.count(ctx.player, Items.ENDER_PEARL) - startPearls));
+            return TaskStatus.FAILED;
         }
 
         current = createTask(ctx);
@@ -171,7 +175,7 @@ public final class HuntEndermenTask implements Task {
 
     private Task createTask(BotContext ctx) {
         return switch (state) {
-            case HUNT -> new KillTask(Set.of(EntityType.ENDERMAN), HUNT_RADIUS, options, unreachableMobs);
+            case HUNT -> new KillTask(Set.of(Mobs.ENDERMAN), HUNT_RADIUS, options, unreachableMobs);
             case LOOT -> new LootTask(LOOT_RADIUS);
             case ROAM -> new GotoTask(new Goals.Near(pickRoamTarget(ctx), 8), true, false);
             default -> null;

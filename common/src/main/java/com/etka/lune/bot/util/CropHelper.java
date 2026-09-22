@@ -1,6 +1,7 @@
 package com.etka.lune.bot.util;
 
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.compat.Hands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -133,7 +134,7 @@ public final class CropHelper {
 
         ctx.gameMode.useItemOn(ctx.player, InteractionHand.MAIN_HAND,
                 new BlockHitResult(hit, Direction.UP, soil, false));
-        ctx.player.swing(InteractionHand.MAIN_HAND);
+        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
         return !ctx.level.getBlockState(cropPos).isAir();
     }
 }

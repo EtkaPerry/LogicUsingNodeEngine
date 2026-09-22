@@ -49,7 +49,7 @@ public final class OreKnowledge {
 
         Level level = ctx.level;
         BlockPos pos = ctx.player.blockPosition();
-        String dimKey = level.dimension().toString();
+        String dimKey = dimensionId(level);
 
         int bestY = Integer.MIN_VALUE;
         boolean any = false;
@@ -59,13 +59,8 @@ public final class OreKnowledge {
                 if (profile.dimension().isPresent() && !dimKey.equals(profile.dimension().get())) {
                     continue;
                 }
-                if (profile.biome().isPresent()) {
-                    String biomeId = level.getBiome(pos).unwrapKey()
-                            .map(key -> key.toString())
-                            .orElse("");
-                    if (!biomeId.equals(profile.biome().get())) {
-                        continue;
-                    }
+                if (profile.biome().isPresent() && !biomeId(level, pos).equals(profile.biome().get())) {
+                    continue;
                 }
                 if (!any || closestTo(bestY, profile.bestY(), pos.getY()) == profile.bestY()) {
                     bestY = profile.bestY();
@@ -104,20 +99,15 @@ public final class OreKnowledge {
 
         Level level = ctx.level;
         BlockPos pos = ctx.player.blockPosition();
-        String dimKey = level.dimension().toString();
+        String dimKey = dimensionId(level);
 
         for (Block block : targets) {
             for (OreProfile profile : uniqueProfiles(block)) {
                 if (profile.dimension().isPresent() && !dimKey.equals(profile.dimension().get())) {
                     continue;
                 }
-                if (profile.biome().isPresent()) {
-                    String biomeId = level.getBiome(pos).unwrapKey()
-                            .map(key -> key.toString())
-                            .orElse("");
-                    if (!biomeId.equals(profile.biome().get())) {
-                        continue;
-                    }
+                if (profile.biome().isPresent() && !biomeId(level, pos).equals(profile.biome().get())) {
+                    continue;
                 }
                 min = Math.min(min, profile.yMin());
                 max = Math.max(max, profile.yMax());
@@ -126,6 +116,28 @@ public final class OreKnowledge {
         }
 
         return any ? new int[]{min, max} : new int[]{level.getMinY(), level.getMaxY()};
+    }
+
+    /**
+     * The world's id as a profile writes it: {@code minecraft:the_nether}.
+     *
+     * <p>A {@link net.minecraft.resources.ResourceKey} prints itself as
+     * {@code ResourceKey[minecraft:dimension / minecraft:the_nether]}, which equals no id anybody
+     * would write in a profile or in {@code lune.json}. Both filters here compared that sentence
+     * against a plain id, so the one built-in profile that names a world - Ancient Debris, in the
+     * Nether - was skipped in the Nether as well as out of it: a stripmine asked for debris fell
+     * back to the card's own y-level, which defaults to -59 and is below the Nether's bedrock.
+     * Every other dimension comparison in the codebase already asks for the identifier.</p>
+     */
+    private static String dimensionId(Level level) {
+        return level.dimension().identifier().toString();
+    }
+
+    /** The same for a biome, which a profile also names by id. */
+    private static String biomeId(Level level, BlockPos pos) {
+        return level.getBiome(pos).unwrapKey()
+                .map(key -> key.identifier().toString())
+                .orElse("");
     }
 
     /** Returns true if any of the targets is known to generate better in open caves. */

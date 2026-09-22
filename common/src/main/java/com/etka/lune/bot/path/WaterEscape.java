@@ -20,6 +20,28 @@ public final class WaterEscape {
     private static final int SEARCH_RADIUS = 16;
     /** Blocks of ceiling worth cutting through on the way up; more than this and the air runs out. */
     private static final int CEILING_BREAK_REACH = 3;
+    /**
+     * How far up to look for something to cut once the ordinary escape has stopped working.
+     * <p>
+     * A swamp surface roofed with lily pads puts the only thing worth breaking further above the
+     * head than a first attempt should spend its air reaching for - but when holding jump has
+     * already achieved nothing for a second, the air is going anyway.
+     */
+    private static final int STUCK_CEILING_REACH = 6;
+    /** Ticks of an escape spent on one block before it counts as not working. */
+    private static final int STUCK_TICKS = 20;
+    /** Ticks of swimming one way before trying another, once the way up has failed. */
+    private static final int SWIM_SWITCH_TICKS = 30;
+
+    /**
+     * Where the escape last found the player, and how long it has been there.
+     *
+     * <p>Static for the same reason {@link #CEILING_BREAKER} is: one client drives one player, and
+     * this only ever runs while that player is the one drowning.</p>
+     */
+    private static BlockPos stuckAt;
+    private static int stuckTicks;
+    private static int swimBias;
     /** Shared breaker for the ceiling cut; only ever used while this class is driving the player. */
     private static final BlockBreaker CEILING_BREAKER = new BlockBreaker();
     private static final int MAX_VISITED = 4_096;
@@ -57,12 +79,30 @@ public final class WaterEscape {
         ctx.input.sprint = false;
         ctx.debug.lastEvent = next == null ? "low air - swimming up" : "low air - escaping water";
 
+        // An escape that is not moving the player is not an escape. A measured run held jump at one
+        // block of swamp water for 200 ticks - "escaping to air" the whole way down from 20 health
+        // to nothing, with the air counter into the negatives - because the first answer it found
+        // was the only answer it ever tried. Being stuck is not a resting state here least of all.
+        //
+        // This is asked before the route is followed, not only when there is no route. The second
+        // drowning in the same world had a route: it was pinned under the fixture's own farmland
+        // with a perfectly good step to swim to and a solid block between its head and the sky, and
+        // followed that step into the same block for 190 ticks. Whatever the search says, if the
+        // player has not moved then what is overhead is the problem.
+        if (trackStall(start)) {
+            if (breakCeiling(ctx, STUCK_CEILING_REACH)) {
+                return;
+            }
+            swimSideways(ctx);
+            return;
+        }
+
         if (next == null) {
             // Nothing swimmable leads to air. Pressing jump here is holding the body against a
             // ceiling until the air runs out, which is how a run drowns under an overhang with a
             // block of gravel between it and the sky. Cut through it - that is what a person does,
             // and one block is usually all that is in the way.
-            if (breakCeiling(ctx)) {
+            if (breakCeiling(ctx, CEILING_BREAK_REACH)) {
                 return;
             }
             ctx.input.jump = true;
@@ -107,9 +147,43 @@ public final class WaterEscape {
      *
      * @return true when a break is under way and the caller should not also steer
      */
-    private static boolean breakCeiling(BotContext ctx) {
+    /**
+     * Whether the player has been on the same block long enough that the escape is not working.
+     *
+     * <p>Resets the moment the block position changes, so an escape that is making progress is
+     * never interfered with, and clears itself when the player is no longer drowning.</p>
+     */
+    private static boolean trackStall(BlockPos feet) {
+        if (!feet.equals(stuckAt)) {
+            stuckAt = feet.immutable();
+            stuckTicks = 0;
+            swimBias = 0;
+            return false;
+        }
+        stuckTicks++;
+        if (stuckTicks % SWIM_SWITCH_TICKS == 0) {
+            swimBias++;
+        }
+        return stuckTicks >= STUCK_TICKS;
+    }
+
+    /** Swims flat along one of the four headings, changing heading while it keeps not working. */
+    private static void swimSideways(BotContext ctx) {
+        Direction heading = Direction.from2DDataValue(Math.floorMod(swimBias, 4));
+        BlockPos ahead = ctx.player.blockPosition().relative(heading);
+        ctx.debug.lastEvent = "low air - nothing above; swimming " + heading.getName();
+        ctx.look.urgent();
+        ctx.look.lookAt(ctx.player, new Vec3(ahead.getX() + 0.5, ctx.player.getEyeY(),
+                ahead.getZ() + 0.5));
+        ctx.input.forward = true;
+        // Still asking to rise: the point of going sideways is to get out from under whatever is
+        // overhead, and the moment that happens the ordinary way up should take over.
+        ctx.input.jump = true;
+    }
+
+    private static boolean breakCeiling(BotContext ctx, int reach) {
         BlockPos head = ctx.player.blockPosition().above();
-        for (int step = 0; step < CEILING_BREAK_REACH; step++) {
+        for (int step = 0; step < reach; step++) {
             BlockPos above = head.above(step);
             if (!ctx.level.isLoaded(above)) {
                 return false;

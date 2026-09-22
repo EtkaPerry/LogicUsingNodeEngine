@@ -33,6 +33,13 @@ public final class UiScale {
     /** Compact trades size for room, so it keeps shrinking until it has plenty of both. */
     private static final int COMPACT_WIDTH = 800;
     private static final int COMPACT_HEIGHT = 430;
+    /**
+     * Smallest area the terms page is written for. Far less than a tab needs: one column of short
+     * text and a row of buttons, which is the whole reason that page can stay legible on a screen
+     * where the dashboard cannot.
+     */
+    private static final int TERMS_WIDTH = 300;
+    private static final int TERMS_HEIGHT = 200;
 
     private UiScale() {
     }
@@ -50,15 +57,67 @@ public final class UiScale {
 
     /** The rule itself, free of the window so it can be reasoned about and tested directly. */
     static int menuScale(int gameScale, int pixelWidth, int pixelHeight, String preference) {
+        return menuScale(gameScale, pixelWidth, pixelHeight, preference, 0);
+    }
+
+    /**
+     * As {@link #menuScale(int, int, int, String)}, with the player's text-size step applied.
+     *
+     * <p>The step is the last word, and deliberately so. Everything above it is the layout arguing
+     * about how much room it would like; the step is somebody saying they cannot read this. A
+     * positive step can therefore push the layout back below what it asked for - which is what the
+     * surfaces that honour it are expected to cope with, by reflowing or by scrolling.</p>
+     */
+    static int menuScale(int gameScale, int pixelWidth, int pixelHeight, String preference,
+                         int textSizeStep) {
         int game = Math.max(1, gameScale);
-        if (BotConfig.LUNE_UI_MATCH_GAME.equalsIgnoreCase(preference)) {
-            return game;
-        }
-        boolean compact = BotConfig.LUNE_UI_COMPACT.equalsIgnoreCase(preference);
-        int wantedWidth = compact ? COMPACT_WIDTH : MIN_WIDTH;
-        int wantedHeight = compact ? COMPACT_HEIGHT : MIN_HEIGHT;
-        int floor = Math.max(1, game / 2);
-        int scale = game;
+        int scale = BotConfig.LUNE_UI_MATCH_GAME.equalsIgnoreCase(preference)
+                ? game
+                : fit(game, pixelWidth, pixelHeight,
+                        BotConfig.LUNE_UI_COMPACT.equalsIgnoreCase(preference)
+                                ? COMPACT_WIDTH : MIN_WIDTH,
+                        BotConfig.LUNE_UI_COMPACT.equalsIgnoreCase(preference)
+                                ? COMPACT_HEIGHT : MIN_HEIGHT);
+        return Math.clamp(scale + textSizeStep, 1, game);
+    }
+
+    /** The scale Lune's menus draw at, including the player's text-size preference. */
+    public static int menuScaleWithTextSize(Window window) {
+        BotConfig config = BotConfig.get();
+        return menuScale(gameScale(window), window.getWidth(), window.getHeight(),
+                config.luneUiScale, BotConfig.textSizeStep(config.luneTextSize));
+    }
+
+    /**
+     * The scale the terms page draws at.
+     *
+     * <p>It asks for a much smaller box than a tab, because it is a much smaller page - and because
+     * it is the one page that has to work before the player can reach a single setting. The page
+     * scrolls when even this does not fit, so a large step here costs scrolling rather than the
+     * Accept button.</p>
+     */
+    public static int termsScale(Window window) {
+        BotConfig config = BotConfig.get();
+        int game = gameScale(window);
+        int fitted = BotConfig.LUNE_UI_MATCH_GAME.equalsIgnoreCase(config.luneUiScale)
+                ? game
+                : fit(game, window.getWidth(), window.getHeight(), TERMS_WIDTH, TERMS_HEIGHT);
+        return Math.clamp(fitted + BotConfig.textSizeStep(config.luneTextSize), 1, game);
+    }
+
+    /**
+     * The largest whole scale no greater than {@code gameScale} that leaves the wanted box, never
+     * going below half the player's own scale.
+     *
+     * <p>That floor is the accessibility half of the promise: someone on a TV, or someone who
+     * simply cannot read 9px text, chose a large scale deliberately, and a mod that quietly undoes
+     * it has substituted its own layout for their eyesight. Where the floor and the box disagree,
+     * the floor wins and the surface is expected to cope.</p>
+     */
+    private static int fit(int gameScale, int pixelWidth, int pixelHeight,
+                           int wantedWidth, int wantedHeight) {
+        int floor = Math.max(1, gameScale / 2);
+        int scale = gameScale;
         while (scale > floor
                 && (pixelWidth / scale < wantedWidth || pixelHeight / scale < wantedHeight)) {
             scale--;
@@ -73,6 +132,6 @@ public final class UiScale {
      */
     public static int toGamePixels(int luneCoordinate) {
         Window window = Minecraft.getInstance().getWindow();
-        return Math.round(luneCoordinate * (float) menuScale(window) / gameScale(window));
+        return Math.round(luneCoordinate * (float) menuScaleWithTextSize(window) / gameScale(window));
     }
 }

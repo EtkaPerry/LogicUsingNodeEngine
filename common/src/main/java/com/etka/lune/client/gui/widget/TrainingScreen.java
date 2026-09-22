@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.widget;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.config.BotConfig;
@@ -7,6 +8,7 @@ import com.etka.lune.task.TaskNode;
 import com.etka.lune.training.TrainingCourse;
 import com.etka.lune.training.TrainingLesson;
 import com.etka.lune.training.TrainingProgress;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.ActiveTextCollector;
 import net.minecraft.client.gui.Font;
@@ -15,7 +17,6 @@ import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -111,7 +112,7 @@ public class TrainingScreen extends AbstractWidget {
         Layout layout = layout();
         List<TrainingLesson> lessons = TrainingCourse.lessons();
 
-        extractor.fill(0, 0, mc.screen.width, mc.screen.height, DIM);
+        extractor.fill(0, 0, Screens.current(mc).width, Screens.current(mc).height, DIM);
         LuneScreen.panel(extractor, layout.panelX(), layout.panelY(), layout.panelW(), layout.panelH());
 
         ActiveTextCollector text = extractor.textRenderer();
@@ -211,8 +212,8 @@ public class TrainingScreen extends AbstractWidget {
 
     private Layout layout() {
         Minecraft mc = Minecraft.getInstance();
-        int screenW = mc.screen == null ? 400 : mc.screen.width;
-        int screenH = mc.screen == null ? 300 : mc.screen.height;
+        int screenW = Screens.current(mc) == null ? 400 : Screens.current(mc).width;
+        int screenH = Screens.current(mc) == null ? 300 : Screens.current(mc).height;
         int panelW = Math.min(screenW - 20, Math.max(320, (int) (screenW * 0.88)));
         int panelH = Math.min(screenH - 20, Math.max(220, (int) (screenH * 0.82)));
         int panelX = (screenW - panelW) / 2;
@@ -263,7 +264,7 @@ public class TrainingScreen extends AbstractWidget {
     // --- input ---------------------------------------------------------------
 
     public void handleScreenMouseClick(double mouseX, double mouseY, int button) {
-        if (!visible || button != GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+        if (!visible || button != InputConstants.MOUSE_BUTTON_LEFT) {
             return;
         }
         Layout layout = layout();
@@ -313,9 +314,9 @@ public class TrainingScreen extends AbstractWidget {
     }
 
     public void handleScreenKeyPressed(int keyCode, int scanCode, int modifiers) {
-        if (visible && keyCode == GLFW.GLFW_KEY_RIGHT) page(1);
-        if (visible && keyCode == GLFW.GLFW_KEY_LEFT) page(-1);
-        if (visible && keyCode == GLFW.GLFW_KEY_ESCAPE) {
+        if (visible && keyCode == InputConstants.KEY_RIGHT) page(1);
+        if (visible && keyCode == InputConstants.KEY_LEFT) page(-1);
+        if (visible && keyCode == InputConstants.KEY_ESCAPE) {
             close();
         }
     }

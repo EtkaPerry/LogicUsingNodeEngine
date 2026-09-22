@@ -6,6 +6,7 @@ import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.util.InventoryHelper;
 import com.etka.lune.bot.util.Vision;
@@ -120,6 +121,12 @@ public final class QuickStoneTask implements Task {
     @Override
     public StatusText statusLine() {
         return status;
+    }
+
+    /** Counted in stone, as the bar is, and keyed on that identifier in every language. */
+    @Override
+    public LearningScope learningScope() {
+        return LearningScope.of(learningId(), "lune.unit.stone");
     }
 
     @Override

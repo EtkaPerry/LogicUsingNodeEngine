@@ -351,7 +351,32 @@ public final class TaskWiring {
                 copy.nodes.add(copyNode(node));
             }
         }
+        copyAnnotations(source, copy);
         return copy;
+    }
+
+    /** Notes and frames are part of the task, so a snapshot that dropped them would lose work. */
+    private static void copyAnnotations(TaskGraph source, TaskGraph target) {
+        target.notes = new ArrayList<>();
+        target.groups = new ArrayList<>();
+        if (source.notes != null) {
+            for (TaskNote note : source.notes) {
+                if (note != null) {
+                    TaskNote copied = note.copy();
+                    copied.id = note.id;
+                    target.notes.add(copied);
+                }
+            }
+        }
+        if (source.groups != null) {
+            for (TaskGroup group : source.groups) {
+                if (group != null) {
+                    TaskGroup copied = group.copy();
+                    copied.id = group.id;
+                    target.groups.add(copied);
+                }
+            }
+        }
     }
 
     /** Restores matching node objects in place so a running TaskRunner keeps valid references. */
@@ -390,6 +415,7 @@ public final class TaskWiring {
         }
         target.nodes.clear();
         target.nodes.addAll(restored);
+        copyAnnotations(snapshot, target);
         return true;
     }
 
@@ -509,5 +535,8 @@ public final class TaskWiring {
         target.alwaysIntervalSeconds = source.alwaysIntervalSeconds;
         target.editorX = source.editorX;
         target.editorY = source.editorY;
+        // Carried here, unlike in TaskNode.copy: this is the same card restored, and an undo that
+        // silently cleared every breakpoint would be an undo of something nobody did.
+        target.breakpoint = source.breakpoint;
     }
 }

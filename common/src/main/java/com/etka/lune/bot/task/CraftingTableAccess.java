@@ -55,6 +55,8 @@ final class CraftingTableAccess {
     private int openAttempts;
     private long currentTableKey = -1;
     private BlockPos tablePos;
+    /** The four-plank craft run when there is no table to be had; see the branch that starts it. */
+    private CraftTask tableCraft;
     private GotoTask approach;
     private int tableSearchRadius = TABLE_SEARCH_RADIUS;
     private int placingTicks;
@@ -195,6 +197,32 @@ final class CraftingTableAccess {
                     tablePos = fallbackTablePos;
                     fallbackTablePos = null;
                     return TaskStatus.RUNNING;
+                }
+                // A table is four planks, and this class has always said so: "further than this
+                // and it is faster to make another one where the work is". It could only ever
+                // place one it was already carrying, though, so a bot with a pack full of logs and
+                // no table gave up on every 3x3 recipe it was asked for. A measured Smelt run
+                // carried 34 raw iron and 94 cobblestone past this line and never made a furnace.
+                //
+                // Making one needs no table itself - it is a 2x2 recipe - so this cannot come back
+                // round to here, and it asks for one to be *had* rather than made, so a table that
+                // turns up in the meantime ends it. Everything else stays where it was: if the
+                // wood is not there either, the answer is still that a table is needed.
+                if (tableCraft == null) {
+                    tableCraft = CraftTask.of(Items.CRAFTING_TABLE, 1, false);
+                    tableCraft.start(ctx);
+                }
+                if (tableCraft != null) {
+                    TaskStatus crafting = tableCraft.tick(ctx);
+                    status.set(tableCraft.statusLine());
+                    if (crafting == TaskStatus.RUNNING) {
+                        return TaskStatus.RUNNING;
+                    }
+                    tableCraft.stop(ctx);
+                    tableCraft = null;
+                    if (crafting == TaskStatus.SUCCESS) {
+                        return TaskStatus.RUNNING;
+                    }
                 }
                 status.set("lune.status.crafting_table_access.need_crafting_table");
                 return TaskStatus.FAILED;

@@ -17,10 +17,16 @@ import com.etka.lune.util.Lang;
  */
 public final class StatusText {
 
+    // Declared before EMPTY, and it has to stay that way. Static initialisers run in the order
+    // they are written, so an EMPTY built above this line is built while NO_ARGS is still null -
+    // and every instance field is assigned from it. That is not a theoretical ordering point: it
+    // left EMPTY.args null for the life of the process, and `status.set(child.status())` threw
+    // NullPointerException on "other.args" for every child that had not overridden status(), which
+    // Task.java answers with EMPTY. A Cov Walk run died on it 433 ticks in.
+    private static final Object[] NO_ARGS = new Object[0];
+
     /** The status of a task that has not said anything yet. Shared, and refuses to be written to. */
     public static final StatusText EMPTY = new StatusText(true);
-
-    private static final Object[] NO_ARGS = new Object[0];
 
     private final boolean frozen;
     private String key = "";

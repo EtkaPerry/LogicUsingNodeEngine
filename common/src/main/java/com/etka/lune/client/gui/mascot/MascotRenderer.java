@@ -17,12 +17,30 @@ public final class MascotRenderer {
     /** Rows of the 96 px cell that the head occupies; mood wipes run between them. */
     private static final int ORB_TOP = 17;
     private static final int ORB_BOTTOM = 84;
+    /** The head spans 68 of the 96 px cell; the rest is clear room for her to drift in. */
+    private static final int HEAD_SPAN = 68;
     private static final int SOUL_COLOUR = 0xFFF4C95D;
     private static final int HEAD_COLOUR = 0xFF252033;
     private static final int DANGER_FLICKER = 0xFFFFD8C8;
     private static final int EYE_DARK = 0xFF3D2B12;
 
     private final SoulAnimation soul = new SoulAnimation();
+
+    /**
+     * Draws her with the head itself measuring {@code head} px, from {@code x, y}.
+     *
+     * <p>A caller that sizes her by the cell gets a head a third smaller than it asked for, because
+     * the cell holds the drift room as well. This is the call for a tight box, where the size asked
+     * for is the size she should look. The drift room still bleeds outside the box, but it is clear
+     * pixels, so only a caller with less than {@code (head * 96 / 68 - head) / 2} px to spare on any
+     * side need care.</p>
+     */
+    public void drawHead(GuiGraphicsExtractor extractor, MascotAdvisor.Mood mood,
+                         int x, int y, int head, long now) {
+        int cell = Math.round(head * (float) FRAME_SIZE / HEAD_SPAN);
+        int bleed = (cell - head) / 2;
+        draw(extractor, mood, x - bleed, y - bleed, cell, now);
+    }
 
     public void draw(GuiGraphicsExtractor extractor, MascotAdvisor.Mood mood,
                             int x, int y, int size, long now) {

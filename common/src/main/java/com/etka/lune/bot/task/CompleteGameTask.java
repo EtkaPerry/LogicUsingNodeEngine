@@ -1,5 +1,6 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.compat.Hands;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
@@ -677,7 +678,7 @@ public final class CompleteGameTask implements Task {
                     || ctx.player.getAttackStrengthScale(0.0F) >= 1.0F;
             if (ready && ctx.look.isLookingAt(ctx.player, target.getEyePosition(), 20.0F)) {
                 ctx.gameMode.attack(ctx.player, target);
-                ctx.player.swing(InteractionHand.MAIN_HAND);
+                Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
             }
 
             status.set("lune.status.complete_game.melee", target.getType().getDescription().getString());

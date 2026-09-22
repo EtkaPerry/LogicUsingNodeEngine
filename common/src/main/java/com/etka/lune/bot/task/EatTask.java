@@ -1,5 +1,6 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
@@ -125,7 +126,7 @@ public final class EatTask implements Task {
         }
 
         // A container screen suppresses handleKeybinds entirely, so no held key would be read.
-        if (ctx.mc.screen != null) {
+        if (Screens.current(ctx.mc) != null) {
             releaseUse(ctx);
             status.set("lune.status.eat.cannot_eat_with_screen_open");
             return TaskStatus.FAILED;

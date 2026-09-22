@@ -7,6 +7,7 @@ import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.knowledge.BiomeScout;
 import com.etka.lune.bot.learning.LearningContext;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.memory.BlockMemory;
 import com.etka.lune.bot.path.Goal;
 import com.etka.lune.bot.path.Goals;
@@ -174,17 +175,28 @@ public final class ExploreTask implements Task {
     }
 
     @Override
+    public LearningScope learningScope() {
+        return LearningScope.of("visible-search", null, searchPhase());
+    }
+
+    @Override
     public LearningContext learningContext(BotContext ctx) {
+        return new LearningContext("skill", "visible-search",
+                ctx.level.dimension().identifier().toString(), String.join(";", searchPhase()));
+    }
+
+    /** The situation a search is keyed on; every part of it is one of the card's parameters. */
+    private String[] searchPhase() {
         String targetKey = targets.stream()
                 .map(block -> BuiltInRegistries.BLOCK.getKey(block).toString())
                 .sorted()
                 .limit(4)
                 .collect(Collectors.joining(","));
-        String phase = "targets=" + (targetKey.isBlank() ? "none" : targetKey)
-                + ";radius=" + radiusBucket(radius)
-                + ";smart=" + smartDirection + ";look=" + checkAround;
-        return new LearningContext("skill", "visible-search",
-                ctx.level.dimension().identifier().toString(), phase);
+        return new String[] {
+                "targets=" + (targetKey.isBlank() ? "none" : targetKey),
+                "radius=" + radiusBucket(radius),
+                "smart=" + smartDirection,
+                "look=" + checkAround};
     }
 
     @Override

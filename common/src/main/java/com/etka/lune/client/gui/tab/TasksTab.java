@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.tab;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.bot.Task;
@@ -13,6 +14,7 @@ import com.etka.lune.client.gui.widget.BlockPicker;
 import com.etka.lune.client.gui.widget.NamePrompt;
 import com.etka.lune.client.gui.widget.RecipePicker;
 import com.etka.lune.client.gui.widget.InventoryPicker;
+import com.etka.lune.client.gui.widget.SoundPicker;
 import com.etka.lune.client.gui.widget.BlueprintPanel;
 import com.etka.lune.client.gui.widget.ListPanel;
 import com.etka.lune.client.gui.widget.PalettePanel;
@@ -23,7 +25,9 @@ import com.etka.lune.training.TrainingCourse;
 import com.etka.lune.training.TrainingAnswer;
 import com.etka.lune.training.TrainingLesson;
 import com.etka.lune.training.TrainingProgress;
+import com.etka.lune.task.TaskDebug;
 import com.etka.lune.task.TaskGraph;
+import com.etka.lune.task.TaskGroup;
 import com.etka.lune.task.TaskCableAnchor;
 import com.etka.lune.task.TaskWiring;
 import com.etka.lune.task.TaskNode;
@@ -106,6 +110,7 @@ public class TasksTab extends LuneTab {
     private BlockPicker blockPicker;
     private InventoryPicker inventoryPicker;
     private RecipePicker recipePicker;
+    private SoundPicker soundPicker;
     private NamePrompt namePrompt;
     private TrainingScreen trainingScreen;
     /** The lesson being attempted, or null when the editor is being used for real work. */
@@ -122,7 +127,7 @@ public class TasksTab extends LuneTab {
     private boolean answerRevealActive;
     private int answerRevealTicks;
     private boolean answerRevealHistoryStarted;
-    /** True once the current lesson is solved; training stays on so the routine can be run. */
+    /** True once the current lesson is solved; training stays on so the task can be run. */
     private boolean lessonSolved;
     /** The task selected before training started, restored on the way out. */
     private String taskBeforeTraining;
@@ -181,6 +186,19 @@ public class TasksTab extends LuneTab {
     private boolean syncingAlwaysSecondsBox;
     private final Button layoutButton;
     private final Button minimapButton;
+    private final Button findButton;
+    private final Button noteButton;
+    private final Button groupButton;
+    /**
+     * The debugger's three controls.
+     *
+     * <p>Only on screen when there is something to debug - a card selected, or a run to hold. A
+     * permanent Step button on a tab nobody is debugging is three buttons of canvas given away to
+     * a mode most sessions never enter.</p>
+     */
+    private final Button breakpointButton;
+    private final Button stepButton;
+    private final Button resumeButton;
     /** Only appears when the tab is too narrow for three panes; shows and hides the task list. */
     private final Button tasksButton;
 
@@ -268,12 +286,48 @@ public class TasksTab extends LuneTab {
                 b -> pressSelectedButton()).size(42, 18).build());
         layoutButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.layout")), b -> blueprintPanel.autoLayout()).size(48, 18).build());
         minimapButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.map")), b -> toggleMinimap()).size(58, 18).build());
+        findButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.find")),
+                        b -> blueprintPanel.toggleFind()).size(42, 18)
+                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.literal(Lang.get("lune.gui.tasks.find_tip"))))
+                .build());
+        noteButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.note")),
+                        b -> addNote()).size(44, 18)
+                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.literal(Lang.get("lune.gui.tasks.note_tip"))))
+                .build());
+        groupButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.group")),
+                        b -> groupCards()).size(52, 18)
+                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.literal(Lang.get("lune.gui.tasks.group_tip"))))
+                .build());
+        breakpointButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.breakpoint")),
+                        b -> toggleBreakpoint()).size(52, 18)
+                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.literal(Lang.get("lune.gui.tasks.breakpoint_tip"))))
+                .build());
+        stepButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.debug_step")),
+                        b -> stepTask()).size(44, 18)
+                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.literal(Lang.get("lune.gui.tasks.debug_step_tip"))))
+                .build());
+        resumeButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.debug_continue")),
+                        b -> resumeTask()).size(60, 18)
+                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.literal(Lang.get("lune.gui.tasks.debug_continue_tip"))))
+                .build());
         tasksButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.title")), b -> toggleList()).size(46, 18).build());
+
+        // Hidden until there is something to debug; layout may run before the first tick does.
+        breakpointButton.visible = false;
+        stepButton.visible = false;
+        resumeButton.visible = false;
 
         stepParams.setOpenBlockPicker(this::openBlockPicker);
         stepParams.setOpenItemPicker(this::openItemPicker);
         stepParams.setOpenRecipePicker(this::openRecipePicker);
         stepParams.setOpenNamePrompt(this::openNamePrompt);
+        stepParams.setOpenChoicePicker(this::openChoicePicker);
 
         if (lastOpenedTaskName == null && BotConfig.get().lastOpenedTask != null
                 && !BotConfig.get().lastOpenedTask.isBlank()) {
@@ -292,6 +346,10 @@ public class TasksTab extends LuneTab {
 
     public void setInventoryPicker(InventoryPicker picker) {
         this.inventoryPicker = picker;
+    }
+
+    public void setSoundPicker(SoundPicker picker) {
+        this.soundPicker = picker;
     }
 
     public void setRecipePicker(RecipePicker picker) {
@@ -327,9 +385,9 @@ public class TasksTab extends LuneTab {
                 Lang.get("lune.gui.tasks.send_preview_pulse_whenever_want_inspect"),
                 Lang.get("lune.gui.tasks.success_fail_different_paths_preview"),
                 Lang.get("lune.gui.tasks.experiments_welcome_here_undo_lets_try"),
-                Lang.get("lune.gui.tasks.look_card_whose_job_missing_from_routine"),
+                Lang.get("lune.gui.tasks.look_card_whose_job_missing_from_task"),
                 Lang.get("lune.gui.tasks.time_limit_we_work_through_pace"),
-                Lang.get("lune.gui.tasks.experiment_safely_routine_only_training"),
+                Lang.get("lune.gui.tasks.experiment_safely_task_only_training"),
                 Lang.get("lune.gui.tasks.card_needs_connection_take_part_look"),
                 Lang.get("lune.gui.tasks.follow_one_wire_time_do_need_solve_whole")
         };
@@ -372,7 +430,7 @@ public class TasksTab extends LuneTab {
     }
 
     /**
-     * Hands the player a broken routine and the three cards one of which finishes it.
+     * Hands the player a broken task and the three cards one of which finishes it.
      *
      * <p>The attempt is a real task in the real store, edited with the real editor. A read-only
      * sandbox would be easier to write and would teach a set of controls the player never uses
@@ -430,7 +488,7 @@ public class TasksTab extends LuneTab {
     }
 
     /**
-     * Ends training and takes the scratch routine away with it.
+     * Ends training and takes the scratch task away with it.
      *
      * <p>The attempt is never left behind. It looks exactly like a task the player wrote, sits in
      * the list beside the ones they did write, and is the whole reason training has to be a mode
@@ -472,7 +530,7 @@ public class TasksTab extends LuneTab {
             layout(area);
         }
         message = wasSolved
-                ? Lang.get("lune.gui.tasks.back_tasks_practice_routine_scratch_has")
+                ? Lang.get("lune.gui.tasks.back_tasks_practice_task_scratch_has")
                 : Lang.get("lune.gui.tasks.left_training_nothing_added_task_list");
     }
 
@@ -575,7 +633,7 @@ public class TasksTab extends LuneTab {
     }
 
     /**
-     * Marks a lesson cleared the moment its routine is whole.
+     * Marks a lesson cleared the moment its task is whole.
      *
      * <p>Checked every tick rather than behind a "check my answer" button. The audit is already
      * computed for the canvas, and a puzzle that only tells you at the end is a puzzle you solve by
@@ -601,8 +659,8 @@ public class TasksTab extends LuneTab {
         if (lessonSolved) return;
         boolean firstTime = !TrainingProgress.isComplete(activeLesson);
         TrainingProgress.markComplete(activeLesson);
-        // Training mode stays on. Ending it here would drop the practice routine straight into the
-        // task list, and the reward for finishing a routine is being allowed to run it.
+        // Training mode stays on. Ending it here would drop the practice task straight into the
+        // task list, and the reward for finishing a task is being allowed to run it.
         lessonSolved = true;
         lessonSpeech = "";
         blueprintPanel.setTrainingSolved(true);
@@ -620,9 +678,9 @@ public class TasksTab extends LuneTab {
             blockPicker.setPosition(area.left(), area.top());
             blockPicker.setSize(area.width(), area.height());
         } else {
-            int w = Math.max(280, Minecraft.getInstance().screen.width * 4 / 5);
-            int h = Math.max(200, Minecraft.getInstance().screen.height * 4 / 5);
-            blockPicker.setPosition((Minecraft.getInstance().screen.width - w) / 2, (Minecraft.getInstance().screen.height - h) / 2);
+            int w = Math.max(280, Screens.current(Minecraft.getInstance()).width * 4 / 5);
+            int h = Math.max(200, Screens.current(Minecraft.getInstance()).height * 4 / 5);
+            blockPicker.setPosition((Screens.current(Minecraft.getInstance()).width - w) / 2, (Screens.current(Minecraft.getInstance()).height - h) / 2);
             blockPicker.setSize(w, h);
         }
         blockPicker.open(param, param::set);
@@ -651,6 +709,29 @@ public class TasksTab extends LuneTab {
     }
 
     /** Opens the typing prompt for a parameter whose value is a name nothing can offer as a list. */
+    /**
+     * Opens whichever panel a choice named, and falls back to cycling if that panel is not there.
+     *
+     * <p>Cycling a thousand sounds one click at a time is no use, but it is a great deal better
+     * than a parameter that cannot be changed at all - which is what a missing picker would
+     * otherwise mean on a screen that has one.</p>
+     */
+    private void openChoicePicker(Param.Choice param) {
+        if (soundPicker == null || !Param.Choice.SOUND_PICKER.equals(param.pickerId())) {
+            param.cycle();
+            return;
+        }
+        int w = Math.clamp(area.width() * 3 / 4, 260, 460);
+        int h = Math.clamp(area.height() * 3 / 4, 180, 340);
+        soundPicker.setPosition(area.left() + (area.width() - w) / 2,
+                area.top() + (area.height() - h) / 2);
+        soundPicker.setSize(w, h);
+        soundPicker.open(param, chosen -> {
+            param.set(chosen);
+            stepParams.refresh();
+        });
+    }
+
     private void openNamePrompt(Param.Text param) {
         if (namePrompt == null) {
             return;
@@ -772,7 +853,7 @@ public class TasksTab extends LuneTab {
         TaskStore.get().save();
         BotEngine.get().runNow(new TaskRunner(selected));
         if (BotConfig.get().closePanelOnRun) {
-            Minecraft.getInstance().setScreen(null);
+            Screens.open(Minecraft.getInstance(), null);
         } else {
             message = Lang.get("lune.gui.tasks.running_panel_stays_open", selected.displayName());
             syncRunButton();
@@ -991,6 +1072,9 @@ public class TasksTab extends LuneTab {
             if (removed.stream().anyMatch(step -> step.id.equals(task.onWhile))) {
                 task.onWhile = null;
             }
+            // A frame naming cards that no longer exist is a frame around nothing, so it goes with
+            // them - and one that still holds cards simply shrinks to fit what is left.
+            TaskGroup.prune(task);
             setSelectedStep(null);
             recordEdit();
             TaskStore.get().save();
@@ -1147,6 +1231,82 @@ public class TasksTab extends LuneTab {
         boolean visible = blueprintPanel.toggleMinimap();
         minimapButton.setMessage(Component.literal(Lang.get(visible ? "lune.gui.tasks.map" : "lune.gui.tasks.map_off")));
         message = visible ? Lang.get("lune.gui.tasks.minimap_shown") : Lang.get("lune.gui.tasks.minimap_hidden");
+    }
+
+    private void addNote() {
+        if (taskList.getSelected() == null) {
+            message = Lang.get("lune.gui.tasks.pick_task_first");
+            return;
+        }
+        blueprintPanel.addNoteAt(null, null);
+    }
+
+    /** Group, or ungroup when Shift is held - the same pair the canvas binds to Ctrl+G. */
+    private void groupCards() {
+        if (taskList.getSelected() == null) {
+            message = Lang.get("lune.gui.tasks.pick_task_first");
+            return;
+        }
+        if (Minecraft.getInstance().hasShiftDown()) {
+            blueprintPanel.ungroupSelection();
+        } else {
+            blueprintPanel.groupSelection();
+        }
+    }
+
+    private void toggleBreakpoint() {
+        if (Minecraft.getInstance().hasShiftDown()) {
+            blueprintPanel.clearBreakpoints();
+        } else {
+            blueprintPanel.toggleBreakpoints();
+        }
+    }
+
+    private void stepTask() {
+        TaskDebug.step();
+        message = Lang.get(TaskDebug.holding() ? "lune.gui.tasks.stepping"
+                : "lune.gui.tasks.stepping_armed");
+    }
+
+    private void resumeTask() {
+        TaskDebug.resume();
+        message = Lang.get("lune.gui.tasks.resumed");
+    }
+
+    /**
+     * Shows the debugger's controls when there is something for them to act on.
+     *
+     * <p>Breakpoint appears with a card selected, because that is what it acts on. Step and
+     * Continue appear while the selected task is the one running, or while a run is already being
+     * held - the second case matters because a hold survives switching to another task in the
+     * list, and the buttons that release it must survive with it.</p>
+     */
+    private void syncDebugControls() {
+        boolean cardSelected = selectedStep() != null;
+        boolean debugging = selectedTaskIsRunning() || TaskDebug.holding()
+                || TaskDebug.waitingToBreak();
+        boolean changed = breakpointButton.visible != cardSelected
+                || stepButton.visible != debugging;
+        breakpointButton.visible = cardSelected;
+        breakpointButton.active = cardSelected;
+        stepButton.visible = debugging;
+        resumeButton.visible = debugging;
+        stepButton.active = debugging;
+        // Continue also cancels a hold that has been asked for but not yet reached, which is the
+        // only way back out of an armed Step on a task that has since gone quiet.
+        resumeButton.active = TaskDebug.holding() || TaskDebug.waitingToBreak();
+        if (!cardSelected) {
+            breakpointButton.setFocused(false);
+        }
+        if (!debugging) {
+            stepButton.setFocused(false);
+            resumeButton.setFocused(false);
+        }
+        findButton.setMessage(Component.literal(Lang.get(blueprintPanel.isFindOpen()
+                ? "lune.gui.tasks.find_open" : "lune.gui.tasks.find")));
+        if (changed && area != null && area.width() > 0) {
+            layout(area);
+        }
     }
 
     private void onStepSelected(TaskNode step) {
@@ -1434,6 +1594,7 @@ public class TasksTab extends LuneTab {
         syncAlwaysFrequencyControls();
         syncRelayPortControls();
         syncButtonControls();
+        syncDebugControls();
         tickAnswerReveal();
         checkLesson();
     }
@@ -1592,7 +1753,7 @@ public class TasksTab extends LuneTab {
     public void save() {
         tick();
         if (inTraining()) {
-            // Closing the panel mid-puzzle would otherwise write the practice routine into
+            // Closing the panel mid-puzzle would otherwise write the practice task into
             // lune-tasks.json, which is the one place it must never end up.
             leavePuzzle();
         }
@@ -1794,7 +1955,7 @@ public class TasksTab extends LuneTab {
      * Which of the left pane's two occupants is on screen.
      *
      * <p>The pane holds the task list or the training brief, never both. That is the point: a
-     * practice routine looks exactly like a real one on the canvas, so the only honest place to say
+     * practice task looks exactly like a real one on the canvas, so the only honest place to say
      * which mode the editor is in is the pane the player reads before they touch anything.</p>
      *
      * <p>Run and Training are absent from both sets. Neither is ever hidden - when the pane
@@ -1853,6 +2014,19 @@ public class TasksTab extends LuneTab {
         if (buttonPressButton.visible) {
             controls.add(buttonPressButton);
         }
+        // The canvas tools sit after the card controls: those act on what is selected, these act
+        // on the board, and keeping the two apart is what stops the strip reading as one long row
+        // of unrelated buttons.
+        controls.add(findButton);
+        controls.add(noteButton);
+        controls.add(groupButton);
+        if (breakpointButton.visible) {
+            controls.add(breakpointButton);
+        }
+        if (stepButton.visible) {
+            controls.add(stepButton);
+            controls.add(resumeButton);
+        }
         if (inTraining()) {
             controls.addAll(0, List.of(runButton, restartButton, outcomeButton, helpButton,
                     nextLessonButton, trainingButton));
@@ -1889,7 +2063,7 @@ public class TasksTab extends LuneTab {
         Frame frame = frame(area, controlRows);
         if (frame.listVisible()) {
             // The 22px gap at the top is the name box's. Training has no name box - the practice
-            // routine is not something to rename - so the brief gets the whole pane to sit on.
+            // task is not something to rename - so the brief gets the whole pane to sit on.
             int paneTop = inTraining() ? frame.top() : frame.top() + 22;
             LuneScreen.panel(extractor, frame.left(), paneTop, frame.leftPane(),
                     Math.max(20, frame.top() + frame.listHeight() - paneTop));
@@ -1897,7 +2071,7 @@ public class TasksTab extends LuneTab {
         LuneScreen.panel(extractor, frame.flowX(), frame.flowTop(), frame.flowWidth(),
                 frame.flowHeight());
         if (inTraining()) {
-            // The canvas is the same widget in both modes and a practice routine looks exactly
+            // The canvas is the same widget in both modes and a practice task looks exactly
             // like a real one on it, so the frame around it is what says this is not your task.
             extractor.outline(frame.flowX(), frame.flowTop(), frame.flowWidth(),
                     frame.flowHeight(), LuneScreen.ACCENT);

@@ -1,11 +1,13 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.catalog.CraftPattern;
 import com.etka.lune.bot.util.InventoryHelper;
 import net.minecraft.world.entity.player.Inventory;
@@ -102,6 +104,11 @@ public final class GridCraftTask implements Task {
     }
 
     @Override
+    public LearningScope learningScope() {
+        return LearningScope.of(learningId(), "lune.unit.crafts");
+    }
+
+    @Override
     public StatusText statusLine() {
         return status;
     }
@@ -159,7 +166,7 @@ public final class GridCraftTask implements Task {
             return TaskStatus.RUNNING;
         }
         ctx.player.closeContainer();
-        ctx.mc.setScreen(null);
+        Screens.open(ctx.mc, null);
         status.set("lune.status.grid_craft.closing_open_container_use_crafting_grid");
         cooldown = ACTION_COOLDOWN;
         return TaskStatus.RUNNING;
@@ -451,7 +458,7 @@ public final class GridCraftTask implements Task {
     private void closeMenu(BotContext ctx) {
         if (ctx.player.containerMenu != ctx.player.inventoryMenu) {
             ctx.player.closeContainer();
-            ctx.mc.setScreen(null);
+            Screens.open(ctx.mc, null);
         }
     }
 

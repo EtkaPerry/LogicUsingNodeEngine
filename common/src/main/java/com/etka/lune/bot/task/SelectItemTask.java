@@ -10,6 +10,8 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 
+import java.util.Locale;
+
 /**
  * Puts a chosen item in the player's hand and keeps an eye on whether it is still fit to use.
  *
@@ -202,7 +204,7 @@ public final class SelectItemTask implements Task {
         status.set("lune.status.select_item.holding", InventoryHelper.itemName(item), durabilityNote(wanted, chosenPercent));
         if (moved) {
             ctx.debug.decide("selected " + InventoryHelper.itemName(item) + " for the "
-                    + hand.label().toLowerCase());
+                    + hand.label().toLowerCase(Locale.ROOT));
         }
         return TaskStatus.SUCCESS;
     }

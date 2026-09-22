@@ -6,12 +6,18 @@ import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.util.BlockBreaker;
+import com.etka.lune.bot.util.ExposedVein;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.block.Block;
+
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Digs a straight corridor of a given height, one block at a time.
@@ -29,6 +35,14 @@ public final class TunnelTask implements Task {
     private final String directionChoice;
     private final int length;
     private final int height;
+    /**
+     * What the corridor stops for, or empty when it is only a corridor.
+     *
+     * <p>The Tunnel card digs and nothing else: it has no target parameter, so nothing here fires
+     * for it. Stripmine does have one, and a strip mine that walks its branches past the ore it was
+     * cut to find is a hole in the ground with a progress bar.</p>
+     */
+    private final Set<Block> targets;
 
     private final BlockBreaker breaker = new BlockBreaker();
     private BlockPos origin;
@@ -39,17 +53,40 @@ public final class TunnelTask implements Task {
     private int stuckTicks;
     /** How long one block of corridor may take before the corridor is declared unwalkable. */
     private static final int MAX_STEP_TICKS = 200;
+    /** Veins this corridor has given up on: lava behind one, or one that would not break. */
+    private final Set<Long> refusedVeins = new HashSet<>();
+    private BlockPos veinTarget;
+    private int veinTicks;
+    /**
+     * How long one exposed block may be swung at before the corridor leaves it.
+     * <p>
+     * Fifteen seconds. The slowest thing a job of this kind legitimately asks for is ancient
+     * debris, which is about five and a half seconds with a diamond pickaxe and a little over four
+     * with a netherite one. Anything still standing at three times that is not slow, it is a block
+     * the bot cannot actually break from where it is - and the corridor has somewhere else to be.
+     */
+    private static final int MAX_VEIN_TICKS = 300;
     private final StatusText status = new StatusText();
 
     public TunnelTask(String directionChoice, int length, int height) {
+        this(directionChoice, length, height, Set.of());
+    }
+
+    public TunnelTask(String directionChoice, int length, int height, Set<Block> targets) {
         this.directionChoice = directionChoice;
         this.length = length;
         this.height = Math.max(2, height);
+        this.targets = Set.copyOf(targets);
     }
 
     /** For Stripmine, which knows its direction up front and picks its own starting point. */
     public TunnelTask(Direction direction, BlockPos origin, int length, int height) {
-        this(direction.getName(), length, height);
+        this(direction, origin, length, height, Set.of());
+    }
+
+    /** The same, for a shaft or branch that is being cut in search of something. */
+    public TunnelTask(Direction direction, BlockPos origin, int length, int height, Set<Block> targets) {
+        this(direction.getName(), length, height, targets);
         this.direction = direction;
         this.origin = origin;
     }
@@ -66,13 +103,18 @@ public final class TunnelTask implements Task {
     }
 
     @Override
+    public LearningScope learningScope() {
+        return LearningScope.of(learningId(), "lune.unit.blocks");
+    }
+
+    @Override
     public StatusText statusLine() {
         return status;
     }
 
     @Override
     public TaskProgress progress() {
-        return new TaskProgress(advanced, length, Lang.get("lune.card.blocks_unit"));
+        return new TaskProgress(advanced, length, Lang.get("lune.unit.blocks"));
     }
 
     @Override
@@ -113,12 +155,20 @@ public final class TunnelTask implements Task {
         // until it died - the Self Preservation card fired three times and could not get it out of
         // the hole it was still busy making.
         //
-        // Failing rather than waiting: the routine's Fail edge is where "so do something else"
+        // Failing rather than waiting: the task's Fail edge is where "so do something else"
         // belongs, and the guard needs the bot to stop digging before it can swim anywhere.
         if (ctx.player.isUnderWater()) {
             breaker.stop(ctx);
             status.set("lune.status.tunnel.under_water_not_starting_corridor_here");
             return TaskStatus.FAILED;
+        }
+
+        // Take what the last few blocks opened before cutting the next one. A vein is only exposed
+        // for as long as the bot is standing beside it: keep walking and it is behind a wall of its
+        // own corridor, and nothing comes back for it.
+        TaskStatus vein = mineExposedTarget(ctx);
+        if (vein != null) {
+            return vein;
         }
 
         BlockPos ahead = origin.relative(direction, advanced + 1);
@@ -167,12 +217,60 @@ public final class TunnelTask implements Task {
         //
         // Ten seconds is far longer than stepping one block into cleared space can honestly take,
         // so exceeding it is not slowness, it is a corridor that cannot be walked. Failing hands
-        // the routine its Fail edge, which is where the decision belongs.
+        // the task its Fail edge, which is where the decision belongs.
         if (++stuckTicks > MAX_STEP_TICKS) {
             status.set("lune.status.tunnel.couldnt_move_into_corridor_after_s", (MAX_STEP_TICKS / 20), advanced, length);
             return TaskStatus.FAILED;
         }
         return walkTo(ctx, ahead, "lune.status.tunnel.advancing_n_of_n", advanced + 1, length);
+    }
+
+    /**
+     * Breaks one exposed target block beside the corridor, or null when there is none to break.
+     *
+     * <p>Two answers differ from the staircase's, and both are because of where this digs. A
+     * hazard behind a vein - lava, nearly always, and at the depths a strip mine works at there is
+     * lava behind a great many things - stops <em>that vein</em> rather than the corridor: the bot
+     * leaves it alone and carries on cutting, which is what a player does. A block that will not
+     * come loose is put aside the same way. What still fails the whole job is having no tool for
+     * the thing the player asked for, because every other block in the branch will answer the
+     * same.</p>
+     */
+    private TaskStatus mineExposedTarget(BotContext ctx) {
+        if (targets.isEmpty()) {
+            return null;
+        }
+        BlockPos candidate = ExposedVein.next(ctx, ctx.player.blockPosition(), targets,
+                Set.of(), refusedVeins);
+        if (candidate == null) {
+            veinTarget = null;
+            veinTicks = 0;
+            return null;
+        }
+        if (!candidate.equals(veinTarget)) {
+            veinTarget = candidate.immutable();
+            veinTicks = 0;
+        }
+
+        BlockBreaker.Progress progress = breaker.tick(ctx, candidate, false);
+        if (progress == BlockBreaker.Progress.NO_TOOL) {
+            breaker.stop(ctx);
+            status.set("lune.status.route.needs_better_tool",
+                    ctx.level.getBlockState(candidate).getBlock().getName().getString());
+            return TaskStatus.FAILED;
+        }
+        if (progress == BlockBreaker.Progress.HAZARD || ++veinTicks > MAX_VEIN_TICKS) {
+            breaker.stop(ctx);
+            refusedVeins.add(candidate.asLong());
+            veinTarget = null;
+            veinTicks = 0;
+            // Null rather than RUNNING: the corridor gets on with the block ahead this same tick.
+            return null;
+        }
+        status.set("lune.status.tunnel.mining_exposed",
+                ctx.level.getBlockState(candidate).getBlock().getName().getString(),
+                (advanced + 1), length);
+        return TaskStatus.RUNNING;
     }
 
     private TaskStatus walkTo(BotContext ctx, BlockPos target, String key,
@@ -219,6 +317,8 @@ public final class TunnelTask implements Task {
     @Override
     public void onPause(BotContext ctx) {
         breaker.stop(ctx);
+        veinTarget = null;
+        veinTicks = 0;
         if (stepForward != null) {
             stepForward.stop(ctx);
             stepForward = null;
@@ -228,6 +328,8 @@ public final class TunnelTask implements Task {
     @Override
     public void onStop(BotContext ctx) {
         breaker.stop(ctx);
+        veinTarget = null;
+        veinTicks = 0;
         if (stepForward != null) {
             stepForward.stop(ctx);
             stepForward = null;

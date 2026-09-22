@@ -6,6 +6,7 @@ import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.util.BlockPlacer;
 import com.etka.lune.bot.util.InventoryHelper;
@@ -37,6 +38,13 @@ public final class BridgeTask implements Task {
     private int placed;
     private int placementWaitTicks;
     private GotoTask stepForward;
+    /** Ticks allowed for one swim back onto the bridge before the gap is called impassable. */
+    private static final int MAX_RECOVERY_TICKS = 120;
+    /** The climb back onto the last block laid, when the builder has ended up in the water. */
+    private GotoTask recovery;
+    private int recoveryTicks;
+    /** The block already climbed back onto once, so one failure cannot become a loop. */
+    private BlockPos recoveringFrom;
     private final StatusText status = new StatusText();
 
     public BridgeTask(String directionChoice, int length, Set<Block> materials) {
@@ -57,13 +65,18 @@ public final class BridgeTask implements Task {
     }
 
     @Override
+    public LearningScope learningScope() {
+        return LearningScope.of(learningId(), "lune.unit.blocks");
+    }
+
+    @Override
     public StatusText statusLine() {
         return status;
     }
 
     @Override
     public TaskProgress progress() {
-        return new TaskProgress(placed, length, Lang.get("lune.card.blocks_unit"));
+        return new TaskProgress(placed, length, Lang.get("lune.unit.blocks"));
     }
 
     @Override
@@ -112,6 +125,32 @@ public final class BridgeTask implements Task {
                 return TaskStatus.FAILED;
             }
             if (!BlockPlacer.canPlaceAt(ctx, nextFloor)) {
+                // Falling in is not failing. A block can only be placed against the face of
+                // another one, and a bridge over water loses every face the moment the builder
+                // is treading water instead of standing on the last one it laid - which is where
+                // one measured crossing stopped, 27 blocks out over a lake with 48 cobblestone in
+                // the bag. A person swims the one block back onto their own bridge and carries on,
+                // so climb back on before giving the gap up.
+                if (ctx.player.isInWater() && !currentFloor.equals(recoveringFrom)) {
+                    if (recovery == null) {
+                        recovery = new GotoTask(new Goals.Block(currentFloor.above()), false, false);
+                        recovery.start(ctx);
+                        recoveryTicks = 0;
+                    }
+                    TaskStatus back = recovery.tick(ctx);
+                    if (back == TaskStatus.RUNNING && ++recoveryTicks <= MAX_RECOVERY_TICKS) {
+                        status.set("lune.status.bridge.couldnt_step_onto_bridge");
+                        return TaskStatus.RUNNING;
+                    }
+                    recovery.stop(ctx);
+                    recovery = null;
+                    // One climb back per block of bridge: if standing there again still leaves
+                    // nowhere to place, the gap itself is the problem and the card should say so.
+                    if (back == TaskStatus.SUCCESS) {
+                        recoveringFrom = currentFloor;
+                        return TaskStatus.RUNNING;
+                    }
+                }
                 status.set("lune.status.bridge.nowhere_place_next_block");
                 ctx.debug.placement(nextFloor, "bridge block", "no support or placement space");
                 return TaskStatus.FAILED;
@@ -193,6 +232,10 @@ public final class BridgeTask implements Task {
         if (stepForward != null) {
             stepForward.stop(ctx);
             stepForward = null;
+        }
+        if (recovery != null) {
+            recovery.stop(ctx);
+            recovery = null;
         }
         ctx.input.reset();
     }

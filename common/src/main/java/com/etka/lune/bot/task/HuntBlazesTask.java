@@ -1,7 +1,7 @@
 package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.util.InventoryHelper;
-import net.minecraft.world.entity.EntityType;
+import com.etka.lune.compat.Mobs;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.ItemStack;
 
@@ -17,12 +17,12 @@ public final class HuntBlazesTask extends HuntMobTask {
     }
 
     public HuntBlazesTask(int wanted, KillOptions options) {
-        super(EntityType.BLAZE, Items.BLAZE_ROD, "Blazes", wanted,
+        super(Mobs.BLAZE, Items.BLAZE_ROD, "Blazes", wanted,
                 options);
     }
 
     public HuntBlazesTask(int wanted, KillOptions options, java.util.Set<Integer> unreachableMobs) {
-        super(EntityType.BLAZE, stack -> stack.is(Items.BLAZE_ROD),
+        super(Mobs.BLAZE, stack -> stack.is(Items.BLAZE_ROD),
                 InventoryHelper.itemName(Items.BLAZE_ROD), "Blazes", wanted,
                 options, unreachableMobs);
     }

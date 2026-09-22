@@ -1,5 +1,6 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.compat.DyedBlocks;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 
@@ -61,7 +62,7 @@ public enum SpeedrunOpportunity {
         return switch (this) {
             case RUINED_PORTAL -> Set.of(Blocks.NETHERRACK, Blocks.CRYING_OBSIDIAN);
             case BLACKSMITH -> Set.of(Blocks.BLAST_FURNACE);
-            case PILLAGER_OUTPOST -> Set.of(Blocks.WHITE_BANNER, Blocks.WHITE_WALL_BANNER);
+            case PILLAGER_OUTPOST -> Set.of(DyedBlocks.WHITE_BANNER, DyedBlocks.WHITE_WALL_BANNER);
             case CONTAINER -> Set.of(Blocks.CHEST, Blocks.TRAPPED_CHEST, Blocks.BARREL);
             case MINESHAFT -> Set.of(Blocks.RAIL, Blocks.POWERED_RAIL, Blocks.DETECTOR_RAIL,
                     Blocks.ACTIVATOR_RAIL);

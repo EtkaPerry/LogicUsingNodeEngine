@@ -105,7 +105,22 @@ public final class BlockCatalog {
                     Blocks.DARK_OAK_PLANKS, Blocks.MANGROVE_PLANKS, Blocks.CHERRY_PLANKS,
                     Blocks.BAMBOO_PLANKS, Blocks.STONE, Blocks.GRANITE, Blocks.DIORITE,
                     Blocks.ANDESITE, Blocks.DEEPSLATE, Blocks.CALCITE, Blocks.TUFF,
-                    Blocks.NETHERRACK, Blocks.BLACKSTONE, Blocks.END_STONE, Blocks.SANDSTONE
+                    Blocks.NETHERRACK, Blocks.BLACKSTONE, Blocks.END_STONE, Blocks.SANDSTONE,
+                    // Logs last, and logs at all.
+                    //
+                    // Last, because every caller takes the first of these it is carrying four of,
+                    // and wood is the one thing here that is usually wanted for something else.
+                    //
+                    // At all, because the bot spends most of its life carrying nothing but logs.
+                    // A measured run met a Zombie with fifty-one spruce logs in the bag and
+                    // reported "moving away from Zombie without building material": the pillar,
+                    // the emergency wall and the one-block bridge were all unavailable to it
+                    // because planks were on this list and the logs they are made from were not.
+                    // A person puts a log down.
+                    Blocks.OAK_LOG, Blocks.SPRUCE_LOG, Blocks.BIRCH_LOG, Blocks.JUNGLE_LOG,
+                    Blocks.ACACIA_LOG, Blocks.DARK_OAK_LOG, Blocks.MANGROVE_LOG,
+                    Blocks.CHERRY_LOG, Blocks.PALE_OAK_LOG,
+                    Blocks.CRIMSON_STEM, Blocks.WARPED_STEM
             );
         }
         return buildingBlocks;

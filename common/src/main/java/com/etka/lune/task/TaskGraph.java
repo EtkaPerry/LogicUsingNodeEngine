@@ -35,11 +35,44 @@ public final class TaskGraph {
     public String onWhile;
     /** Editor-only cable routing points, keyed by the stable endpoints and ports of each cable. */
     public Map<String, TaskCableRoute> cableAnchors = new LinkedHashMap<>();
+    /**
+     * Editor-only sticky notes and frames.
+     *
+     * <p>They travel with the task through save, share and import, because the reason a task is
+     * wired the way it is goes stale the moment it is separated from the wiring. Execution never
+     * reads either list - see {@link TaskNote} for why neither is a card.</p>
+     */
+    public List<TaskNote> notes = new ArrayList<>();
+    public List<TaskGroup> groups = new ArrayList<>();
 
     public TaskGraph() {}
 
     public TaskGraph(String name) {
         this.name = name;
+    }
+
+    public TaskNote noteById(String id) {
+        if (id == null || notes == null) {
+            return null;
+        }
+        for (TaskNote note : notes) {
+            if (note != null && id.equals(note.id)) {
+                return note;
+            }
+        }
+        return null;
+    }
+
+    public TaskGroup groupById(String id) {
+        if (id == null || groups == null) {
+            return null;
+        }
+        for (TaskGroup group : groups) {
+            if (group != null && id.equals(group.id)) {
+                return group;
+            }
+        }
+        return null;
     }
 
     public TaskNode nodeById(String id) {

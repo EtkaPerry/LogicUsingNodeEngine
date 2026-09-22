@@ -1,5 +1,6 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.compat.Hands;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
@@ -7,6 +8,7 @@ import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.learning.LearningContext;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.util.BlockPlacer;
 import com.etka.lune.bot.util.BlockScanner;
@@ -23,6 +25,7 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /** Builds and lights a Nether portal from blocks carried by the player. */
@@ -126,11 +129,21 @@ public final class BuildPortalTask implements Task {
     }
 
     @Override
+    public LearningScope learningScope() {
+        return LearningScope.of("portal-building", "lune.unit.frame_blocks", portalPhase());
+    }
+
+    @Override
     public LearningContext learningContext(BotContext ctx) {
-        String phase = "frame=" + PortalBuildingPolicy.frameBucket(
-                mode.includeCorners, mode.obsidianNeeded) + ";enter=" + enterAfterBuild;
         return new LearningContext("skill", "portal-building",
-                ctx.level.dimension().identifier().toString(), phase);
+                ctx.level.dimension().identifier().toString(), String.join(";", portalPhase()));
+    }
+
+    /** The situation a build is keyed on; both parts of it are the card's parameters. */
+    private String[] portalPhase() {
+        return new String[] {
+                "frame=" + PortalBuildingPolicy.frameBucket(mode.includeCorners, mode.obsidianNeeded),
+                "enter=" + enterAfterBuild};
     }
 
     @Override
@@ -166,7 +179,7 @@ public final class BuildPortalTask implements Task {
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
-        ctx.debug.intent = "portal builder: " + state.name().toLowerCase();
+        ctx.debug.intent = "portal builder: " + state.name().toLowerCase(Locale.ROOT);
         ctx.debug.giveUp = "frame " + frameIndex + "/" + (mode.includeCorners ? 14 : 10)
                 + ", block " + placeTicks + "/" + PLACE_TIMEOUT_TICKS + " ticks";
 
@@ -369,7 +382,7 @@ public final class BuildPortalTask implements Task {
         if (ctx.look.isLookingAt(ctx.player, hit, AIM_TOLERANCE)) {
             ctx.gameMode.useItemOn(ctx.player, InteractionHand.MAIN_HAND,
                     new BlockHitResult(hit, Direction.UP, support, false));
-            ctx.player.swing(InteractionHand.MAIN_HAND);
+            Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
         }
         status.set("lune.status.speedrun.lighting_portal");
         return TaskStatus.RUNNING;

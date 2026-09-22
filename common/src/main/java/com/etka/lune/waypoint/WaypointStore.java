@@ -8,24 +8,18 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import com.google.gson.reflect.TypeToken;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
-import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -43,7 +37,6 @@ public final class WaypointStore {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final TypeToken<List<Waypoint>> WAYPOINT_LIST = new TypeToken<>() {};
     private static final int FORMAT_VERSION = 2;
-    private static final String WORLD_DATA_DIR = Constants.MOD_ID;
     private static final String WAYPOINT_FILE = "waypoints.json";
     private static final String LEGACY_FILE = Constants.MOD_ID + "-waypoints.json";
     private static final String LEGACY_BACKUP = Constants.MOD_ID + "-waypoints.legacy.json";
@@ -324,69 +317,12 @@ public final class WaypointStore {
     }
 
     private static Scope currentScope() {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null) {
+        WorldScope scope = WorldScope.current();
+        if (scope == null) {
             return null;
         }
-
-        if (mc.isSingleplayer()) {
-            if (mc.getSingleplayerServer() == null) {
-                return null;
-            }
-            try {
-                Path worldRoot = mc.getSingleplayerServer()
-                        .getWorldPath(LevelResource.ROOT)
-                        .toAbsolutePath()
-                        .normalize();
-                Path path = worldRoot.resolve(WORLD_DATA_DIR).resolve(WAYPOINT_FILE);
-                // The absolute path is only an in-memory cache key. The portable identity is the
-                // document UUID stored in the copied world folder itself.
-                return new Scope("singleplayer:" + worldRoot, path, true,
-                        "singleplayer-world");
-            } catch (RuntimeException e) {
-                Constants.LOG.warn("Could not locate the current single-player world", e);
-                return null;
-            }
-        }
-
-        String address = serverAddress(mc);
-        String persistedKey = "multiplayer:" + address;
-        String fileName = "remote-" + sha256(persistedKey) + ".json";
-        Path path = Services.PLATFORM.getConfigDir()
-                .resolve(Constants.MOD_ID + "-waypoints")
-                .resolve(fileName);
-        return new Scope("remote:" + persistedKey, path, false, persistedKey);
-    }
-
-    private static String serverAddress(Minecraft mc) {
-        ServerData server = mc.getCurrentServer();
-        if (server != null && server.ip != null && !server.ip.isBlank()) {
-            return server.ip.trim().toLowerCase(Locale.ROOT);
-        }
-
-        if (mc.getConnection() != null && mc.getConnection().getConnection() != null) {
-            SocketAddress remote = mc.getConnection().getConnection().getRemoteAddress();
-            if (remote != null) {
-                return remote.toString().trim().toLowerCase(Locale.ROOT);
-            }
-        }
-        return "unknown-server";
-    }
-
-    private static String sha256(String value) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(value.getBytes(StandardCharsets.UTF_8));
-            StringBuilder result = new StringBuilder(digest.length * 2);
-            for (byte b : digest) {
-                result.append(String.format(Locale.ROOT, "%02x", b));
-            }
-            return result.toString();
-        } catch (NoSuchAlgorithmException impossible) {
-            // SHA-256 is required by every Java runtime, but keep a deterministic fallback if a
-            // non-standard runtime ever violates that guarantee.
-            return Integer.toHexString(value.hashCode());
-        }
+        return new Scope(scope.cacheKey(), scope.file(WAYPOINT_FILE, ".json"), scope.local(),
+                scope.persistedKey());
     }
 
     private static Path legacyFile() {

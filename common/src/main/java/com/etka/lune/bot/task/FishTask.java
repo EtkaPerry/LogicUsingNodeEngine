@@ -1,5 +1,6 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.compat.Hands;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
@@ -7,6 +8,7 @@ import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.learning.LearningContext;
+import com.etka.lune.bot.learning.LearningScope;
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.InteractionHand;
@@ -106,10 +108,18 @@ public final class FishTask implements Task {
     }
 
     @Override
+    public LearningScope learningScope() {
+        return LearningScope.of("fishing", "lune.unit.catches", fishingPhase());
+    }
+
+    @Override
     public LearningContext learningContext(BotContext ctx) {
         return new LearningContext("skill", "fishing",
-                ctx.level.dimension().identifier().toString(),
-                "mode=" + (autoRecast ? "continuous" : "single-catch"));
+                ctx.level.dimension().identifier().toString(), fishingPhase());
+    }
+
+    private String fishingPhase() {
+        return "mode=" + (autoRecast ? "continuous" : "single-catch");
     }
 
     @Override
@@ -498,7 +508,7 @@ public final class FishTask implements Task {
 
     private void useRod(BotContext ctx) {
         ctx.gameMode.useItem(ctx.player, InteractionHand.MAIN_HAND);
-        ctx.player.swing(InteractionHand.MAIN_HAND);
+        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
         cooldown = USE_COOLDOWN;
     }
 }

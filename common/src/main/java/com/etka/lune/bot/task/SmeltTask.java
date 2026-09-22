@@ -1,11 +1,14 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.compat.Fuel;
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.util.BlockPlacer;
 import com.etka.lune.bot.util.BlockScanner;
@@ -78,6 +81,11 @@ public final class SmeltTask implements Task {
     @Override
     public String learningId() {
         return Task.learningName("Smelt " + InventoryHelper.itemName(output));
+    }
+
+    @Override
+    public LearningScope learningScope() {
+        return LearningScope.of(learningId(), "lune.unit.items");
     }
 
     @Override
@@ -179,7 +187,7 @@ public final class SmeltTask implements Task {
         if (!(ctx.player.containerMenu instanceof AbstractFurnaceMenu)
                 && ctx.player.containerMenu != ctx.player.inventoryMenu) {
             ctx.player.closeContainer();
-            ctx.mc.setScreen(null);
+            Screens.open(ctx.mc, null);
         }
 
         if (furnacePos == null || !ctx.level.getBlockState(furnacePos).is(Blocks.FURNACE)) {
@@ -324,7 +332,7 @@ public final class SmeltTask implements Task {
     private record FuelSlot(int slotIndex, int burnPerItem, int count, int totalBurn) {}
 
     private int burnTime(BotContext ctx, ItemStack stack) {
-        return ctx.level.fuelValues().burnDuration(stack);
+        return Fuel.burnDuration(ctx.level, stack);
     }
 
     private BlockPos findFurnace(BotContext ctx) {
@@ -348,7 +356,7 @@ public final class SmeltTask implements Task {
     private void closeMenu(BotContext ctx) {
         if (ctx.player.containerMenu != ctx.player.inventoryMenu) {
             ctx.player.closeContainer();
-            ctx.mc.setScreen(null);
+            Screens.open(ctx.mc, null);
         }
     }
 

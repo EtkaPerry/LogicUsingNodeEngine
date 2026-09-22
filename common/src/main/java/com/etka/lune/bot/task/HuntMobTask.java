@@ -6,6 +6,7 @@ import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.knowledge.BiomeScout;
 import com.etka.lune.bot.knowledge.Need;
 import com.etka.lune.bot.path.Goals;
@@ -104,6 +105,16 @@ public class HuntMobTask implements Task {
         return Task.learningName("Hunt " + label);
     }
 
+    /**
+     * A hunt is measured in the drops it was sent for, whichever item those are. The progress bar
+     * names the drop; the rows are keyed {@code unit=items}, because the drop's name is rendered
+     * text and the rows have to be the same rows in every language.
+     */
+    @Override
+    public LearningScope learningScope() {
+        return LearningScope.of(learningId(), "lune.unit.items");
+    }
+
     @Override
     public StatusText statusLine() {
         return status;
@@ -187,22 +198,23 @@ public class HuntMobTask implements Task {
 
     private TaskStatus advance(BotContext ctx, TaskStatus previous) {
         switch (state) {
-            case FIND -> {
-                if (LootTask.hasDropsNearby(ctx, LOOT_RADIUS)) {
-                    state = State.LOOT;
-                } else if (roams < maxRoams()) {
-                    state = State.ROAM;
-                } else {
-                    status.set("lune.status.hunt_mob.roamed_too_much_only", roams, maxRoams(), gained(ctx), dropLabel);
-                    return TaskStatus.FAILED;
-                }
-            }
+            case FIND -> state = LootTask.hasDropsNearby(ctx, LOOT_RADIUS) ? State.LOOT : State.ROAM;
             case HUNT -> state = previous == TaskStatus.FAILED ? State.ROAM : State.LOOT;
-            case LOOT -> {
-                state = State.ROAM;
-                roams++;
-            }
+            case LOOT -> state = State.ROAM;
             case ROAM -> state = State.HUNT;
+        }
+
+        // The roam budget is the hunt's, not the first decision's.
+        //
+        // It used to be asked only on the way out of FIND, which the machine enters once and never
+        // returns to - so once the cycle was turning, nothing counted it. A twenty-minute survival
+        // run spent forty-eight per cent of itself here: hunt finds no sheep, loot finds no drops,
+        // the roam cannot find a route, hunt again, about twenty-seven hundred times, and it came
+        // home with no wool and no mutton. Counted where a roam actually begins, the same budget
+        // that was meant to stop this does stop it.
+        if (state == State.ROAM && roams++ >= maxRoams()) {
+            status.set("lune.status.hunt_mob.roamed_too_much_only", roams, maxRoams(), gained(ctx), dropLabel);
+            return TaskStatus.FAILED;
         }
 
         current = createTask(ctx);

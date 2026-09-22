@@ -1,24 +1,35 @@
 package com.etka.lune.client.gui.widget;
 
+import com.etka.lune.Constants;
+import com.etka.lune.util.Durations;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.command.CommandDef;
 import com.etka.lune.bot.command.CommandRegistry;
 import com.etka.lune.bot.command.Param;
+import com.etka.lune.bot.learning.LearningScope;
+import com.etka.lune.bot.learning.LearningStore;
+import com.etka.lune.bot.learning.SkillStats;
 import com.etka.lune.bot.task.TaskRunner;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.UiScale;
+import com.etka.lune.config.BotConfig;
 import com.etka.lune.task.TaskCableAnchor;
 import com.etka.lune.task.TaskCablePath;
 import com.etka.lune.task.TaskCanvas;
 import com.etka.lune.task.TaskCableRoute;
+import com.etka.lune.task.TaskDebug;
 import com.etka.lune.task.TaskGraph;
+import com.etka.lune.task.TaskGroup;
 import com.etka.lune.task.TaskDataLink;
 import com.etka.lune.task.TaskNode;
+import com.etka.lune.task.TaskNote;
 import com.etka.lune.task.TaskPower;
+import com.etka.lune.task.TaskSearch;
 import com.etka.lune.task.TaskSignalLink;
 import com.etka.lune.task.TaskWiring;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
@@ -27,12 +38,16 @@ import net.minecraft.client.gui.narration.NarrationElementOutput;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -75,6 +90,18 @@ public final class BlueprintPanel extends AbstractWidget {
     /** How close to the rim a dragged card starts pulling the view after it. */
     private static final int EDGE_PAN_MARGIN = 36;
     private static final int EDGE_PAN_MAX = 14;
+
+    private static final int FIND_BAR_H = 20;
+    private static final int FIND_BAR_W = 280;
+    /** Everything the find bar did not match is pushed back behind this, rather than hidden. */
+    private static final int FIND_DIM = 0x99101014;
+    private static final int FIND_MATCH = 0xFFFFD54A;
+    private static final int BREAKPOINT = 0xFFE0413F;
+    private static final int BREAKPOINT_DISARMED = 0xFF6B4040;
+    private static final int HELD_GLOW = 0x60FFD54A;
+    private static final int NOTE_TEXT_INSET = 5;
+    /** How far a paste lands from the cards it was copied from, so the copy is visibly a copy. */
+    private static final int PASTE_OFFSET = 24;
 
     private static final int LIVE_WIRE_SPARK = 0xFFFFFFFF;
 
@@ -136,6 +163,35 @@ public final class BlueprintPanel extends AbstractWidget {
     private int pinObserve;
     private int pinData;
 
+    // --- find ---------------------------------------------------------------
+    /** The find bar, its answer, and which answer the view is currently sitting on. */
+    private boolean searchOpen;
+    private String searchQuery = "";
+    private List<TaskSearch.Hit> searchHits = List.of();
+    private int searchIndex;
+
+    // --- notes and frames ---------------------------------------------------
+    private TaskNote selectedNote;
+    private TaskNote draggedNote;
+    private boolean resizingNote;
+    /** The note whose text is being typed into. Owns the keyboard while it is set. */
+    private TaskNote editingNote;
+    private TaskGroup draggedGroup;
+    /** The frame whose title is being typed into. */
+    private TaskGroup editingGroup;
+    private String titleBuffer = "";
+
+    /**
+     * Cards cut or copied from a canvas, waiting to be pasted onto one.
+     *
+     * <p>Static, so a chunk of one task can be pasted into another: switching task replaces the
+     * panel's graph, and a clipboard living on the instance would be emptied by the act of
+     * navigating to the place the player wanted to paste it. In memory rather than on the system
+     * clipboard, because the system clipboard already carries whole tasks for Import and Export,
+     * and quietly overwriting somebody's exported task with three cards would be a poor trade.</p>
+     */
+    private static final List<TaskNode> CLIPBOARD = new ArrayList<>();
+
     public BlueprintPanel(int x, int y, int width, int height, Consumer<TaskNode> onSelect,
                           Runnable onChanged, Consumer<String> onMessage,
                           Consumer<List<TaskNode>> onDelete) {
@@ -192,6 +248,16 @@ public final class BlueprintPanel extends AbstractWidget {
         panning = false;
         minimapDragging = false;
         selecting = false;
+        selectedNote = null;
+        draggedNote = null;
+        resizingNote = false;
+        editingNote = null;
+        draggedGroup = null;
+        editingGroup = null;
+        // A query is about the task that was open. Carrying it over would offer the player
+        // yesterday's answer to today's question, numbered "1 of 7" and pointing at nothing.
+        searchHits = List.of();
+        searchIndex = 0;
         closeContextMenu();
         selectedNodes.removeIf(node -> task == null || !task.nodes.contains(node));
         if (selected != null && !selectedNodes.contains(selected)) {
@@ -204,6 +270,11 @@ public final class BlueprintPanel extends AbstractWidget {
         if (needsReadableGridLayout()) {
             applyGridLayout();
             changed = true;
+        }
+        if (searchOpen) {
+            // The bar stays up across a task switch, so it has to answer about the task that is
+            // now on screen rather than dim this one against the last one's matches.
+            refreshFind();
         }
         if (changed) {
             onChanged.run();
@@ -451,6 +522,11 @@ public final class BlueprintPanel extends AbstractWidget {
         int canvasMouseY = canvasY(mouseY);
 
         automaticCableRoutes.clear();
+        // Frames and notes are the paper the graph is drawn on, so they go down first and
+        // everything that carries a signal is drawn over them.
+        fitGroups();
+        drawGroups(extractor, canvasMouseX, canvasMouseY);
+        drawNotes(extractor, canvasMouseX, canvasMouseY);
         drawLegacyAlwaysSource(extractor);
 
         // Only explicit edges are drawn. A null success edge still means fall-through in the
@@ -462,8 +538,8 @@ public final class BlueprintPanel extends AbstractWidget {
                     for (String targetId : source.alwaysTargets) {
                         TaskNode target = task.nodeById(targetId);
                         if (target != null) {
-                            drawWire(extractor, outputX(source), whileY(source),
-                                    inputX(target), targetInputY(target,
+                            drawNodeWire(extractor, source, outputX(source), whileY(source),
+                                    target, inputX(target), targetInputY(target,
                                             source.alwaysTargetInputPorts == null
                                                     ? 0 : source.alwaysTargetInputPorts.getOrDefault(target.id, 0)),
                                     pinWhile,
@@ -475,7 +551,8 @@ public final class BlueprintPanel extends AbstractWidget {
             }
             TaskNode successTarget = task.nodeById(source.onSuccess);
             if (successTarget != null) {
-                drawWire(extractor, outputX(source), successY(source), inputX(successTarget),
+                drawNodeWire(extractor, source, outputX(source), successY(source),
+                        successTarget, inputX(successTarget),
                         targetInputY(successTarget, successTarget.isPulseNode()
                                 ? source.successInputPort : -1), pinSuccess,
                         liveWire(source, TaskPower.SUCCESS, 0, successTarget),
@@ -483,7 +560,8 @@ public final class BlueprintPanel extends AbstractWidget {
             }
             TaskNode failureTarget = task.nodeById(source.onFailure);
             if (failureTarget != null) {
-                drawWire(extractor, outputX(source), failureY(source), inputX(failureTarget),
+                drawNodeWire(extractor, source, outputX(source), failureY(source),
+                        failureTarget, inputX(failureTarget),
                         targetInputY(failureTarget, failureTarget.isPulseNode()
                                 ? source.failureInputPort : -1), pinFailure,
                         liveWire(source, TaskPower.FAILURE, 0, failureTarget),
@@ -492,7 +570,8 @@ public final class BlueprintPanel extends AbstractWidget {
             if (!source.isClockNode() && source.whileVisible) {
                 TaskNode whileTarget = task.nodeById(source.onWhile);
                 if (whileTarget != null) {
-                    drawWire(extractor, outputX(source), whileY(source), inputX(whileTarget),
+                    drawNodeWire(extractor, source, outputX(source), whileY(source),
+                            whileTarget, inputX(whileTarget),
                             targetInputY(whileTarget, whileTarget.isPulseNode()
                                     ? source.whileInputPort : -1), pinWhile,
                             liveWire(source, TaskPower.WHILE, 0, whileTarget),
@@ -506,7 +585,8 @@ public final class BlueprintPanel extends AbstractWidget {
                     }
                     TaskNode target = task.nodeById(link.targetNodeId);
                     if (target != null) {
-                        drawWire(extractor, outputX(source), signalOutputY(source, link.outputPort),
+                        drawNodeWire(extractor, source, outputX(source),
+                                signalOutputY(source, link.outputPort), target,
                                 inputX(target), targetInputY(target, link.targetPort), pinSignal,
                                 liveWire(source, TaskPower.SIGNAL, link.outputPort, target),
                                 anchorFor(TaskCableAnchor.key("signal", source.id,
@@ -518,7 +598,8 @@ public final class BlueprintPanel extends AbstractWidget {
             if (source.isObserverNode() && source.observedNodeId != null) {
                 TaskNode watched = task.nodeById(source.observedNodeId);
                 if (watched != null) {
-                    drawWire(extractor, outputX(watched), nodeY(watched) + HEADER_H / 2,
+                    drawNodeWire(extractor, watched, outputX(watched),
+                            nodeY(watched) + HEADER_H / 2, source,
                             inputX(source), signalInputY(source, 0), pinObserve,
                             power.isLive(watched),
                             anchorFor(TaskCableAnchor.key("observe", watched.id, source.id)));
@@ -532,8 +613,9 @@ public final class BlueprintPanel extends AbstractWidget {
                             : exposedOutputs(dataSource).indexOf(link.sourcePort);
                     int targetPort = exposedInputs(source).indexOf(entry.getKey());
                     if (dataSource != null && sourcePort >= 0 && targetPort >= 0) {
-                        drawWire(extractor, outputX(dataSource), dataOutputY(dataSource, sourcePort),
-                                inputX(source), dataInputY(source, targetPort), pinData,
+                        drawNodeWire(extractor, dataSource, outputX(dataSource),
+                                dataOutputY(dataSource, sourcePort), source,
+                                inputX(source), dataInputY(source, targetPort), pinData, false,
                                 anchorFor(TaskCableAnchor.key("data", dataSource.id, link.sourcePort,
                                         source.id, entry.getKey())));
                     }
@@ -547,7 +629,10 @@ public final class BlueprintPanel extends AbstractWidget {
         }
 
         for (int i = task.nodes.size() - 1; i >= 0; i--) {
-            drawNode(extractor, task.nodes.get(i), canvasMouseX, canvasMouseY);
+            TaskNode node = task.nodes.get(i);
+            if (collapsedHolder(node) == null) {
+                drawNode(extractor, node, canvasMouseX, canvasMouseY);
+            }
         }
         if (trainingPreview != null) {
             for (TaskNode node : task.nodes) {
@@ -561,6 +646,9 @@ public final class BlueprintPanel extends AbstractWidget {
             }
         }
         drawCableRoutePoints(extractor);
+        if (searchOpen) {
+            drawFindOverlay(extractor);
+        }
 
         // Last, and outside the card loop: the chips sit above their card and would otherwise be
         // painted over by whichever card happens to be drawn next.
@@ -598,6 +686,10 @@ public final class BlueprintPanel extends AbstractWidget {
                         .withColor(LuneScreen.TEXT_DIM));
         extractor.textRenderer().accept(getX() + getWidth() - 45, getY() + 7,
                 Component.literal(Math.round(zoom * 100) + "%").withColor(LuneScreen.TEXT_DIM));
+        drawDebugBanner(extractor);
+        if (searchOpen) {
+            drawFindBar(extractor);
+        }
         if (contextNode != null) {
             drawContextMenu(extractor, mouseX, mouseY);
         }
@@ -629,6 +721,856 @@ public final class BlueprintPanel extends AbstractWidget {
                 extractor.fill(x, y, x + 1, y + 1, GRID_COLOUR);
             }
         }
+    }
+
+    // --- frames, notes, find and the debugger -------------------------------
+
+    private static final int GROUP_BTN = 12;
+    private static final int NOTE_BTN = 10;
+
+    /** Re-measures every frame around its cards, and forgets the ones left holding nothing. */
+    private void fitGroups() {
+        if (task == null || task.groups == null) {
+            return;
+        }
+        task.groups.removeIf(group -> group == null || !group.fit(task, this::nodeHeight));
+    }
+
+    /** The closed frame hiding this card, or null when the card is on screen. */
+    private TaskGroup collapsedHolder(TaskNode node) {
+        TaskGroup group = TaskGroup.holding(task, node);
+        return group != null && group.collapsed ? group : null;
+    }
+
+    /**
+     * Whether this canvas rectangle overlaps the part of the board the player can see.
+     *
+     * <p>The same cull {@link #drawNode} does, and for the same reason: a note is a dozen fills and
+     * a paragraph of wrapping, and a task with thirty of them scrolled off the edge should cost
+     * nothing to look away from.</p>
+     */
+    private boolean onScreen(double left, double top, double right, double bottom) {
+        return right >= -panX / zoom && left <= (getWidth() - panX) / zoom
+                && bottom >= -panY / zoom && top <= (getHeight() - panY) / zoom;
+    }
+
+    private void drawGroups(GuiGraphicsExtractor extractor, int mouseX, int mouseY) {
+        if (task == null || task.groups == null) {
+            return;
+        }
+        var text = extractor.textRenderer();
+        for (TaskGroup group : task.groups) {
+            int headerTop = group.y - TaskGroup.HEADER_HEIGHT;
+            if (!onScreen(group.x, headerTop, group.right(), group.bottom())) {
+                continue;
+            }
+            NodePalette.Paper paper = NodePalette.paper(group.colour);
+            boolean hovered = group.contains(mouseX, mouseY);
+            if (!group.collapsed) {
+                // A wash rather than a fill: the cards inside have to stay the brightest thing in
+                // their own frame, or grouping would bury the graph it is supposed to organise.
+                extractor.fill(group.x, group.y, group.right(), group.bottom(), 0x18000000 | (paper.body() & 0xFFFFFF));
+                extractor.outline(group.x, group.y, group.right() - group.x,
+                        group.bottom() - group.y, paper.border());
+            }
+            extractor.fill(group.x, headerTop, group.right(), group.y, paper.body());
+            extractor.fill(group.x, headerTop, group.x + 3, group.y, paper.border());
+            String title = group.title == null || group.title.isBlank()
+                    ? Lang.get("lune.gui.blueprint.group_untitled") : group.title;
+            if (editingGroup == group) {
+                title = titleBuffer + "_";
+            }
+            int titleRoom = Math.max(8, group.right() - group.x - 10 - GROUP_BTN * 3);
+            text.accept(group.x + 6, headerTop + 3,
+                    Component.literal(clip(title, titleRoom)).withColor(paper.text()));
+            String badge = group.collapsed
+                    ? Lang.get("lune.gui.blueprint.group_cards", group.members.size()) : "";
+            if (!badge.isEmpty()) {
+                text.accept(group.x + 10 + Minecraft.getInstance().font.width(clip(title, titleRoom)),
+                        headerTop + 3, Component.literal(badge).withColor(LuneScreen.TEXT_DIM));
+            }
+            for (int button = 0; button < 3; button++) {
+                int buttonX = groupButtonX(group, button);
+                boolean over = hovered && mouseY >= headerTop && mouseY < group.y
+                        && mouseX >= buttonX && mouseX < buttonX + GROUP_BTN;
+                if (over) {
+                    extractor.fill(buttonX, headerTop + 1, buttonX + GROUP_BTN - 1, group.y - 1,
+                            0x40FFFFFF);
+                }
+                String glyph = switch (button) {
+                    case 0 -> group.collapsed ? "▸" : "▾";
+                    case 1 -> "◆";
+                    default -> "✕";
+                };
+                text.accept(buttonX + 3, headerTop + 3, Component.literal(glyph)
+                        .withColor(button == 2 && over ? CONTEXT_DANGER : paper.text()));
+            }
+        }
+    }
+
+    private int groupButtonX(TaskGroup group, int index) {
+        return group.right() - 4 - (3 - index) * GROUP_BTN;
+    }
+
+    /** Which header button the pointer is on: 0 collapse, 1 colour, 2 ungroup, -1 none. */
+    private int groupButtonAt(TaskGroup group, int x, int y) {
+        if (y < group.y - TaskGroup.HEADER_HEIGHT || y >= group.y) {
+            return -1;
+        }
+        for (int button = 0; button < 3; button++) {
+            int buttonX = groupButtonX(group, button);
+            if (x >= buttonX && x < buttonX + GROUP_BTN) {
+                return button;
+            }
+        }
+        return -1;
+    }
+
+    private void drawNotes(GuiGraphicsExtractor extractor, int mouseX, int mouseY) {
+        if (task == null || task.notes == null) {
+            return;
+        }
+        var text = extractor.textRenderer();
+        for (TaskNote note : task.notes) {
+            note.clampSize();
+            if (!onScreen(note.x, note.y, note.right(), note.bottom())) {
+                continue;
+            }
+            NodePalette.Paper paper = NodePalette.paper(note.colour);
+            boolean hovered = note.contains(mouseX, mouseY);
+            extractor.fill(note.x, note.y, note.right(), note.bottom(), paper.body());
+            extractor.outline(note.x, note.y, note.right() - note.x, note.bottom() - note.y,
+                    selectedNote == note ? NODE_SELECTED : paper.border());
+            // The coloured spine doubles as the drag handle, so a note with text right up to the
+            // edge still has somewhere to be picked up by.
+            extractor.fill(note.x + 1, note.y + 1, note.x + 4, note.bottom() - 1, paper.border());
+            String body = editingNote == note ? note.text + "_" : note.text;
+            if (body.isEmpty()) {
+                body = Lang.get("lune.gui.blueprint.note_empty");
+            }
+            int room = note.right() - note.x - NOTE_TEXT_INSET - 7;
+            int line = note.y + 4;
+            for (String wrapped : wrapLines(body, room)) {
+                if (line + 9 > note.bottom() - 2) {
+                    break;
+                }
+                text.accept(note.x + NOTE_TEXT_INSET + 2, line,
+                        Component.literal(wrapped).withColor(note.text.isEmpty() && editingNote != note
+                                ? LuneScreen.TEXT_DIM : paper.text()));
+                line += 9;
+            }
+            if (hovered || selectedNote == note) {
+                // The grip and the two controls only appear under the pointer: a wall of notes
+                // covered in permanent buttons is a wall of buttons with some notes behind it.
+                extractor.fill(note.right() - 7, note.bottom() - 7, note.right() - 1,
+                        note.bottom() - 1, paper.border());
+                for (int button = 0; button < 2; button++) {
+                    int buttonX = noteButtonX(note, button);
+                    boolean over = mouseX >= buttonX && mouseX < buttonX + NOTE_BTN
+                            && mouseY >= note.y + 2 && mouseY < note.y + 2 + NOTE_BTN;
+                    if (over) {
+                        extractor.fill(buttonX, note.y + 2, buttonX + NOTE_BTN,
+                                note.y + 2 + NOTE_BTN, 0x40FFFFFF);
+                    }
+                    text.accept(buttonX + 1, note.y + 3,
+                            Component.literal(button == 0 ? "◆" : "✕")
+                                    .withColor(button == 1 && over ? CONTEXT_DANGER
+                                            : paper.border()));
+                }
+            }
+        }
+    }
+
+    private int noteButtonX(TaskNote note, int index) {
+        return note.right() - 3 - (2 - index) * NOTE_BTN;
+    }
+
+    /** Which note control the pointer is on: 0 colour, 1 delete, -1 none. */
+    private int noteButtonAt(TaskNote note, int x, int y) {
+        if (y < note.y + 2 || y >= note.y + 2 + NOTE_BTN) {
+            return -1;
+        }
+        for (int button = 0; button < 2; button++) {
+            int buttonX = noteButtonX(note, button);
+            if (x >= buttonX && x < buttonX + NOTE_BTN) {
+                return button;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Draws one wire, following either end into the bar of the frame that is hiding it.
+     *
+     * <p>A wire with both ends inside the same closed frame is internal to it and is not drawn:
+     * the point of closing a frame is to stop looking at what is inside it, and a bundle of cables
+     * looping out of a bar and back into it says nothing that the bar did not already say.</p>
+     */
+    private void drawNodeWire(GuiGraphicsExtractor extractor, TaskNode from, int fromX, int fromY,
+                              TaskNode to, int toX, int toY, int colour, boolean live,
+                              TaskCableRoute route) {
+        TaskGroup fromHidden = collapsedHolder(from);
+        TaskGroup toHidden = collapsedHolder(to);
+        if (fromHidden != null && fromHidden == toHidden) {
+            // drawWire consumes the spark the liveWire call above just armed; skipping it here
+            // would leave that spark to be drawn on whichever wire is rendered next.
+            previewSpark = -1;
+            return;
+        }
+        if (fromHidden != null) {
+            fromX = fromHidden.right();
+            fromY = fromHidden.y - TaskGroup.HEADER_HEIGHT / 2;
+            route = null;
+        }
+        if (toHidden != null) {
+            toX = toHidden.x;
+            toY = toHidden.y - TaskGroup.HEADER_HEIGHT / 2;
+            route = null;
+        }
+        drawWire(extractor, fromX, fromY, toX, toY, colour, live, route);
+    }
+
+    private boolean isFindHit(String id) {
+        for (TaskSearch.Hit hit : searchHits) {
+            if (hit.id().equals(id)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Pushes everything the query did not match into the background.
+     *
+     * <p>Dimming rather than hiding. A card found in isolation is a card without the two either
+     * side of it, and "where is it" is nearly always asked in order to then ask "and what is it
+     * wired to".</p>
+     */
+    private void drawFindOverlay(GuiGraphicsExtractor extractor) {
+        if (task == null || searchQuery.isBlank()) {
+            return;
+        }
+        String current = currentHitId();
+        for (TaskNode node : task.nodes) {
+            if (collapsedHolder(node) != null) {
+                continue;
+            }
+            int x = nodeX(node);
+            int y = nodeY(node);
+            int height = nodeHeight(node);
+            if (!isFindHit(node.id)) {
+                extractor.fill(x, y, x + NODE_W, y + height, FIND_DIM);
+            } else {
+                extractor.outline(x - 2, y - 2, NODE_W + 4, height + 4,
+                        node.id.equals(current) ? FIND_MATCH : 0x90FFD54A);
+            }
+        }
+        if (task.notes != null) {
+            for (TaskNote note : task.notes) {
+                if (!isFindHit(note.id)) {
+                    extractor.fill(note.x, note.y, note.right(), note.bottom(), FIND_DIM);
+                } else {
+                    extractor.outline(note.x - 2, note.y - 2, note.right() - note.x + 4,
+                            note.bottom() - note.y + 4,
+                            note.id.equals(current) ? FIND_MATCH : 0x90FFD54A);
+                }
+            }
+        }
+        if (task.groups != null) {
+            for (TaskGroup group : task.groups) {
+                if (isFindHit(group.id)) {
+                    extractor.outline(group.x - 2, group.y - TaskGroup.HEADER_HEIGHT - 2,
+                            group.right() - group.x + 4,
+                            group.bottom() - group.y + TaskGroup.HEADER_HEIGHT + 4,
+                            group.id.equals(current) ? FIND_MATCH : 0x90FFD54A);
+                }
+            }
+        }
+    }
+
+    private void drawFindBar(GuiGraphicsExtractor extractor) {
+        int x = getX() + 6;
+        int y = getY() + 6;
+        int width = Math.min(FIND_BAR_W, getWidth() - 12);
+        extractor.fill(x, y, x + width, y + FIND_BAR_H, 0xF0181A22);
+        extractor.outline(x, y, width, FIND_BAR_H, LuneScreen.ACCENT);
+        var text = extractor.textRenderer();
+        text.accept(x + 6, y + 6, Component.literal(Lang.get("lune.gui.blueprint.find_prompt"))
+                .withColor(LuneScreen.ACCENT));
+        int queryX = x + 8 + Minecraft.getInstance().font.width(
+                Lang.get("lune.gui.blueprint.find_prompt"));
+        String counter = searchQuery.isBlank() ? ""
+                : searchHits.isEmpty() ? Lang.get("lune.gui.blueprint.find_none")
+                : Lang.get("lune.gui.blueprint.find_counter", searchIndex + 1, searchHits.size());
+        int counterWidth = Minecraft.getInstance().font.width(counter);
+        text.accept(queryX, y + 6, Component.literal(clip(searchQuery + "_",
+                Math.max(8, width - (queryX - x) - counterWidth - 10))).withColor(LuneScreen.TEXT));
+        text.accept(x + width - counterWidth - 6, y + 6, Component.literal(counter)
+                .withColor(searchHits.isEmpty() && !searchQuery.isBlank()
+                        ? NODE_FAILED : LuneScreen.TEXT_DIM));
+        if (!searchHits.isEmpty()) {
+            TaskSearch.Hit hit = searchHits.get(Math.floorMod(searchIndex, searchHits.size()));
+            text.accept(x + 6, y + FIND_BAR_H + 4, Component.literal(clip(
+                    Lang.get("lune.gui.blueprint.find_matched", hit.label(), hit.matched()), width))
+                    .withColor(LuneScreen.TEXT_DIM));
+        }
+    }
+
+    /**
+     * Says, on the canvas, that the run is being held and on which card.
+     *
+     * <p>It goes here rather than only on the toolbar because a held bot is a bot doing nothing,
+     * which looks exactly like a broken one. The one place a player is certain to be looking when
+     * they wonder why is the card that has stopped lighting up.</p>
+     */
+    private void drawDebugBanner(GuiGraphicsExtractor extractor) {
+        // A hold belongs to the run, and the run belongs to one task. Announcing it over somebody
+        // else's canvas would name a card that is not on it.
+        if (!showsRunningTask() || (!TaskDebug.holding() && !TaskDebug.waitingToBreak())) {
+            return;
+        }
+        TaskNode held = task == null ? null : task.nodeById(TaskDebug.haltedNodeId());
+        if (TaskDebug.holding() && held == null) {
+            return;
+        }
+        String line = TaskDebug.holding()
+                ? Lang.get("lune.gui.blueprint.debug_held", nodeName(held))
+                : Lang.get("lune.gui.blueprint.debug_waiting");
+        int width = Math.min(getWidth() - 12, Minecraft.getInstance().font.width(line) + 16);
+        int y = getY() + getHeight() - 30;
+        extractor.fill(getX() + 6, y, getX() + 6 + width, y + 18, 0xF0402A10);
+        extractor.outline(getX() + 6, y, width, 18, FIND_MATCH);
+        extractor.textRenderer().accept(getX() + 12, y + 5,
+                Component.literal(Minecraft.getInstance().font.plainSubstrByWidth(line, width - 12))
+                        .withColor(FIND_MATCH));
+    }
+
+    private static String clip(String value, int maxWidth) {
+        return Minecraft.getInstance().font.plainSubstrByWidth(value, Math.max(4, maxWidth));
+    }
+
+    /** Wraps note text by width, keeping the newlines the player typed. */
+    private static List<String> wrapLines(String value, int maxWidth) {
+        List<String> lines = new ArrayList<>();
+        var font = Minecraft.getInstance().font;
+        for (String paragraph : value.split("\n", -1)) {
+            if (paragraph.isEmpty()) {
+                lines.add("");
+                continue;
+            }
+            String rest = paragraph;
+            while (!rest.isEmpty()) {
+                String head = font.plainSubstrByWidth(rest, Math.max(8, maxWidth));
+                if (head.isEmpty()) {
+                    head = rest.substring(0, 1);
+                }
+                if (head.length() < rest.length()) {
+                    int space = head.lastIndexOf(' ');
+                    // Only break on a space when there is one worth breaking at; a single long
+                    // word gets cut rather than pushed onto a line of its own forever.
+                    if (space > head.length() / 3) {
+                        head = head.substring(0, space);
+                    }
+                }
+                lines.add(head);
+                rest = rest.substring(head.length()).stripLeading();
+            }
+        }
+        return lines;
+    }
+
+    // --- find, notes, frames, breakpoints and the clipboard -----------------
+
+    public boolean isFindOpen() {
+        return searchOpen;
+    }
+
+    public void toggleFind() {
+        if (searchOpen) {
+            closeFind();
+            return;
+        }
+        searchOpen = true;
+        setFocused(true);
+        refreshFind();
+        onMessage.accept(Lang.get("lune.gui.blueprint.find_opened"));
+    }
+
+    public void closeFind() {
+        searchOpen = false;
+        searchHits = List.of();
+    }
+
+    private void refreshFind() {
+        searchHits = TaskSearch.find(task, searchQuery, BlueprintPanel::nodeName, this::nodeHeight);
+        if (searchIndex >= searchHits.size()) {
+            searchIndex = 0;
+        }
+    }
+
+    private String currentHitId() {
+        return searchHits.isEmpty() ? ""
+                : searchHits.get(Math.floorMod(searchIndex, searchHits.size())).id();
+    }
+
+    /** Walks to the next or previous match, and brings both the view and the selection to it. */
+    private void stepFind(int delta) {
+        if (searchHits.isEmpty() || task == null) {
+            return;
+        }
+        searchIndex = Math.floorMod(searchIndex + delta, searchHits.size());
+        TaskSearch.Hit hit = searchHits.get(searchIndex);
+        switch (hit.kind()) {
+            case CARD -> {
+                TaskNode node = task.nodeById(hit.id());
+                if (node != null) {
+                    // A match inside a closed frame is a match nobody can see, so finding it opens
+                    // the frame. Anything else would count a card the player cannot look at.
+                    TaskGroup holder = collapsedHolder(node);
+                    if (holder != null) {
+                        holder.collapsed = false;
+                        fitGroups();
+                    }
+                    selectedNote = null;
+                    setSelected(node);
+                    onSelect.accept(node);
+                }
+            }
+            case NOTE -> {
+                selectedNodes.clear();
+                selected = null;
+                selectedNote = task.noteById(hit.id());
+                onSelect.accept(null);
+            }
+            case GROUP -> {
+                TaskGroup group = task.groupById(hit.id());
+                if (group != null) {
+                    selectedNote = null;
+                    selectedNodes.clear();
+                    selectedNodes.addAll(group.membersOf(task));
+                    selectAnchor();
+                    onSelect.accept(selected);
+                }
+            }
+        }
+        centerOn(hit.centerX(), hit.centerY());
+    }
+
+    private void centerOn(int canvasPointX, int canvasPointY) {
+        panX = (int) Math.round(getWidth() / 2.0 - canvasPointX * zoom);
+        panY = (int) Math.round(getHeight() / 2.0 - canvasPointY * zoom);
+    }
+
+    /** Zooms and pans until this canvas rectangle fills the view, within the usual zoom limits. */
+    private void frame(int minX, int minY, int maxX, int maxY) {
+        int width = Math.max(1, maxX - minX);
+        int height = Math.max(1, maxY - minY);
+        float wanted = (float) Math.min((getWidth() - 48.0) / width, (getHeight() - 48.0) / height);
+        zoom = Math.clamp(wanted, MIN_ZOOM, MAX_ZOOM);
+        centerOn((minX + maxX) / 2, (minY + maxY) / 2);
+    }
+
+    /** Fills the view with the selection, or with the whole task when nothing is selected. */
+    public void frameSelection() {
+        if (task == null || task.nodes.isEmpty()) {
+            return;
+        }
+        List<TaskNode> wanted = selectedNodes.isEmpty()
+                ? task.nodes : new ArrayList<>(selectedNodes);
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        for (TaskNode node : wanted) {
+            minX = Math.min(minX, nodeX(node));
+            minY = Math.min(minY, nodeY(node));
+            maxX = Math.max(maxX, nodeX(node) + NODE_W);
+            maxY = Math.max(maxY, nodeY(node) + nodeHeight(node));
+        }
+        if (minX > maxX) {
+            return;
+        }
+        frame(minX - 20, minY - 20, maxX + 20, maxY + 20);
+        onMessage.accept(Lang.get(selectedNodes.isEmpty() ? "lune.gui.blueprint.framed_task"
+                : "lune.gui.blueprint.framed_selection"));
+    }
+
+    /** Pulls the view back until every card, note and frame in the task is on screen at once. */
+    public void fitAll() {
+        if (task == null || task.nodes.isEmpty()) {
+            return;
+        }
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        for (TaskNode node : task.nodes) {
+            minX = Math.min(minX, nodeX(node));
+            minY = Math.min(minY, nodeY(node));
+            maxX = Math.max(maxX, nodeX(node) + NODE_W);
+            maxY = Math.max(maxY, nodeY(node) + nodeHeight(node));
+        }
+        if (task.notes != null) {
+            for (TaskNote note : task.notes) {
+                minX = Math.min(minX, note.x);
+                minY = Math.min(minY, note.y);
+                maxX = Math.max(maxX, note.right());
+                maxY = Math.max(maxY, note.bottom());
+            }
+        }
+        if (task.groups != null) {
+            for (TaskGroup group : task.groups) {
+                minX = Math.min(minX, group.x);
+                minY = Math.min(minY, group.y - TaskGroup.HEADER_HEIGHT);
+                maxX = Math.max(maxX, group.right());
+                maxY = Math.max(maxY, group.bottom());
+            }
+        }
+        frame(minX - 20, minY - 20, maxX + 20, maxY + 20);
+        onMessage.accept(Lang.get("lune.gui.blueprint.framed_task"));
+    }
+
+    /** Drops a sticky note at a screen point, or in the middle of the view when none is given. */
+    public TaskNote addNoteAt(Integer screenX, Integer screenY) {
+        if (task == null) {
+            return null;
+        }
+        if (task.notes == null) {
+            task.notes = new ArrayList<>();
+        }
+        int x = screenX == null
+                ? canvasX(getX() + getWidth() / 2.0) - TaskNote.DEFAULT_WIDTH / 2
+                : canvasX(screenX);
+        int y = screenY == null
+                ? canvasY(getY() + getHeight() / 2.0) - TaskNote.DEFAULT_HEIGHT / 2
+                : canvasY(screenY);
+        TaskNote note = new TaskNote(x, y);
+        task.notes.add(note);
+        selectedNodes.clear();
+        selected = null;
+        onSelect.accept(null);
+        selectedNote = note;
+        // Straight into typing: a blank note is an invitation, and making the player find the
+        // double-click that opens it would make it a chore instead.
+        editingNote = note;
+        setFocused(true);
+        onChanged.run();
+        onMessage.accept(Lang.get("lune.gui.blueprint.note_added"));
+        return note;
+    }
+
+    private void commitNoteEdit() {
+        if (editingNote == null) {
+            return;
+        }
+        editingNote.clampSize();
+        editingNote = null;
+        onChanged.run();
+    }
+
+    private void commitTitleEdit() {
+        if (editingGroup == null) {
+            return;
+        }
+        editingGroup.title = titleBuffer.length() > TaskGroup.MAX_TITLE
+                ? titleBuffer.substring(0, TaskGroup.MAX_TITLE) : titleBuffer;
+        editingGroup = null;
+        titleBuffer = "";
+        onChanged.run();
+    }
+
+    /** Frames the selected cards, taking them out of whatever frame already held them. */
+    public void groupSelection() {
+        if (task == null || selectedNodes.isEmpty()) {
+            onMessage.accept(Lang.get("lune.gui.blueprint.group_needs_cards"));
+            return;
+        }
+        TaskGroup group = TaskGroup.group(task, new ArrayList<>(selectedNodes), "");
+        if (group == null) {
+            return;
+        }
+        fitGroups();
+        editingGroup = group;
+        titleBuffer = "";
+        setFocused(true);
+        onChanged.run();
+        onMessage.accept(Lang.get("lune.gui.blueprint.group_created", group.members.size()));
+    }
+
+    public void ungroupSelection() {
+        if (task == null) {
+            return;
+        }
+        int removed = TaskGroup.ungroup(task, new ArrayList<>(selectedNodes));
+        if (removed == 0) {
+            onMessage.accept(Lang.get("lune.gui.blueprint.group_none_here"));
+            return;
+        }
+        onChanged.run();
+        onMessage.accept(Lang.get("lune.gui.blueprint.group_removed", removed));
+    }
+
+    /**
+     * Puts a breakpoint on every selected card, or takes them all off when they all have one.
+     *
+     * <p>Source cards are refused. A run never <em>arrives</em> at an Always or a Button - they are
+     * where signals come from - so a breakpoint on one would be a red dot that never once stopped
+     * anything, which is worse than not offering it.</p>
+     */
+    public void toggleBreakpoints() {
+        if (task == null || selectedNodes.isEmpty()) {
+            onMessage.accept(Lang.get("lune.gui.blueprint.breakpoint_needs_card"));
+            return;
+        }
+        List<TaskNode> usable = new ArrayList<>();
+        for (TaskNode node : selectedNodes) {
+            if (!node.isSourceNode()) {
+                usable.add(node);
+            }
+        }
+        if (usable.isEmpty()) {
+            onMessage.accept(Lang.get("lune.gui.blueprint.breakpoint_not_on_source"));
+            return;
+        }
+        boolean adding = usable.stream().anyMatch(node -> !node.breakpoint);
+        for (TaskNode node : usable) {
+            node.breakpoint = adding;
+        }
+        onChanged.run();
+        onMessage.accept(Lang.get(adding ? "lune.gui.blueprint.breakpoint_set"
+                : "lune.gui.blueprint.breakpoint_cleared", usable.size()));
+    }
+
+    public void clearBreakpoints() {
+        int cleared = TaskDebug.clearAll(task);
+        if (cleared > 0) {
+            onChanged.run();
+        }
+        onMessage.accept(Lang.get("lune.gui.blueprint.breakpoint_cleared", cleared));
+    }
+
+    public void copySelection() {
+        if (selectedNodes.isEmpty()) {
+            return;
+        }
+        CLIPBOARD.clear();
+        for (TaskNode node : selectedNodes) {
+            TaskNode held = node.copy();
+            // The original id is kept only while the card sits on the clipboard, so that the wires
+            // between the copied cards can be recognised and rebuilt when they are pasted.
+            held.id = node.id;
+            CLIPBOARD.add(held);
+        }
+        onMessage.accept(Lang.get("lune.gui.blueprint.copied", CLIPBOARD.size()));
+    }
+
+    public void paste(Integer screenX, Integer screenY) {
+        if (task == null || CLIPBOARD.isEmpty()) {
+            onMessage.accept(Lang.get("lune.gui.blueprint.clipboard_empty"));
+            return;
+        }
+        List<TaskNode> copies = rewire(CLIPBOARD);
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        for (TaskNode copy : copies) {
+            minX = Math.min(minX, TaskCanvas.left(copy));
+            minY = Math.min(minY, TaskCanvas.top(copy));
+        }
+        int targetX = screenX == null
+                ? canvasX(getX() + getWidth() / 2.0) - NODE_W / 2 : canvasX(screenX);
+        int targetY = screenY == null
+                ? canvasY(getY() + getHeight() / 2.0) - NODE_H / 2 : canvasY(screenY);
+        for (TaskNode copy : copies) {
+            copy.editorX = TaskCanvas.left(copy) - minX + targetX;
+            copy.editorY = TaskCanvas.top(copy) - minY + targetY;
+        }
+        task.nodes.addAll(copies);
+        selectedNote = null;
+        selectedNodes.clear();
+        selectedNodes.addAll(copies);
+        selectAnchor();
+        onSelect.accept(selected);
+        onChanged.run();
+        onMessage.accept(Lang.get("lune.gui.blueprint.pasted", copies.size()));
+    }
+
+    public void duplicateSelection() {
+        if (task == null || selectedNodes.isEmpty()) {
+            return;
+        }
+        List<TaskNode> copies = rewire(new ArrayList<>(selectedNodes));
+        for (TaskNode copy : copies) {
+            copy.editorX = TaskCanvas.left(copy) + PASTE_OFFSET;
+            copy.editorY = TaskCanvas.top(copy) + PASTE_OFFSET;
+        }
+        task.nodes.addAll(copies);
+        selectedNote = null;
+        selectedNodes.clear();
+        selectedNodes.addAll(copies);
+        selectAnchor();
+        onSelect.accept(selected);
+        onChanged.run();
+        onMessage.accept(Lang.get("lune.gui.blueprint.duplicated", copies.size()));
+    }
+
+    /**
+     * Independent copies of these cards, with fresh ids and every wire <em>between</em> them kept.
+     *
+     * <p>Wires leaving the set are dropped rather than followed. A copy of half a loop that
+     * silently rejoined the original would give one card two claimants for its Success pin, and
+     * the player would have built that by pressing Duplicate once.</p>
+     */
+    private static List<TaskNode> rewire(List<TaskNode> source) {
+        java.util.Map<String, String> remap = new java.util.LinkedHashMap<>();
+        List<TaskNode> copies = new ArrayList<>();
+        for (TaskNode node : source) {
+            TaskNode copy = node.copy();
+            remap.put(node.id, copy.id);
+            copies.add(copy);
+        }
+        for (TaskNode copy : copies) {
+            copy.onSuccess = remap.get(copy.onSuccess);
+            copy.onFailure = remap.get(copy.onFailure);
+            copy.onWhile = remap.get(copy.onWhile);
+            copy.observedNodeId = remap.get(copy.observedNodeId);
+            Set<String> targets = new LinkedHashSet<>();
+            java.util.Map<String, Integer> ports = new java.util.LinkedHashMap<>();
+            for (String target : copy.alwaysTargets) {
+                String moved = remap.get(target);
+                if (moved != null) {
+                    targets.add(moved);
+                    Integer port = copy.alwaysTargetInputPorts.get(target);
+                    if (port != null) {
+                        ports.put(moved, port);
+                    }
+                }
+            }
+            copy.alwaysTargets = targets;
+            copy.alwaysTargetInputPorts = ports;
+            List<TaskSignalLink> links = new ArrayList<>();
+            for (TaskSignalLink link : copy.signalLinks) {
+                String moved = link == null ? null : remap.get(link.targetNodeId);
+                if (moved != null) {
+                    links.add(new TaskSignalLink(link.outputPort, moved, link.targetPort));
+                }
+            }
+            copy.signalLinks = links;
+            java.util.Map<String, TaskDataLink> inputs = new java.util.LinkedHashMap<>();
+            copy.inputLinks.forEach((parameter, link) -> {
+                String moved = link == null ? null : remap.get(link.sourceNodeId);
+                if (moved != null) {
+                    inputs.put(parameter, new TaskDataLink(moved, link.sourcePort));
+                }
+            });
+            copy.inputLinks = inputs;
+        }
+        return copies;
+    }
+
+    private TaskNote noteAt(int x, int y) {
+        if (task == null || task.notes == null) {
+            return null;
+        }
+        for (int i = task.notes.size() - 1; i >= 0; i--) {
+            TaskNote note = task.notes.get(i);
+            if (note != null && note.contains(x, y)) {
+                return note;
+            }
+        }
+        return null;
+    }
+
+    private TaskGroup groupHeaderAt(int x, int y) {
+        if (task == null || task.groups == null) {
+            return null;
+        }
+        for (int i = task.groups.size() - 1; i >= 0; i--) {
+            TaskGroup group = task.groups.get(i);
+            if (group != null && group.headerContains(x, y)) {
+                return group;
+            }
+        }
+        return null;
+    }
+
+    /** Handles a click on a note, and says whether it claimed the click. */
+    private boolean clickNote(int x, int y, boolean doubleClick) {
+        TaskNote note = noteAt(x, y);
+        if (note == null) {
+            return false;
+        }
+        commitTitleEdit();
+        selectedNodes.clear();
+        selected = null;
+        onSelect.accept(null);
+        selectedNote = note;
+        switch (noteButtonAt(note, x, y)) {
+            case 0 -> {
+                note.colour = Math.floorMod(note.colour + 1, NodePalette.paperCount());
+                onChanged.run();
+                return true;
+            }
+            case 1 -> {
+                commitNoteEdit();
+                deleteSelectedNote();
+                return true;
+            }
+            default -> { }
+        }
+        if (doubleClick) {
+            editingNote = note;
+            return true;
+        }
+        commitNoteEdit();
+        draggedNote = note;
+        resizingNote = note.inResizeCorner(x, y);
+        moved = false;
+        return true;
+    }
+
+    /** Handles a click on a frame's title bar, and says whether it claimed the click. */
+    private boolean clickGroup(int x, int y, boolean doubleClick) {
+        TaskGroup group = groupHeaderAt(x, y);
+        if (group == null) {
+            return false;
+        }
+        commitNoteEdit();
+        switch (groupButtonAt(group, x, y)) {
+            case 0 -> {
+                group.collapsed = !group.collapsed;
+                fitGroups();
+                onChanged.run();
+                onMessage.accept(Lang.get(group.collapsed ? "lune.gui.blueprint.group_collapsed"
+                        : "lune.gui.blueprint.group_expanded", group.members.size()));
+                return true;
+            }
+            case 1 -> {
+                group.colour = Math.floorMod(group.colour + 1, NodePalette.paperCount());
+                onChanged.run();
+                return true;
+            }
+            case 2 -> {
+                task.groups.remove(group);
+                onChanged.run();
+                onMessage.accept(Lang.get("lune.gui.blueprint.group_removed", 1));
+                return true;
+            }
+            default -> { }
+        }
+        if (doubleClick) {
+            editingGroup = group;
+            titleBuffer = group.title == null ? "" : group.title;
+            return true;
+        }
+        commitTitleEdit();
+        selectedNote = null;
+        selectedNodes.clear();
+        selectedNodes.addAll(group.membersOf(task));
+        selectAnchor();
+        onSelect.accept(selected);
+        draggedGroup = group;
+        moved = false;
+        return true;
     }
 
     private void drawNode(GuiGraphicsExtractor extractor, TaskNode node, int mouseX, int mouseY) {
@@ -685,7 +1627,10 @@ public final class BlueprintPanel extends AbstractWidget {
         var text = extractor.textRenderer();
         text.accept(x + 7, y + 5, Component.literal(name).withColor(0xFFFFFFFF));
         text.accept(x + 9, y + 23, Component.literal(Lang.get("lune.gui.blueprint.in")).withColor(LuneScreen.TEXT_DIM));
-        text.accept(x + 8, y + height - 14,
+        CardStats stats = statsFor(node);
+        // The repeat count keeps its place above the numbers rather than sliding down with them.
+        int footerY = y + height - 14 - (stats == null ? 0 : STATS_ROW_HEIGHT);
+        text.accept(x + 8, footerY,
                 Component.literal(node.describeRepeat()).withColor(LuneScreen.TEXT_DIM));
         text.accept(x + NODE_W - 46, y + 25, Component.literal(Lang.get("lune.gui.blueprint.success")).withColor(pinSuccess));
         text.accept(x + NODE_W - 31, y + 40, Component.literal(Lang.get("lune.gui.blueprint.fail")).withColor(pinFailure));
@@ -713,6 +1658,9 @@ public final class BlueprintPanel extends AbstractWidget {
             text.accept(x + NODE_W - 42, portY - 3,
                     Component.literal(parameterLabel(node, outputs.get(i))).withColor(pinData));
             drawPin(extractor, outputX(node), portY, pinData);
+        }
+        if (stats != null) {
+            drawStatsRow(extractor, stats, x, y + height - STATS_ROW_HEIGHT + 2);
         }
 
         if (contains(node, mouseX, mouseY) && !selectedNodes.contains(node)) {
@@ -904,6 +1852,14 @@ public final class BlueprintPanel extends AbstractWidget {
         if (contextNode != null || !contains(node, mouseX, mouseY)) {
             return;
         }
+        CardStats stats = statsFor(node);
+        if (stats != null && mouseY >= nodeY(node) + nodeHeight(node) - STATS_ROW_HEIGHT) {
+            // The numbers row is the one part of a card that explains itself rather than its logic.
+            extractor.setComponentTooltipForNextFrame(Minecraft.getInstance().font,
+                    statsTooltip(node, stats),
+                    UiScale.toGamePixels(pointerX), UiScale.toGamePixels(pointerY));
+            return;
+        }
         String logic = node.isStartNode()
                 ? Lang.get("lune.gui.blueprint.send_one_signal_connected_success_target")
                 : node.isClockNode()
@@ -924,6 +1880,12 @@ public final class BlueprintPanel extends AbstractWidget {
                 : def.logicDescription(node.repeat);
     }
 
+    /** True when the task on screen is the one the engine is actually running. */
+    private boolean showsRunningTask() {
+        return BotEngine.get().getCurrent() instanceof TaskRunner running
+                && running.currentTask() == task;
+    }
+
     private TaskPower readLivePower() {
         Task current = BotEngine.get().getCurrent();
         return current instanceof TaskRunner running && running.currentTask() == task
@@ -937,6 +1899,219 @@ public final class BlueprintPanel extends AbstractWidget {
 
     private boolean isFailedNode(TaskNode candidate) {
         return task != null && TaskRunner.isLastFailed(task, candidate);
+    }
+
+    // --- card stats ---------------------------------------------------------
+    //
+    // With Node stats switched on, a card whose job has ever finished something carries one more
+    // row: how fast the job usually goes, how fast it went last time, and the fastest it has ever
+    // gone - the three numbers a player compares to tell whether the change they just made
+    // helped. Hovering the row lists every situation the job has been measured in, which is where
+    // "with an axe it goes twice as fast" becomes visible.
+
+    private static final int STATS_ROW_HEIGHT = 13;
+    /** How long a card's numbers may go unrefreshed. The table is small, but not frame-rate small. */
+    private static final long STATS_REFRESH_NANOS = 1_000_000_000L;
+    private static final int STATS_AVERAGE = LuneScreen.TEXT;
+    private static final int STATS_LAST = 0xFF9CCBFF;
+    private static final int STATS_BEST = NODE_ACTIVE;
+    /** Situations listed on hover before the rest fold into "+N more". */
+    private static final int STATS_ROWS_SHOWN = 6;
+    private static final String STATS_SEPARATOR = " · ";
+    /** What a profile written before "last time" was kept has to say about it. */
+    private static final String STATS_UNKNOWN = "-";
+
+    /** What one card's job has measured, and the parameters that answer was worked out for. */
+    private static final class CardStats {
+        private final String commandId;
+        private final Map<String, String> params;
+        /** Null when the card has no task to ask - an unknown command, or one that failed to build. */
+        private final LearningScope scope;
+        private SkillStats stats = SkillStats.EMPTY;
+        private long refreshedNanos;
+
+        private CardStats(String commandId, Map<String, String> params, LearningScope scope,
+                          long now) {
+            this.commandId = commandId;
+            this.params = params;
+            this.scope = scope;
+            refresh(now);
+        }
+
+        private void refresh(long now) {
+            stats = scope == null ? SkillStats.EMPTY : LearningStore.get().skillStats(scope);
+            refreshedNanos = now;
+        }
+
+        /** Whether the job counts something per second, or only has a length to report. */
+        private boolean rate() {
+            return scope != null && scope.unitKey() != null;
+        }
+
+        private String unit() {
+            return rate() ? Lang.get(scope.unitKey()) : "";
+        }
+    }
+
+    /**
+     * Per card, and weakly: a card that leaves the task takes its entry with it, so nothing has
+     * to remember to clear this on each of the several ways a card can be deleted.
+     */
+    private final Map<TaskNode, CardStats> cardStats = new WeakHashMap<>();
+
+    /**
+     * The numbers for a card, or null when there is nothing to show: the setting is off, the card
+     * is a source or a pulse rather than a job, or its job has never finished anything.
+     *
+     * <p>Which rows a card owns is a question for its task, so the task is built - the same way
+     * the runner builds it - once per card, and again only when a parameter changes. The numbers
+     * themselves are re-read from the profile every second, so a run in progress updates the
+     * card as it goes.</p>
+     */
+    private CardStats statsFor(TaskNode node) {
+        if (node == null || node.isSourceNode() || node.isPulseNode()
+                || !BotConfig.get().nodeStats) {
+            return null;
+        }
+        Map<String, String> params = node.params == null ? Map.of() : node.params;
+        CardStats card = cardStats.get(node);
+        long now = System.nanoTime();
+        if (card == null || !Objects.equals(card.commandId, node.commandId)
+                || !card.params.equals(params)) {
+            card = new CardStats(node.commandId, new LinkedHashMap<>(params),
+                    scopeOf(node, params), now);
+            cardStats.put(node, card);
+        } else if (now - card.refreshedNanos >= STATS_REFRESH_NANOS) {
+            card.refresh(now);
+        }
+        return card.stats.measured() ? card : null;
+    }
+
+    /** The rows a card's job writes to, from the task it would run as; null when it has none. */
+    private static LearningScope scopeOf(TaskNode node, Map<String, String> params) {
+        CommandDef def = CommandRegistry.byId(node.commandId);
+        if (def == null) {
+            return null;
+        }
+        try {
+            return def.buildWith(params).learningScope();
+        } catch (RuntimeException e) {
+            // The runner would refuse this card too, and says so when it is run. A canvas that
+            // cannot draw is the wrong place to report it.
+            Constants.LOG.debug("No stats for card {}: it could not be built", node.commandId, e);
+            return null;
+        }
+    }
+
+    /** The pooled number a card leads with: a pace for a job with a unit, a length otherwise. */
+    private static double average(CardStats card) {
+        return card.rate() ? card.stats.averageUnitsPerSecond() : card.stats.averageSecondsPerUnit();
+    }
+
+    private static double last(CardStats card) {
+        return card.rate() ? card.stats.lastUnitsPerSecond() : card.stats.lastSecondsPerUnit();
+    }
+
+    private static double best(CardStats card) {
+        return card.rate() ? card.stats.bestUnitsPerSecond() : card.stats.bestSecondsPerUnit();
+    }
+
+    /** A pace in words: "3.30 logs/s" for a job with a unit, "45.2 s" for one with only a length. */
+    private static String pace(CardStats card, double value) {
+        return card.rate()
+                ? Lang.get("lune.gui.blueprint.stats.rate", SkillStats.format(value), card.unit())
+                : Lang.get("lune.gui.blueprint.stats.seconds", SkillStats.format(value));
+    }
+
+    private static String count(long value) {
+        return String.format(Locale.ROOT, "%,d", value);
+    }
+
+    /** {@code minecraft:the_nether} reads as {@code the_nether}; the namespace says nothing here. */
+    private static String dimensionName(String id) {
+        int colon = id.indexOf(':');
+        return colon < 0 ? id : id.substring(colon + 1);
+    }
+
+    /** Average, last and best on one line, coloured the way the hover explains them. */
+    private void drawStatsRow(GuiGraphicsExtractor extractor, CardStats card, int x, int y) {
+        SkillStats stats = card.stats;
+        String average = card.rate()
+                ? Lang.get("lune.gui.blueprint.stats.per_second", SkillStats.format(average(card)))
+                : Lang.get("lune.gui.blueprint.stats.seconds", SkillStats.format(average(card)));
+        String last = stats.hasLast() ? SkillStats.format(last(card)) : STATS_UNKNOWN;
+        String best = stats.bestTicksPerUnit() > 0.0 ? SkillStats.format(best(card)) : STATS_UNKNOWN;
+        var font = Minecraft.getInstance().font;
+        var text = extractor.textRenderer();
+        int cursor = x + 8;
+        text.accept(cursor, y, Component.literal(average).withColor(STATS_AVERAGE));
+        cursor += font.width(average);
+        text.accept(cursor, y, Component.literal(STATS_SEPARATOR).withColor(LuneScreen.TEXT_DIM));
+        cursor += font.width(STATS_SEPARATOR);
+        text.accept(cursor, y, Component.literal(last).withColor(STATS_LAST));
+        cursor += font.width(last);
+        text.accept(cursor, y, Component.literal(STATS_SEPARATOR).withColor(LuneScreen.TEXT_DIM));
+        cursor += font.width(STATS_SEPARATOR);
+        text.accept(cursor, y, Component.literal(best).withColor(STATS_BEST));
+    }
+
+    /**
+     * The detailed view: the three numbers named, the totals behind them, and then one entry per
+     * situation the job has been measured in, busiest first, so a player can see which of them
+     * is dragging the average - and, where the learner had a choice, which tactic it now prefers.
+     */
+    private List<Component> statsTooltip(TaskNode node, CardStats card) {
+        SkillStats stats = card.stats;
+        List<Component> lines = new ArrayList<>();
+        lines.add(Component.literal(Lang.get("lune.gui.blueprint.stats.title", nodeName(node)))
+                .withColor(LuneScreen.ACCENT));
+        lines.add(Component.literal(Lang.get("lune.gui.blueprint.stats.average",
+                pace(card, average(card)))).withColor(STATS_AVERAGE));
+        lines.add(Component.literal(Lang.get("lune.gui.blueprint.stats.last",
+                stats.hasLast() ? pace(card, last(card)) : STATS_UNKNOWN)).withColor(STATS_LAST));
+        lines.add(Component.literal(Lang.get("lune.gui.blueprint.stats.best",
+                pace(card, best(card)))).withColor(STATS_BEST));
+        lines.add(Component.literal(card.rate()
+                ? Lang.get("lune.gui.blueprint.stats.totals", count(stats.runs()),
+                        count(stats.completedRuns()), count(stats.totalUnits()), card.unit(),
+                        Durations.ofTicks(stats.totalTicks()))
+                : Lang.get("lune.gui.blueprint.stats.totals_bare", count(stats.runs()),
+                        count(stats.completedRuns()), Durations.ofTicks(stats.totalTicks())))
+                .withColor(LuneScreen.TEXT_DIM));
+        if (stats.rows().size() < 2) {
+            return lines;
+        }
+        lines.add(Component.literal(Lang.get("lune.gui.blueprint.stats.by_situation"))
+                .withColor(LuneScreen.ACCENT));
+        boolean severalDimensions = stats.rows().stream()
+                .map(row -> row.context().dimension()).distinct().count() > 1;
+        int shown = 0;
+        for (SkillStats.Row row : stats.rows()) {
+            if (shown == STATS_ROWS_SHOWN) {
+                lines.add(Component.literal(Lang.get("lune.gui.blueprint.stats.more",
+                        count(stats.rows().size() - shown))).withColor(LuneScreen.TEXT_DIM));
+                break;
+            }
+            shown++;
+            String situation = (severalDimensions
+                    ? dimensionName(row.context().dimension()) + STATS_SEPARATOR : "")
+                    + row.context().phase().replace(";", ", ");
+            String numbers;
+            if (row.measured()) {
+                numbers = Lang.get("lune.gui.blueprint.stats.row",
+                        pace(card, card.rate() ? row.averageUnitsPerSecond() : row.averageSecondsPerUnit()),
+                        pace(card, card.rate() ? row.bestUnitsPerSecond() : row.bestSecondsPerUnit()),
+                        count(row.runs()));
+                if (!row.leadingTactic().isEmpty()) {
+                    numbers += STATS_SEPARATOR + row.leadingTactic();
+                }
+            } else {
+                numbers = Lang.get("lune.gui.blueprint.stats.row_unmeasured", count(row.runs()));
+            }
+            lines.add(Component.literal(situation).withColor(LuneScreen.TEXT));
+            lines.add(Component.literal("  " + numbers).withColor(LuneScreen.TEXT_DIM));
+        }
+        return lines;
     }
 
     // --- inline card toolbar -------------------------------------------------
@@ -962,8 +2137,8 @@ public final class BlueprintPanel extends AbstractWidget {
     private static final int CHIP_TEXT = 0xFFE8E8EE;
     private static final int CHIP_EDIT = 0xF0203A56;
     private static final int CONTEXT_ROW_H = 18;
-    private static final int CONTEXT_MAIN_H = CONTEXT_ROW_H * 2;
-    private static final int CONTEXT_MAIN_W = 58;
+    private static final int CONTEXT_MAIN_H = CONTEXT_ROW_H * 3;
+    private static final int CONTEXT_MAIN_W = 74;
     private static final int CONTEXT_SUB_W = 72;
     private static final int CONTEXT_GAP = 2;
     private static final int CONTEXT_BG = 0xF01A1A20;
@@ -1015,7 +2190,8 @@ public final class BlueprintPanel extends AbstractWidget {
         // A single selected card keeps its controls; a multi-card selection is the toolbar strip's
         // job, because "delete these six" is not something one card should claim.
         pinnedToolbarNode = selectedNodes.size() == 1 ? selectedNodes.iterator().next() : null;
-        if (pinnedToolbarNode != null && !task.nodes.contains(pinnedToolbarNode)) {
+        if (pinnedToolbarNode != null && (!task.nodes.contains(pinnedToolbarNode)
+                || collapsedHolder(pinnedToolbarNode) != null)) {
             pinnedToolbarNode = null;
         }
         // The chips sit above the card, so reaching for them leaves the card's own bounds. Keeping
@@ -1303,9 +2479,14 @@ public final class BlueprintPanel extends AbstractWidget {
                 && y >= contextMenuY && y < contextMenuY + CONTEXT_ROW_H;
     }
 
+    private boolean contextBreakpointContains(double x, double y) {
+        return x >= contextMenuX && x < contextMenuX + CONTEXT_MAIN_W
+                && y >= contextMenuY + CONTEXT_ROW_H && y < contextMenuY + CONTEXT_ROW_H * 2;
+    }
+
     private boolean contextDeleteContains(double x, double y) {
         return x >= contextMenuX && x < contextMenuX + CONTEXT_MAIN_W
-                && y >= contextMenuY + CONTEXT_ROW_H && y < contextMenuY + CONTEXT_MAIN_H;
+                && y >= contextMenuY + CONTEXT_ROW_H * 2 && y < contextMenuY + CONTEXT_MAIN_H;
     }
 
     private boolean contextSubmenuContains(double x, double y) {
@@ -1337,6 +2518,19 @@ public final class BlueprintPanel extends AbstractWidget {
             closeContextMenu();
             return true;
         }
+        if (contextBreakpointContains(x, y)) {
+            TaskNode node = contextNode;
+            closeContextMenu();
+            if (node.isSourceNode()) {
+                onMessage.accept(Lang.get("lune.gui.blueprint.breakpoint_not_on_source"));
+                return true;
+            }
+            boolean set = TaskDebug.toggle(node);
+            onChanged.run();
+            onMessage.accept(Lang.get(set ? "lune.gui.blueprint.breakpoint_set"
+                    : "lune.gui.blueprint.breakpoint_cleared", 1));
+            return true;
+        }
         if (contextDeleteContains(x, y)) {
             TaskNode node = contextNode;
             closeContextMenu();
@@ -1359,16 +2553,19 @@ public final class BlueprintPanel extends AbstractWidget {
             return;
         }
         boolean showHovered = contextShowContains(mouseX, mouseY);
+        boolean breakHovered = contextBreakpointContains(mouseX, mouseY);
         boolean deleteHovered = contextDeleteContains(mouseX, mouseY);
         boolean submenuHovered = contextSubmenuContains(mouseX, mouseY);
         if (showHovered || submenuHovered) {
             contextSubmenuOpen = true;
-        } else if (!deleteHovered) {
+        } else if (!deleteHovered && !breakHovered) {
             contextSubmenuOpen = false;
         }
         drawContextPanel(extractor, contextMenuX, contextMenuY, CONTEXT_MAIN_W, CONTEXT_MAIN_H);
         drawContextRow(extractor, contextMenuX, contextMenuY, CONTEXT_MAIN_W, showHovered);
         drawContextRow(extractor, contextMenuX, contextMenuY + CONTEXT_ROW_H,
+                CONTEXT_MAIN_W, breakHovered);
+        drawContextRow(extractor, contextMenuX, contextMenuY + CONTEXT_ROW_H * 2,
                 CONTEXT_MAIN_W, deleteHovered);
         var text = extractor.textRenderer();
         text.accept(contextMenuX + 7, contextMenuY + 5,
@@ -1376,6 +2573,14 @@ public final class BlueprintPanel extends AbstractWidget {
         text.accept(contextMenuX + CONTEXT_MAIN_W - 12, contextMenuY + 5,
                 Component.literal("> ").withColor(LuneScreen.TEXT_DIM));
         text.accept(contextMenuX + 7, contextMenuY + CONTEXT_ROW_H + 5,
+                Component.literal(Lang.get("lune.gui.blueprint.breakpoint")).withColor(
+                        contextNode.isSourceNode() ? CONTEXT_DISABLED
+                                : contextNode.breakpoint ? BREAKPOINT : CONTEXT_TEXT));
+        if (contextNode.breakpoint) {
+            text.accept(contextMenuX + CONTEXT_MAIN_W - 14, contextMenuY + CONTEXT_ROW_H + 5,
+                    Component.literal("✓").withColor(BREAKPOINT));
+        }
+        text.accept(contextMenuX + 7, contextMenuY + CONTEXT_ROW_H * 2 + 5,
                 Component.literal(Lang.get("lune.gui.tasks.delete_2")).withColor(CONTEXT_DANGER));
 
         if (contextSubmenuOpen) {
@@ -1407,9 +2612,7 @@ public final class BlueprintPanel extends AbstractWidget {
     }
 
     private boolean shiftDown() {
-        long window = Minecraft.getInstance().getWindow().handle();
-        return GLFW.glfwGetKey(window, GLFW.GLFW_KEY_LEFT_SHIFT) == GLFW.GLFW_PRESS
-                || GLFW.glfwGetKey(window, GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
+        return Minecraft.getInstance().hasShiftDown();
     }
 
     /**
@@ -1439,6 +2642,13 @@ public final class BlueprintPanel extends AbstractWidget {
             border = NODE_SELECTED;
         }
 
+        if (TaskDebug.isHalted(node)) {
+            // A held card is not running and is not broken, so it gets neither of those two rings.
+            extractor.fill(x - 4, y - 4, x + NODE_W + 4, y + height + 4, HELD_GLOW);
+            extractor.fill(x - 2, y - 2, x + NODE_W + 2, y + height + 2, FIND_MATCH);
+            border = FIND_MATCH;
+        }
+
         extractor.fill(x, y, x + NODE_W, y + height, border);
         extractor.fill(x + 1, y + 1, x + NODE_W - 1, y + height - 1, colours.background());
         // Only the outline reports that a card is live. Recolouring the title bar too made a
@@ -1447,6 +2657,15 @@ public final class BlueprintPanel extends AbstractWidget {
                 border == NODE_FAILED ? HEADER_FAILED : colours.header());
         // The role stripe: the one mark that separates a source from an action from a decision.
         extractor.fill(x + 1, y + 1, x + 4, y + HEADER_H, colours.accent());
+        if (node.breakpoint) {
+            // Outside the card, in the gutter where a code editor puts it. Inside it would be one
+            // more dot competing with the pins, which are the only other round things on a card.
+            int dotX = x - 7;
+            int dotY = y + HEADER_H / 2;
+            int colour = TaskDebug.armed() ? BREAKPOINT : BREAKPOINT_DISARMED;
+            extractor.fill(dotX - 4, dotY - 4, dotX + 4, dotY + 4, 0xFF101014);
+            extractor.fill(dotX - 3, dotY - 3, dotX + 3, dotY + 3, colour);
+        }
         return border;
     }
 
@@ -1662,6 +2881,11 @@ public final class BlueprintPanel extends AbstractWidget {
             return;
         }
 
+        if (findBarContains(pointerX, pointerY)) {
+            setFocused(true);
+            return;
+        }
+
         if (minimapVisible && minimapContains(pointerX, pointerY)) {
             minimapDragging = true;
             centerOnMinimap(pointerX, pointerY);
@@ -1733,7 +2957,10 @@ public final class BlueprintPanel extends AbstractWidget {
 
         TaskNode hit = nodeAt(canvasPointerX, canvasPointerY);
         if (hit != null) {
-            boolean ctrl = (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0;
+            selectedNote = null;
+            commitNoteEdit();
+            commitTitleEdit();
+            boolean ctrl = (event.modifiers() & InputConstants.MOD_CONTROL) != 0;
             if (ctrl) {
                 if (!selectedNodes.remove(hit)) {
                     selectedNodes.add(hit);
@@ -1768,10 +2995,22 @@ public final class BlueprintPanel extends AbstractWidget {
             return;
         }
 
-        selectionAdditive = (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0;
+        // Notes and frames are tested after the cables that cross them, because a cable is drawn
+        // on top of both and clicking what you can see is the only rule a canvas can afford.
+        if (clickNote(canvasPointerX, canvasPointerY, doubleClick)) {
+            return;
+        }
+        if (clickGroup(canvasPointerX, canvasPointerY, doubleClick)) {
+            return;
+        }
+
+        selectionAdditive = (event.modifiers() & InputConstants.MOD_CONTROL) != 0;
         if (!selectionAdditive) {
             selectedNodes.clear();
             selected = null;
+            selectedNote = null;
+            commitNoteEdit();
+            commitTitleEdit();
             onSelect.accept(null);
         }
         selectionStartX = pointerX;
@@ -2325,6 +3564,26 @@ public final class BlueprintPanel extends AbstractWidget {
         if (wireSource != null) {
             return;
         }
+        if (draggedNote != null) {
+            int dx = (int) Math.round(dragX / zoom);
+            int dy = (int) Math.round(dragY / zoom);
+            if (resizingNote) {
+                draggedNote.width += dx;
+                draggedNote.height += dy;
+                draggedNote.clampSize();
+            } else {
+                draggedNote.x += dx;
+                draggedNote.y += dy;
+            }
+            moved = true;
+            return;
+        }
+        if (draggedGroup != null) {
+            draggedGroup.moveBy(task, (int) Math.round(dragX / zoom),
+                    (int) Math.round(dragY / zoom));
+            moved = true;
+            return;
+        }
         if (dragged != null) {
             int dx = (int) Math.round(dragX / zoom);
             int dy = (int) Math.round(dragY / zoom);
@@ -2387,6 +3646,16 @@ public final class BlueprintPanel extends AbstractWidget {
         pointerY = (int) event.y();
         if (minimapDragging) {
             minimapDragging = false;
+            return;
+        }
+        if (draggedNote != null || draggedGroup != null) {
+            if (moved) {
+                onChanged.run();
+            }
+            draggedNote = null;
+            draggedGroup = null;
+            resizingNote = false;
+            moved = false;
             return;
         }
         if (draggedCableKey != null) {
@@ -2618,6 +3887,9 @@ public final class BlueprintPanel extends AbstractWidget {
             selectedNodes.clear();
         }
         for (TaskNode node : task.nodes) {
+            if (collapsedHolder(node) != null) {
+                continue;
+            }
             double nodeLeft = nodeX(node);
             double nodeRight = nodeLeft + NODE_W;
             double nodeTop = nodeY(node);
@@ -2652,47 +3924,68 @@ public final class BlueprintPanel extends AbstractWidget {
         if (task == null) {
             return false;
         }
+        if (editingNote != null) {
+            return handleNoteKey(event);
+        }
+        if (editingGroup != null) {
+            return handleTitleKey(event);
+        }
         if (editingNode != null) {
             // While a number is being typed the chip owns the keyboard. Backspace especially:
             // it is also the delete-card binding, and deleting the card you are editing because
             // you mistyped a digit would be a memorable way to lose work.
-            if (event.key() == GLFW.GLFW_KEY_BACKSPACE) {
+            if (event.key() == InputConstants.KEY_BACKSPACE) {
                 if (!editBuffer.isEmpty()) {
                     editBuffer = editBuffer.substring(0, editBuffer.length() - 1);
                 }
                 return true;
             }
-            if (event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER) {
+            if (event.key() == InputConstants.KEY_RETURN || event.key() == InputConstants.KEY_NUMPADENTER) {
                 commitChipEdit();
                 return true;
             }
-            if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+            if (event.key() == InputConstants.KEY_ESCAPE) {
                 editingNode = null;
                 editBuffer = "";
                 return true;
             }
             return true;
         }
-        boolean ctrl = (event.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0;
-        if (ctrl && (event.key() == GLFW.GLFW_KEY_0 || event.key() == GLFW.GLFW_KEY_KP_0)) {
+        boolean ctrl = (event.modifiers() & InputConstants.MOD_CONTROL) != 0;
+        if (searchOpen) {
+            if (handleFindKey(event)) {
+                return true;
+            }
+            if (!ctrl) {
+                // The open find bar owns every plain keystroke: while it is up, 'n' is a letter of
+                // the query, not the shortcut that drops a note on the canvas behind it. Chords
+                // fall through, so Ctrl+F still closes it and Ctrl+V still pastes.
+                return true;
+            }
+        }
+        if (ctrl && (event.key() == InputConstants.KEY_0 || event.key() == InputConstants.KEY_NUMPAD0)) {
             resetView();
             onMessage.accept(Lang.get("lune.gui.blueprint.blueprint_view_reset"));
             return true;
         }
-        if (ctrl && event.key() == GLFW.GLFW_KEY_A) {
+        if (ctrl && event.key() == InputConstants.KEY_A) {
             selectedNodes.clear();
             selectedNodes.addAll(task.nodes);
             selectAnchor();
             onSelect.accept(selected);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_DELETE || event.key() == GLFW.GLFW_KEY_BACKSPACE) {
+        if (event.key() == InputConstants.KEY_DELETE || event.key() == InputConstants.KEY_BACKSPACE) {
+            if (selectedNote != null && selectedNodes.isEmpty()) {
+                deleteSelectedNote();
+                return true;
+            }
             if (!selectedNodes.isEmpty()) {
                 onDelete.accept(List.copyOf(selectedNodes));
                 return true;
             }
         }
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE
+        if (event.key() == InputConstants.KEY_ESCAPE
                 && (wireSource != null || draggedCableKey != null || selecting || minimapDragging)) {
             wireSource = null;
             wireDataPort = null;
@@ -2703,25 +3996,183 @@ public final class BlueprintPanel extends AbstractWidget {
             panning = false;
             return true;
         }
+        return handleShortcut(event, ctrl);
+    }
+
+    /**
+     * The editor shortcuts that are not about one card.
+     *
+     * <p>Plain letters rather than chords for the two that are used constantly - N for a note, F
+     * to frame what is selected. The canvas only sees a keystroke while it holds the focus, and
+     * every text box on the tab is a widget of its own, so there is nothing for them to collide
+     * with.</p>
+     */
+    private boolean handleShortcut(KeyEvent event, boolean ctrl) {
+        int key = event.key();
+        boolean shift = shiftDown();
+        if (ctrl && key == InputConstants.KEY_F) {
+            toggleFind();
+            return true;
+        }
+        if (ctrl && key == InputConstants.KEY_G) {
+            if (shift) {
+                ungroupSelection();
+            } else {
+                groupSelection();
+            }
+            return true;
+        }
+        if (ctrl && key == InputConstants.KEY_D) {
+            duplicateSelection();
+            return true;
+        }
+        if (ctrl && key == InputConstants.KEY_C) {
+            copySelection();
+            return true;
+        }
+        if (ctrl && key == InputConstants.KEY_V) {
+            paste(pointerX, pointerY);
+            return true;
+        }
+        if (key == InputConstants.KEY_F9) {
+            if (shift) {
+                clearBreakpoints();
+            } else {
+                toggleBreakpoints();
+            }
+            return true;
+        }
+        if (!ctrl && key == InputConstants.KEY_N) {
+            addNoteAt(pointerX, pointerY);
+            return true;
+        }
+        if (!ctrl && key == InputConstants.KEY_F) {
+            frameSelection();
+            return true;
+        }
+        if (key == InputConstants.KEY_HOME) {
+            fitAll();
+            return true;
+        }
         return false;
+    }
+
+    private void deleteSelectedNote() {
+        if (task == null || task.notes == null || selectedNote == null) {
+            return;
+        }
+        task.notes.remove(selectedNote);
+        selectedNote = null;
+        editingNote = null;
+        onChanged.run();
+        onMessage.accept(Lang.get("lune.gui.blueprint.note_deleted"));
+    }
+
+    /** While a note is open it owns the keyboard, exactly as the repeat chip does. */
+    private boolean handleNoteKey(KeyEvent event) {
+        int key = event.key();
+        if (key == InputConstants.KEY_ESCAPE) {
+            commitNoteEdit();
+            return true;
+        }
+        if (key == InputConstants.KEY_BACKSPACE) {
+            if (!editingNote.text.isEmpty()) {
+                editingNote.text = editingNote.text.substring(0, editingNote.text.length() - 1);
+            }
+            return true;
+        }
+        if (key == InputConstants.KEY_RETURN || key == InputConstants.KEY_NUMPADENTER) {
+            // A note is a paragraph, so Return is a new line and Escape is "done". Return as
+            // "done" would make a two-line note impossible to write.
+            if (editingNote.text.length() < TaskNote.MAX_TEXT) {
+                editingNote.text += "\n";
+            }
+            return true;
+        }
+        return true;
+    }
+
+    private boolean handleTitleKey(KeyEvent event) {
+        int key = event.key();
+        if (key == InputConstants.KEY_ESCAPE || key == InputConstants.KEY_RETURN
+                || key == InputConstants.KEY_NUMPADENTER) {
+            commitTitleEdit();
+            return true;
+        }
+        if (key == InputConstants.KEY_BACKSPACE) {
+            if (!titleBuffer.isEmpty()) {
+                titleBuffer = titleBuffer.substring(0, titleBuffer.length() - 1);
+            }
+            return true;
+        }
+        return true;
+    }
+
+    private boolean handleFindKey(KeyEvent event) {
+        int key = event.key();
+        if (key == InputConstants.KEY_ESCAPE) {
+            closeFind();
+            return true;
+        }
+        if (key == InputConstants.KEY_BACKSPACE) {
+            if (!searchQuery.isEmpty()) {
+                searchQuery = searchQuery.substring(0, searchQuery.length() - 1);
+                refreshFind();
+            }
+            return true;
+        }
+        if (key == InputConstants.KEY_RETURN || key == InputConstants.KEY_NUMPADENTER
+                || key == InputConstants.KEY_DOWN) {
+            stepFind(shiftDown() && key != InputConstants.KEY_DOWN ? -1 : 1);
+            return true;
+        }
+        if (key == InputConstants.KEY_UP) {
+            stepFind(-1);
+            return true;
+        }
+        return false;
+    }
+
+    /** The find bar sits over the top-left of the canvas, so it has to claim its own clicks. */
+    private boolean findBarContains(int screenX, int screenY) {
+        return searchOpen && screenX >= getX() + 6
+                && screenX < getX() + 6 + Math.min(FIND_BAR_W, getWidth() - 12)
+                && screenY >= getY() + 6 && screenY < getY() + 6 + FIND_BAR_H;
     }
 
     @Override
     public boolean charTyped(net.minecraft.client.input.CharacterEvent event) {
         int codepoint = event.codepoint();
-        if (editingNode == null || codepoint < '0' || codepoint > '9') {
-            return false;
+        if (editingNote != null) {
+            if (codepoint >= ' ' && editingNote.text.length() < TaskNote.MAX_TEXT) {
+                editingNote.text += (char) codepoint;
+            }
+            return true;
         }
-        if (editBuffer.length() < 7) {
-            editBuffer += (char) codepoint;
+        if (editingGroup != null) {
+            if (codepoint >= ' ' && titleBuffer.length() < TaskGroup.MAX_TITLE) {
+                titleBuffer += (char) codepoint;
+            }
+            return true;
         }
-        return true;
+        if (editingNode != null) {
+            if (codepoint >= '0' && codepoint <= '9' && editBuffer.length() < 7) {
+                editBuffer += (char) codepoint;
+            }
+            return true;
+        }
+        if (searchOpen) {
+            if (codepoint >= ' ' && searchQuery.length() < 48) {
+                searchQuery += (char) codepoint;
+                refreshFind();
+            }
+            return true;
+        }
+        return false;
     }
 
     private boolean controlDown() {
-        long window = Minecraft.getInstance().getWindow().handle();
-        return GLFW.glfwGetKey(window, GLFW.GLFW_KEY_LEFT_CONTROL) == GLFW.GLFW_PRESS
-                || GLFW.glfwGetKey(window, GLFW.GLFW_KEY_RIGHT_CONTROL) == GLFW.GLFW_PRESS;
+        return Minecraft.getInstance().hasControlDown();
     }
 
     private TaskNode nodeAt(int x, int y) {
@@ -2730,7 +4181,9 @@ public final class BlueprintPanel extends AbstractWidget {
         }
         for (int i = task.nodes.size() - 1; i >= 0; i--) {
             TaskNode node = task.nodes.get(i);
-            if (contains(node, x, y)) {
+            // A card inside a closed frame is not on the canvas, so nothing on the canvas can be
+            // pointing at it - not a click, not a hover, and not the end of a dragged cable.
+            if (contains(node, x, y) && collapsedHolder(node) == null) {
                 return node;
             }
         }
@@ -2742,6 +4195,9 @@ public final class BlueprintPanel extends AbstractWidget {
             return null;
         }
         for (TaskNode node : task.nodes) {
+            if (collapsedHolder(node) != null) {
+                continue;
+            }
             if (node.isObserverNode()) {
                 // A source card with an input: the Watch pin takes a wire even though no signal
                 // ever travels down it.
@@ -2774,6 +4230,9 @@ public final class BlueprintPanel extends AbstractWidget {
             return null;
         }
         for (TaskNode node : task.nodes) {
+            if (collapsedHolder(node) != null) {
+                continue;
+            }
             List<String> inputs = exposedInputs(node);
             for (int i = 0; i < inputs.size(); i++) {
                 if (near(x, y, inputX(node), dataInputY(node, i))) {
@@ -2887,7 +4346,11 @@ public final class BlueprintPanel extends AbstractWidget {
         int rows = Math.max(exposedInputs(node).size(), exposedOutputs(node).size());
         int baseHeight = supportsWhilePort(node) && node.whileVisible
                 ? NODE_H : NODE_H_WITHOUT_WHILE;
-        return rows == 0 ? baseHeight : dataStartY(node) + rows * DATA_ROW_HEIGHT + DATA_FOOTER_GAP;
+        int height = rows == 0
+                ? baseHeight : dataStartY(node) + rows * DATA_ROW_HEIGHT + DATA_FOOTER_GAP;
+        // A card with numbers to show grows a row for them at its foot, under everything that is
+        // positioned from the top - pins, labels, data ports - so none of those has to know.
+        return statsFor(node) == null ? height : height + STATS_ROW_HEIGHT;
     }
 
     private int minimapX() {
@@ -2932,6 +4395,22 @@ public final class BlueprintPanel extends AbstractWidget {
             minY = Math.min(minY, nodeY(node));
             maxX = Math.max(maxX, nodeX(node) + NODE_W);
             maxY = Math.max(maxY, nodeY(node) + nodeHeight(node));
+        }
+        if (task.notes != null) {
+            for (TaskNote note : task.notes) {
+                minX = Math.min(minX, note.x);
+                minY = Math.min(minY, note.y);
+                maxX = Math.max(maxX, note.right());
+                maxY = Math.max(maxY, note.bottom());
+            }
+        }
+        if (task.groups != null) {
+            for (TaskGroup group : task.groups) {
+                minX = Math.min(minX, group.x);
+                minY = Math.min(minY, group.y - TaskGroup.HEADER_HEIGHT);
+                maxX = Math.max(maxX, group.right());
+                maxY = Math.max(maxY, group.bottom());
+            }
         }
         java.util.List<TaskCableRoute> visibleRoutes = new java.util.ArrayList<>(automaticCableRoutes.values());
         if (task.cableAnchors != null) visibleRoutes.addAll(task.cableAnchors.values());
@@ -3102,12 +4581,41 @@ public final class BlueprintPanel extends AbstractWidget {
             }
         }
 
+        // Under the cards, in the same order the canvas draws them, so the map is a small copy of
+        // the picture rather than a second diagram with its own conventions.
+        if (task.groups != null) {
+            for (TaskGroup group : task.groups) {
+                int colour = NodePalette.paper(group.colour).border();
+                extractor.outline(minimapX(bounds, group.x, scale),
+                        minimapY(bounds, group.y - TaskGroup.HEADER_HEIGHT, scale),
+                        Math.max(3, minimapX(bounds, group.right(), scale)
+                                - minimapX(bounds, group.x, scale)),
+                        Math.max(3, minimapY(bounds, group.bottom(), scale)
+                                - minimapY(bounds, group.y - TaskGroup.HEADER_HEIGHT, scale)),
+                        colour);
+            }
+        }
+        if (task.notes != null) {
+            for (TaskNote note : task.notes) {
+                extractor.fill(minimapX(bounds, note.x, scale), minimapY(bounds, note.y, scale),
+                        Math.max(minimapX(bounds, note.x, scale) + 2,
+                                minimapX(bounds, note.right(), scale)),
+                        Math.max(minimapY(bounds, note.y, scale) + 2,
+                                minimapY(bounds, note.bottom(), scale)),
+                        NodePalette.paper(note.colour).border());
+            }
+        }
+
         for (TaskNode node : task.nodes) {
+            if (collapsedHolder(node) != null) {
+                continue;
+            }
             int nodeLeft = minimapX(bounds, nodeX(node), scale);
             int nodeTop = minimapY(bounds, nodeY(node), scale);
             int nodeRight = minimapX(bounds, nodeX(node) + NODE_W, scale);
             int nodeBottom = minimapY(bounds, nodeY(node) + nodeHeight(node), scale);
-            int colour = selectedNodes.contains(node) ? NODE_SELECTED
+            int colour = TaskDebug.isHalted(node) ? FIND_MATCH
+                    : selectedNodes.contains(node) ? NODE_SELECTED
                     : node.isClockNode() ? pinWhile
                     : isActiveNode(node) ? NODE_ACTIVE : NODE_BORDER;
             extractor.fill(nodeLeft, nodeTop, Math.max(nodeLeft + 3, nodeRight),

@@ -1,5 +1,7 @@
 package com.etka.lune.bot;
 
+import com.etka.lune.compat.Mobs;
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.Constants;
 import com.etka.lune.bot.task.TaskRunner;
@@ -12,13 +14,20 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
+import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Ghast;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelSettings;
 import net.minecraft.world.level.WorldDataConfiguration;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.WorldOptions;
 import net.minecraft.world.level.levelgen.presets.WorldPresets;
 import net.minecraft.world.item.Item;
@@ -31,6 +40,7 @@ import net.minecraft.world.level.block.state.properties.IntegerProperty;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -53,7 +63,12 @@ import java.util.Optional;
  * -Dlune.autorun.fixture=fishing-one    prepare a rod and a one-block water target
  * -Dlune.autorun.fixture=ghast          a platform twenty blocks up with one Ghast shelling it
  * -Dlune.autorun.fixture=ghast-3        the same arena, kept stocked with three
+ * -Dlune.autorun.fixture=zombie         one Zombie kept on the bot wherever it goes
+ * -Dlune.autorun.fixture=skeleton-2     two Skeletons, the same way; also creeper and spider
+ * -Dlune.autorun.fixture=shield         a shield in the pack, for the cards that can raise one
+ * -Dlune.autorun.fixture=end-egg        the End with a dragon egg on bedrock and no dragon
  * -Dlune.autorun.fixture=food,tools     comma-separated; see {@link #prepareFixture}
+ * -Dlune.autorun.learning=true         switch the learner on whatever the client's config says
  * -Dlune.autorun.stopAfterTicks=12000  hard budget; 0 means run until the task ends
  * -Dlune.autorun.quit=true             close the client afterwards, so a shell run terminates
  * </pre>
@@ -68,7 +83,7 @@ public final class AutoRun {
     private static final String TASK_KEY = "lune.autorun.task";
     /**
      * The key before tasks stopped being called routines. A literal on purpose: it names a
-     * property in run scripts that already exist, so it must not follow the code.
+     * property the run harness already sets, so it must not follow the code.
      */
     private static final String LEGACY_TASK_KEY = "lune.autorun.routine";
     private static final String WORLD_KEY = "lune.autorun.createWorld";
@@ -81,6 +96,8 @@ public final class AutoRun {
     private static final String RECORD_KEY = "lune.autorun.record";
     /** Hold the learner still, so a benchmark measures the code and not the bandit. */
     private static final String FREEZE_LEARNING_KEY = "lune.autorun.freezeLearning";
+    /** Switch the learner on for this run, whatever the client's config says. See {@link #tick}. */
+    private static final String FORCE_LEARNING_KEY = "lune.autorun.learning";
 
     /** Long enough for the integrated server to hand over the chunks around the spawn. */
     private static final int DEFAULT_DELAY_TICKS = 100;
@@ -141,6 +158,54 @@ public final class AutoRun {
     /** More than this in the air at once stops being a test and starts being a fireworks display. */
     private static final int MAX_ARENA_GHASTS = 8;
 
+    /** Half-width of the bedrock pad the egg stands on, in blocks. */
+    private static final int END_PODIUM_RADIUS = 2;
+    /** Bedrock between the pad and the egg, so the egg is out of the ground and on the fountain. */
+    private static final int END_PODIUM_HEIGHT = 3;
+    /** Where the end-egg fixture built its podium, so a dimension change cannot build a second. */
+    private static BlockPos endPodium;
+
+    /**
+     * The hostiles a fixture can keep on the bot, by the word the fixture uses.
+     *
+     * <p>Ground combat was the one part of the bot with no fixture at all, and it showed: the only
+     * way a measured run ever met a Zombie was to still be outside at nightfall, so the melee
+     * opener, the shield and Self Preservation's counterattack were sampled a handful of times
+     * across a hundred runs, in whatever state the bot happened to be in when one wandered up.
+     * The Ghast arena already proved the shape of the answer; this is the same idea on the ground.
+     */
+    private static final java.util.Map<String, EntityType<?>> ARENA_MOBS = java.util.Map.of(
+            "zombie", Mobs.ZOMBIE,
+            "skeleton", Mobs.SKELETON,
+            "creeper", Mobs.CREEPER,
+            "spider", Mobs.SPIDER);
+    /** Close enough that the bot has to deal with it, far enough that it gets to decide how. */
+    private static final double MOB_RING_MIN = 9.0;
+    private static final double MOB_RING_MAX = 16.0;
+    /** Places tried for one mob before leaving it to the next keeper tick. */
+    private static final int MOB_SPAWN_ATTEMPTS = 12;
+    /** Ticks between restocking checks. A walk across the ring takes several seconds. */
+    private static final int MOB_KEEPER_INTERVAL = 40;
+    /**
+     * Ticks of quiet after the ring empties before it is filled again.
+     *
+     * <p>The Ghast arena restocks the moment one dies, which is right there: a deflected fireball
+     * kills its Ghast outright, so without an immediate replacement the fixture buys a single shot
+     * to look at. On the ground it is the opposite mistake. The first three measured runs put two
+     * Zombies or three Skeletons on a bot with no armour and replaced each one within two seconds,
+     * and all three ended {@code END reason=player died} - at 500, 737 and 4958 ticks, against
+     * budgets of twelve and fourteen thousand. That is not a hard test, it is a test that ends
+     * before the behaviour being measured gets a second sample.
+     *
+     * <p>Fifteen seconds is enough for the bot to finish a fight, eat, and be somewhere of its own
+     * choosing when the next one arrives - which is the thing worth measuring.
+     */
+    private static final int MOB_RESTOCK_DELAY = 300;
+    /** How far from the bot a mob still counts as one of the arena's, in blocks. */
+    private static final double MOB_ARENA_RADIUS = 32.0;
+    /** More than this of one kind at once is a mob farm, not a measurement. */
+    private static final int MAX_ARENA_MOBS = 6;
+
     private static final String taskName = System.getProperty(TASK_KEY,
             System.getProperty(LEGACY_TASK_KEY, "")).trim();
     private static final String worldName = System.getProperty(WORLD_KEY, "").trim();
@@ -149,7 +214,8 @@ public final class AutoRun {
     private static final boolean quitWhenDone = Boolean.getBoolean(QUIT_KEY);
     private static final boolean recordSession = Boolean.getBoolean(RECORD_KEY);
     private static final boolean freezeLearning = Boolean.getBoolean(FREEZE_LEARNING_KEY);
-    private static final String fixture = System.getProperty(FIXTURE_KEY, "").trim().toLowerCase();
+    private static final boolean forceLearning = Boolean.getBoolean(FORCE_LEARNING_KEY);
+    private static final String fixture = System.getProperty(FIXTURE_KEY, "").trim().toLowerCase(Locale.ROOT);
 
     /** Seed of the world this harness generated, so the journal can record how to repeat the run. */
     private static long worldSeed;
@@ -174,6 +240,27 @@ public final class AutoRun {
     private static int ghastKeeperTicks;
     /** Server-thread only, inside the keeper. */
     private static final java.util.Random ghastRandom = new java.util.Random();
+
+    /**
+     * What the ground arena is keeping on the bot, or empty when this run has no mob fixture.
+     *
+     * <p>Volatile for the same reason the Ghast arena is: it is written while the fixture is being
+     * applied on the integrated server and read from the client tick that drives the keeper.
+     */
+    private static volatile java.util.Map<String, Integer> mobArena = java.util.Map.of();
+    private static int mobKeeperTicks;
+    /** Server-thread only, inside the keeper. */
+    private static final java.util.Random mobRandom = new java.util.Random();
+    /**
+     * Ticks left before each kind may be topped up again.
+     *
+     * <p>Concurrent because this one is genuinely touched by both threads, unlike the Ghast
+     * keeper's counters: the countdown is stepped on the server thread inside the keeper, and the
+     * client tick clears it when the level changes so a new world does not inherit the last one's
+     * timers.
+     */
+    private static final java.util.Map<String, Integer> mobCooldown =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     private AutoRun() {}
 
@@ -247,7 +334,7 @@ public final class AutoRun {
             worldSeed = options.seed();
             Constants.LOG.info("AutoRun: creating world '{}' with seed {}", worldName, worldSeed);
             mc.createWorldOpenFlows().createFreshLevel(worldName, settings, options,
-                    WorldPresets::createNormalWorldDimensions, mc.screen);
+                    WorldPresets::createNormalWorldDimensions, Screens.current(mc));
         } catch (RuntimeException e) {
             Constants.LOG.error("AutoRun: could not create world '{}'", worldName, e);
             if (quitWhenDone) {
@@ -294,6 +381,22 @@ public final class AutoRun {
             com.etka.lune.config.BotConfig config = com.etka.lune.config.BotConfig.get();
             config.learningEnabled = false;
             config.userLearningEnabled = false;
+        } else if (forceLearning) {
+            // The other half of the same switch, and it has to exist for the same reason the freeze
+            // does: what the harness asks for has to be what the run does.
+            //
+            // A profile-building batch passes -Dlune.learning.explore=balanced and believes it is
+            // sampling every tactic. It is not, unless learning is on: every learned job asks
+            // ctx.config.learningEnabled first and falls back to its written default when the
+            // answer is no, so the exploration mode is never consulted at all. The dev client's
+            // lune.json had it off, every lane is seeded from that file, and a 29-run batch
+            // therefore wrote 34 empty learning snapshots and chopped every tree trunk-first -
+            // 76 minutes that looked like a coverage sweep and contributed nothing to the table.
+            //
+            // Freeze wins the tie above: a benchmark that must not learn outranks a batch that
+            // wants to. Held every tick for the same reason the freeze is.
+            com.etka.lune.config.BotConfig config = com.etka.lune.config.BotConfig.get();
+            config.learningEnabled = true;
         }
 
         if (mc.level != lastLevel) {
@@ -304,9 +407,12 @@ public final class AutoRun {
             started = false;
             fixturePrepared = false;
             ghastArena = null;
+            mobArena = java.util.Map.of();
+            mobCooldown.clear();
         }
 
         maintainGhastArena(mc);
+        maintainMobArena(mc);
 
         if (!started) {
             if (!fixturePrepared) {
@@ -367,9 +473,10 @@ public final class AutoRun {
      * obsidian obsidian, corner blocks and a lighter, so Build Nether Portal can build.
      * fishing[-small|-one]  a rod and a pool, in three target sizes.
      * ghast[-N]             a platform twenty blocks up, kept stocked with N Ghasts (default 1).
+     * end-egg               the End, a dragon egg on a bedrock podium, no dragon, pickaxe and torches.
      * </pre>
      *
-     * <p>None of this is available outside the harness: the properties are set by the run scripts
+     * <p>None of this is available outside the harness: the properties are set by the run harness
      * and leave nothing in the user's config.</p>
      *
      * <p>Everything here runs on the integrated server's own thread. The harness ticks on the
@@ -411,18 +518,22 @@ public final class AutoRun {
         if (parts.stream().anyMatch(part -> part.startsWith("ghast"))) {
             prepareGhastArena(mc, serverPlayer, parts);
         }
+        prepareMobArena(parts);
         for (String part : parts) {
             switch (part) {
                 case "food" -> giveFood(serverPlayer);
                 case "tools" -> giveTools(serverPlayer);
+                case "shield" -> giveShield(serverPlayer);
                 case "chest" -> placeChest(serverPlayer);
                 case "furnace" -> placeFurnace(serverPlayer);
                 case "drops" -> scatterDrops(serverPlayer);
                 case "farm" -> plantFarm(serverPlayer);
                 case "gap" -> digGap(serverPlayer);
                 case "obsidian" -> giveObsidian(serverPlayer);
+                case "end-egg" -> prepareEndEgg(mc, serverPlayer);
                 default -> {
-                    if (!part.startsWith("fishing") && !part.startsWith("ghast")) {
+                    if (!part.startsWith("fishing") && !part.startsWith("ghast")
+                            && !ARENA_MOBS.containsKey(arenaMobKind(part))) {
                         Constants.LOG.warn("AutoRun: unknown fixture '{}'", part);
                     }
                 }
@@ -441,6 +552,20 @@ public final class AutoRun {
     private static void giveFood(ServerPlayer player) {
         give(player, new ItemStack(Items.COOKED_BEEF, 64));
         Constants.LOG.info("AutoRun: fixture food");
+    }
+
+    /**
+     * A shield, and nothing else.
+     *
+     * <p>Separate from {@code tools} on purpose. Every Kill and Hunt card takes a {@code use_shield}
+     * parameter and the coverage tasks set it, but nothing in the harness ever handed the bot a
+     * shield to raise - so the whole block-and-strike path answered "no shield available" in every
+     * measured run and was never sampled once. Not in {@code tools} because the mining and
+     * tool-making runs take that fixture, and a shield in the offhand is not neutral there.
+     */
+    private static void giveShield(ServerPlayer player) {
+        give(player, new ItemStack(Items.SHIELD));
+        Constants.LOG.info("AutoRun: fixture shield");
     }
 
     private static void giveTools(ServerPlayer player) {
@@ -462,6 +587,86 @@ public final class AutoRun {
      * diamonds or a lava cast first. Handing it over is the only way that policy gets sampled at
      * all, and the thing being measured is the build order, not the mining that paid for it.</p>
      */
+    /**
+     * The End after the fight, without the fight: one dragon egg standing on bedrock.
+     *
+     * <p>Everything the Collect Dragon Egg card needs and nothing else. The egg starts on bedrock
+     * because that is the case worth watching - there is nowhere to put a torch under it, so the
+     * card has to knock it loose first and work wherever it lands. The podium is a stand-in rather
+     * than the real exit portal; what the card reads is the block under the egg, and bedrock is
+     * bedrock.</p>
+     *
+     * <p>The dragon is removed by taking the fight out of the level before the player is ever in
+     * it. {@code EnderDragonFight.tick} is what creates a dragon on first entry, and a level with
+     * no fight never ticks one - killing the dragon afterwards would not do, because the fight
+     * respawns one it did not see die.</p>
+     *
+     * <p>Built once. Teleporting into the End changes {@code mc.level}, which the harness reads as
+     * a fresh world and answers by preparing the fixture again; without the guard that second pass
+     * would measure the new podium as the ground and build another one on top of it.</p>
+     */
+    private static void prepareEndEgg(Minecraft mc, ServerPlayer serverPlayer) {
+        MinecraftServer server = mc.getSingleplayerServer();
+        if (server == null) {
+            return;
+        }
+        ServerLevel end = server.getLevel(Level.END);
+        if (end == null) {
+            Constants.LOG.warn("AutoRun: no End dimension for the end-egg fixture");
+            return;
+        }
+        if (endPodium != null) {
+            return;
+        }
+        for (String command : new String[] {
+                // Peaceful, because the island is an Enderman farm and the bot's own head scan is
+                // what angers them. A demonstration that ends in a fight demonstrates the fight.
+                "difficulty peaceful",
+                "gamerule spawn_monsters false",
+                "gamerule advance_time false",
+                "weather clear" }) {
+            server.getCommands().performPrefixedCommand(
+                    server.createCommandSourceStack().withSuppressedOutput(), command);
+        }
+
+        end.setDragonFight(null);
+        for (Entity entity : end.getAllEntities()) {
+            if (entity instanceof EnderDragon || entity instanceof EndCrystal) {
+                entity.discard();
+            }
+        }
+
+        // Asked of the island, not assumed: the main island's surface sits anywhere around y=60.
+        end.getChunk(0, 0);
+        BlockPos base = new BlockPos(0, end.getHeight(Heightmap.Types.MOTION_BLOCKING, 0, 0) - 1, 0);
+        for (int dx = -END_PODIUM_RADIUS; dx <= END_PODIUM_RADIUS; dx++) {
+            for (int dz = -END_PODIUM_RADIUS; dz <= END_PODIUM_RADIUS; dz++) {
+                end.setBlockAndUpdate(base.offset(dx, 0, dz), Blocks.BEDROCK.defaultBlockState());
+                for (int dy = 1; dy <= END_PODIUM_HEIGHT + 2; dy++) {
+                    end.setBlockAndUpdate(base.offset(dx, dy, dz), Blocks.AIR.defaultBlockState());
+                }
+            }
+        }
+        for (int dy = 1; dy <= END_PODIUM_HEIGHT; dy++) {
+            end.setBlockAndUpdate(base.above(dy), Blocks.BEDROCK.defaultBlockState());
+        }
+        BlockPos egg = base.above(END_PODIUM_HEIGHT + 1);
+        end.setBlockAndUpdate(egg, Blocks.DRAGON_EGG.defaultBlockState());
+        endPodium = base;
+
+        BlockPos stand = base.offset(END_PODIUM_RADIUS, 1, END_PODIUM_RADIUS);
+        serverPlayer.teleportTo(end, stand.getX() + 0.5, stand.getY(), stand.getZ() + 0.5,
+                java.util.Set.of(), 225.0F, 0.0F, true);
+        serverPlayer.setDeltaMovement(Vec3.ZERO);
+        serverPlayer.fallDistance = 0.0F;
+        // What the card requires and will not conjure: something to dig end stone with, and the
+        // torch it drops the egg onto.
+        give(serverPlayer, new ItemStack(Items.IRON_PICKAXE));
+        give(serverPlayer, new ItemStack(Items.TORCH, 32));
+        Constants.LOG.info("AutoRun: fixture end-egg - dragon egg on bedrock at {}, no dragon fight",
+                egg);
+    }
+
     private static void giveObsidian(ServerPlayer player) {
         give(player, new ItemStack(Items.OBSIDIAN, 24));
         give(player, new ItemStack(Items.FLINT_AND_STEEL));
@@ -800,7 +1005,8 @@ public final class AutoRun {
      */
     private static void spawnArenaGhast(ServerLevel level, ServerPlayer serverPlayer,
                                         BlockPos centre) {
-        Ghast ghast = EntityType.GHAST.create(level, EntitySpawnReason.COMMAND);
+        // Mobs holds wildcard types; the ghast type creates ghasts.
+        Ghast ghast = (Ghast) Mobs.GHAST.create(level, EntitySpawnReason.COMMAND);
         if (ghast == null) {
             Constants.LOG.warn("AutoRun: could not create a Ghast");
             return;
@@ -827,6 +1033,140 @@ public final class AutoRun {
         }
         Constants.LOG.warn("AutoRun: no clear spot for a Ghast around {} after {} tries",
                 centre, GHAST_SPAWN_ATTEMPTS);
+    }
+
+    /** The kind a fixture word names, with any {@code -3} count taken off: "skeleton-2" is a Skeleton. */
+    private static String arenaMobKind(String part) {
+        int dash = part.indexOf('-');
+        return dash < 0 ? part : part.substring(0, dash);
+    }
+
+    /** "zombie" is one and "zombie-3" is three, the way the Ghast and fishing counts are. */
+    private static int arenaMobCount(String part) {
+        int dash = part.indexOf('-');
+        if (dash < 0) {
+            return 1;
+        }
+        try {
+            return Math.clamp(Integer.parseInt(part.substring(dash + 1)), 1, MAX_ARENA_MOBS);
+        } catch (NumberFormatException e) {
+            Constants.LOG.warn("AutoRun: '{}' is not a mob count", part);
+            return 1;
+        }
+    }
+
+    /** Reads the fixture words into what the keeper should hold, and says so once. */
+    private static void prepareMobArena(java.util.Set<String> parts) {
+        java.util.Map<String, Integer> wanted = new java.util.LinkedHashMap<>();
+        for (String part : parts) {
+            String kind = arenaMobKind(part);
+            if (ARENA_MOBS.containsKey(kind)) {
+                wanted.merge(kind, arenaMobCount(part), Math::max);
+            }
+        }
+        mobArena = java.util.Map.copyOf(wanted);
+        if (!wanted.isEmpty()) {
+            Constants.LOG.info("AutoRun: mob arena keeping {}", wanted);
+        }
+    }
+
+    /**
+     * Keeps the hostiles on the bot rather than on a spot.
+     *
+     * <p>The Ghast arena pins itself to a floor it built, which is right when the bot is standing
+     * on that floor for the whole run. Every job this one is for walks: Chop Wood crosses a forest,
+     * Mine goes underground. A ring around a fixed point would be a fixture the bot strolls out of
+     * in the first minute, so the ring is around wherever the bot currently is.
+     */
+    private static void maintainMobArena(Minecraft mc) {
+        java.util.Map<String, Integer> wanted = mobArena;
+        // Not until the card is running, for the same reason the Ghasts wait: a mob put up during
+        // the join settle gets free hits in before anything is watching for one.
+        if (wanted.isEmpty() || !started || mc.player == null || mc.getSingleplayerServer() == null) {
+            return;
+        }
+        if (++mobKeeperTicks < MOB_KEEPER_INTERVAL) {
+            return;
+        }
+        mobKeeperTicks = 0;
+        java.util.UUID playerId = mc.player.getUUID();
+        mc.getSingleplayerServer().execute(() -> stockMobs(mc, playerId, wanted));
+    }
+
+    private static void stockMobs(Minecraft mc, java.util.UUID playerId,
+                                  java.util.Map<String, Integer> wanted) {
+        if (mc.getSingleplayerServer() == null) {
+            return;
+        }
+        ServerPlayer serverPlayer = mc.getSingleplayerServer().getPlayerList().getPlayer(playerId);
+        if (serverPlayer == null || !(serverPlayer.level() instanceof ServerLevel level)) {
+            return;
+        }
+        for (java.util.Map.Entry<String, Integer> entry : wanted.entrySet()) {
+            EntityType<?> type = ARENA_MOBS.get(entry.getKey());
+            java.util.List<Mob> present = level.getEntitiesOfClass(Mob.class,
+                    serverPlayer.getBoundingBox().inflate(MOB_ARENA_RADIUS),
+                    mob -> mob.isAlive() && mob.getType() == type);
+            for (Mob mob : present) {
+                // Same reason the Ghasts are handed their target back: vanilla drops a target the
+                // moment it loses sight for a few seconds, and a mob that has gone back to
+                // wandering is one the arena is still counting but no longer testing anything with.
+                if (mob.getTarget() == null) {
+                    mob.setTarget(serverPlayer);
+                }
+            }
+            if (present.size() >= entry.getValue()) {
+                // Full ring: anything counting down was counting down towards a mob that is no
+                // longer needed.
+                mobCooldown.remove(entry.getKey());
+                continue;
+            }
+            int left = mobCooldown.getOrDefault(entry.getKey(), MOB_RESTOCK_DELAY)
+                    - MOB_KEEPER_INTERVAL;
+            if (left > 0) {
+                mobCooldown.put(entry.getKey(), left);
+                continue;
+            }
+            mobCooldown.remove(entry.getKey());
+            // One per delay rather than filling the ring in a tick. A ring that refills instantly
+            // is a wall of mobs arriving together; one at a time is a fight the bot can finish.
+            spawnArenaMob(level, serverPlayer, entry.getKey(), type);
+        }
+    }
+
+    private static void spawnArenaMob(ServerLevel level, ServerPlayer serverPlayer,
+                                      String kind, EntityType<?> type) {
+        if (!(type.create(level, EntitySpawnReason.COMMAND) instanceof Mob mob)) {
+            Constants.LOG.warn("AutoRun: could not create a {}", kind);
+            return;
+        }
+        for (int attempt = 0; attempt < MOB_SPAWN_ATTEMPTS; attempt++) {
+            double angle = mobRandom.nextDouble() * Math.PI * 2.0;
+            double distance = MOB_RING_MIN + mobRandom.nextDouble() * (MOB_RING_MAX - MOB_RING_MIN);
+            BlockPos feet = surfaceAt(serverPlayer,
+                    (int) Math.round(serverPlayer.getX() + Math.cos(angle) * distance),
+                    (int) Math.round(serverPlayer.getZ() + Math.sin(angle) * distance));
+            mob.snapTo(feet.getX() + 0.5, feet.getY(), feet.getZ() + 0.5,
+                    (float) Math.toDegrees(angle) + 90.0F, 0.0F);
+            if (!level.noCollision(mob)) {
+                continue;
+            }
+            // A run is measured in daylight as often as not, and an undead arena in daylight
+            // measures sunrise: the Zombies catch fire, burn down in about thirty seconds and the
+            // keeper replaces them, so the journal fills with kills the bot never made. A helmet is
+            // vanilla's own answer - zombies spawn wearing one - and it is the smallest thing that
+            // keeps the fight the bot's. Dropping it is switched off so the loot stays the mob's.
+            mob.setItemSlot(EquipmentSlot.HEAD, new ItemStack(Items.LEATHER_HELMET));
+            mob.setDropChance(EquipmentSlot.HEAD, 0.0F);
+            mob.setPersistenceRequired();
+            mob.setTarget(serverPlayer);
+            level.addFreshEntity(mob);
+            Constants.LOG.info("AutoRun: {} at {}, {} blocks out", kind, mob.blockPosition(),
+                    Math.round(distance));
+            return;
+        }
+        Constants.LOG.warn("AutoRun: no clear spot for a {} after {} tries", kind,
+                MOB_SPAWN_ATTEMPTS);
     }
 
     private static void finish(Minecraft mc, BotEngine engine, String reason) {

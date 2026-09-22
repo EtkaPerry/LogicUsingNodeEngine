@@ -7,6 +7,7 @@ import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.learning.LearningContext;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.memory.BlockMemory;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.path.Goal;
@@ -121,18 +122,29 @@ public final class HarvestTask implements Task {
     }
 
     @Override
+    public LearningScope learningScope() {
+        return LearningScope.of("crop-harvesting", "lune.unit.crops", harvestPhase());
+    }
+
+    @Override
     public LearningContext learningContext(BotContext ctx) {
+        return new LearningContext("skill", "crop-harvesting",
+                ctx.level.dimension().identifier().toString(), String.join(";", harvestPhase()));
+    }
+
+    /** The situation a harvest is keyed on; every part of it is one of the card's parameters. */
+    private String[] harvestPhase() {
         String crops = targets.stream()
                 .map(block -> BuiltInRegistries.BLOCK.getKey(block).toString())
                 .sorted()
                 .limit(4)
                 .collect(Collectors.joining(","));
-        String phase = "crops=" + (crops.isBlank() ? "none" : crops)
-                + ";radius=" + CollectionPolicy.radiusBucket(radius)
-                + ";limit=" + (limit <= 0 ? "all" : limit)
-                + ";drops=" + collectDrops + ";replant=" + replant;
-        return new LearningContext("skill", "crop-harvesting",
-                ctx.level.dimension().identifier().toString(), phase);
+        return new String[] {
+                "crops=" + (crops.isBlank() ? "none" : crops),
+                "radius=" + CollectionPolicy.radiusBucket(radius),
+                "limit=" + (limit <= 0 ? "all" : limit),
+                "drops=" + collectDrops,
+                "replant=" + replant};
     }
 
     @Override
@@ -152,7 +164,7 @@ public final class HarvestTask implements Task {
         harvested = 0;
         unreachable.clear();
         unsuitableApproaches.clear();
-        unreachable.addAll(BlockMemory.get().getUnreachable());
+        unreachable.addAll(BlockMemory.get().getUnreachable(ctx.player.blockPosition()));
         site.leave();
         scanOrigin = null;
         target = null;
@@ -411,7 +423,7 @@ public final class HarvestTask implements Task {
         if (progress == BlockBreaker.Progress.HAZARD) {
             status.set(breaker.getFailureReason());
             unreachable.add(target.asLong());
-            BlockMemory.get().markUnreachable(target);
+            BlockMemory.get().markUnreachable(target, ctx.player.blockPosition());
             clearTarget(ctx);
             return TaskStatus.RUNNING;
         }
@@ -428,7 +440,7 @@ public final class HarvestTask implements Task {
             Goal safePosition = safeHarvestPosition(ctx);
             if (safePosition == null) {
                 unreachable.add(target.asLong());
-                BlockMemory.get().markUnreachable(target);
+                BlockMemory.get().markUnreachable(target, ctx.player.blockPosition());
                 clearTarget(ctx);
                 status.set("lune.status.harvest.no_safe_footing_beside_crop_skipping");
                 return TaskStatus.RUNNING;
@@ -461,7 +473,7 @@ public final class HarvestTask implements Task {
         }
         if (result == TaskStatus.FAILED) {
             unreachable.add(target.asLong());
-            BlockMemory.get().markUnreachable(target);
+            BlockMemory.get().markUnreachable(target, ctx.player.blockPosition());
             clearTarget(ctx);
             status.set("lune.status.harvest.crop_unreachable_checking_next_farm");
             return TaskStatus.RUNNING;

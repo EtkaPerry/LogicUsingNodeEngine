@@ -99,13 +99,37 @@ class CommandTextTest {
             assertEquals("1.5 blok", Lang.get("lune.gui.main.1f_blocks", 1.5));
             assertEquals("2.5 ms", Lang.get("lune.gui.main.1f_ms", 2.5));
             var hunt = new com.etka.lune.bot.task.HuntMobTask(
-                    net.minecraft.world.entity.EntityType.BLAZE, stack -> false,
+                    com.etka.lune.compat.Mobs.BLAZE, stack -> false,
                     "Blaze Rod", "Blazes", 1, com.etka.lune.bot.task.KillOptions.basic());
             assertEquals("Blaze avla", hunt.name());
             assertEquals("Hunt Blazes", hunt.learningId());
+            var walk = new com.etka.lune.bot.task.DirectionalGotoTask(
+                    "walk", "Walk", "North", 32, 1, false);
+            assertEquals("Yürü: Kuzey, 32 blok", walk.name());
+            assertEquals("Walk North N blocks", walk.learningId());
         } finally {
             step.apply(saved);
         }
+    }
+
+    /**
+     * A directional walk is drawn; the row it measures into is not.
+     *
+     * <p>The English has to read exactly as it did when the title was built out of Java
+     * literals, and the learner's id has to keep saying "Walk North N blocks" whatever the
+     * player is reading - it is the key of rows that are already on disk.</p>
+     */
+    @Test
+    void directionalTravelIsDrawnAndItsRowKeyIsNot() {
+        var walk = new com.etka.lune.bot.task.DirectionalGotoTask(
+                "walk", "Walk", "North", 32, 1, false);
+        assertEquals("Walk North 32 blocks", walk.name());
+        assertEquals("Walk North N blocks", walk.learningId());
+        // One block is one block, which the old literal could not say.
+        var run = new com.etka.lune.bot.task.DirectionalGotoTask(
+                "run", "Run", "Facing", 1, 1, true);
+        assertEquals("Run Facing 1 block", run.name());
+        assertEquals("Run Facing N blocks", run.learningId());
     }
 
     @Test

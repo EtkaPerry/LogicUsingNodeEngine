@@ -5,8 +5,10 @@ import com.etka.lune.bot.knowledge.BiomeKnowledge;
 import com.etka.lune.bot.memory.BlockMemory;
 import com.etka.lune.bot.memory.CraftingTableMemory;
 import com.etka.lune.bot.task.SpeedrunOpportunity;
+import com.etka.lune.bot.util.Cheats;
 import com.etka.lune.bot.util.OmniscientAccess;
 import com.etka.lune.bot.util.TargetIndex;
+import com.etka.lune.compat.DyedBlocks;
 import com.etka.lune.config.BotConfig;
 import com.etka.lune.platform.BuildFeatures;
 import com.etka.lune.platform.Services;
@@ -60,7 +62,7 @@ public final class RunTrace implements AutoCloseable {
     private static final List<Block> LANDMARK_BLOCKS = List.of(
             Blocks.CHEST, Blocks.BARREL, Blocks.CRAFTING_TABLE, Blocks.FURNACE,
             Blocks.BLAST_FURNACE, Blocks.SMOKER, Blocks.BREWING_STAND, Blocks.ANVIL,
-            Blocks.BELL, Blocks.HAY_BLOCK, Blocks.BOOKSHELF, Blocks.WHITE_BED,
+            Blocks.BELL, Blocks.HAY_BLOCK, Blocks.BOOKSHELF, DyedBlocks.WHITE_BED,
             Blocks.END_PORTAL_FRAME, Blocks.SPAWNER, Blocks.NETHER_BRICKS,
             Blocks.OBSIDIAN, Blocks.CRYING_OBSIDIAN
     );
@@ -132,7 +134,10 @@ public final class RunTrace implements AutoCloseable {
                     StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             RunTrace trace = new RunTrace(file, writer);
             trace.line("Lune run trace");
-            trace.line("format=3");
+            // 4 added the taskid column; 5 added action's "using" field, which is what says whether
+            // the shield was up. Readers find fields by name rather than by position, so an older
+            // journal still parses - it simply has no taskid, and no answer about the shield.
+            trace.line("format=5");
             trace.line("started=" + LocalDateTime.now());
             trace.line("dimension=" + level.dimension());
             // Written so a run can be repeated from its own journal rather than from a log that has
@@ -140,9 +145,13 @@ public final class RunTrace implements AutoCloseable {
             trace.line("seed=" + AutoRun.worldSeed());
             trace.line("start=" + player.blockPosition().toShortString()
                     + " yaw=" + round(player.getYRot()) + " pitch=" + round(player.getXRot()));
+            // The effective cheat state, not the switch: a journal read back months later has to
+            // say what the bot could actually see, and the world's own permission is half of that.
             boolean omniscientAllowed = OmniscientAccess.isAllowed(Minecraft.getInstance());
-            String configLine = "omniscientMining:" + (config.omniscientMining && omniscientAllowed)
-                    + ",omniscientHarvesting:" + (config.omniscientHarvesting && omniscientAllowed);
+            String configLine = "omniscientMining:"
+                    + Cheats.isActive(Cheats.Mode.MINING, omniscientAllowed)
+                    + ",omniscientHarvesting:"
+                    + Cheats.isActive(Cheats.Mode.HARVEST, omniscientAllowed);
             configLine += ",learningEnabled:" + config.learningEnabled
                     + ",explore:" + com.etka.lune.bot.learning.LearningStore.get().explorationMode();
             if (BuildFeatures.approvalFeedback()) {
@@ -151,7 +160,7 @@ public final class RunTrace implements AutoCloseable {
             trace.line("config=" + configLine
                     + ",nodeBudget:" + config.nodeBudget
                     + ",repathInterval:" + config.repathInterval);
-            trace.line("columns=tick,type,task,mission,intent,status,position,look,vitals,world,action,target,blocked,giveup,blocks,tools,inventory,memory,flow"
+            trace.line("columns=tick,type,task,taskid,mission,intent,status,position,look,vitals,world,action,target,blocked,giveup,blocks,tools,inventory,memory,flow"
                     + ",learning"
                     + ",structure,landmarks,path,sight,motion,decisions");
             return trace;
@@ -460,13 +469,25 @@ public final class RunTrace implements AutoCloseable {
         }
         structureSummary = describeNearestStructure(level, feet);
 
+        // Using an item is not a key. It goes through MultiPlayerGameMode rather than BotInput, so
+        // a raised shield, a drawn bow and an eaten steak all left the keys column reading "W
+        // SPRINT" and nothing else - and a combat batch in which eight of twelve runs ended dead
+        // could not be asked whether the shield the bot was carrying had ever gone up.
+        String using = player.isUsingItem()
+                ? player.getUseItem().getItem().getDescriptionId()
+                        + "/" + player.getUsedItemHand().name().toLowerCase(java.util.Locale.ROOT)
+                : "-";
         String action = "keys=" + safe(debug.keys)
+                + ";using=" + using
                 + ";move=" + pos(debug.movementTarget, debug.movementLabel)
                 + ";place=" + pos(debug.placementTarget, debug.placementBlock + "/" + debug.placementVerdict)
                 + ";break=" + pos(debug.breakTarget, debug.breakBlock + "/" + debug.breakVerdict);
         String target = safe(debug.targetLabel) + "@" + pos(debug.targetPos, debug.targetVerdict);
+        // Above, because the two ways a run dies standing still are a ceiling it cannot swim
+        // through and a ceiling it cannot jump through, and neither is visible from feet and below.
         String blocks = "feet=" + blockAt(level, feet)
                 + ";below=" + blockAt(level, feet.below())
+                + ";above=" + blockAt(level, feet.above(2))
                 + ";obstruction=" + pos(debug.obstructionPos, debug.obstruction);
         String mission = debug.missionProgress.isBlank() ? debug.missionMemory : debug.missionProgress
                 + (debug.missionMemory.isBlank() ? "" : " | " + debug.missionMemory);
@@ -481,6 +502,12 @@ public final class RunTrace implements AutoCloseable {
         String learning = " learning=" + safe(learningSummary(debug));
         return "[" + tick + "] " + type
                 + " task=" + safe(debug.taskName)
+                // The key beside the sentence. task= is rendered in whatever language the client
+                // was running - a journal from a Turkish session says "Görev: Ghast" - so anything
+                // deciding *which* task a run was has to read this one instead. All lower case on
+                // purpose: the analysis harness finds the end of a field by scanning for the next
+                // " [a-z]+=", and a camel-cased name would make task= swallow this one.
+                + " taskid=" + safe(debug.taskId)
                 + " mission=" + safe(mission)
                 + " intent=" + safe(debug.intent)
                 + " status=" + safe(debug.taskStatus)
@@ -525,7 +552,7 @@ public final class RunTrace implements AutoCloseable {
     private static String memorySummary(DebugInfo debug) {
         return "debug=" + debug.memory + ";mission=" + debug.missionMemory
                 + ";blockMemory=" + BlockMemory.get().size()
-                + ";unreachable=" + BlockMemory.get().getUnreachable().size()
+                + ";unreachable=" + BlockMemory.get().unreachableCount()
                 + ";tables=" + CraftingTableMemory.get().size();
     }
 

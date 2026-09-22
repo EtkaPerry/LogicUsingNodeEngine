@@ -1,5 +1,6 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
@@ -340,7 +341,7 @@ public final class CraftTask implements Task {
     private void closeMenu(BotContext ctx) {
         if (ctx.player.containerMenu != ctx.player.inventoryMenu) {
             ctx.player.closeContainer();
-            ctx.mc.setScreen(null);
+            Screens.open(ctx.mc, null);
         }
     }
 

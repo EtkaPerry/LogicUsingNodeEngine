@@ -7,6 +7,7 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.shapes.VoxelShape;
@@ -91,7 +92,7 @@ public final class MovementHelper {
         }
         // A full-height collision box is the reliable signal; slabs and stairs also qualify because
         // their collision shape still reaches the top of the block from above.
-        return state.blocksMotion() && !state.getCollisionShape(level, pos).isEmpty();
+        return blocksMotion(state) && !state.getCollisionShape(level, pos).isEmpty();
     }
 
     /**
@@ -401,9 +402,19 @@ public final class MovementHelper {
         return blocksFluid(level, pos) && touchesFluid(level, pos, true);
     }
 
+    /**
+     * Vanilla's {@code BlockState.blocksMotion()}, which 26.3 removed. The body is the one 26.1.2
+     * through 26.2 had: solid by the legacy material rule, except cobweb and bamboo shoots.
+     */
+    @SuppressWarnings("deprecation")
+    public static boolean blocksMotion(BlockState state) {
+        Block block = state.getBlock();
+        return block != Blocks.COBWEB && block != Blocks.BAMBOO_SAPLING && state.isSolid();
+    }
+
     private static boolean blocksFluid(BlockGetter level, BlockPos pos) {
         BlockState state = level.getBlockState(pos);
-        return !state.isAir() && state.blocksMotion() && state.getFluidState().isEmpty();
+        return !state.isAir() && blocksMotion(state) && state.getFluidState().isEmpty();
     }
 
     private static boolean touchesFluid(BlockGetter level, BlockPos pos, boolean lava) {

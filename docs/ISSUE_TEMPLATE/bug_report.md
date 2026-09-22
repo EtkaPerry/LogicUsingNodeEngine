@@ -24,13 +24,14 @@ assignees: ''
 4. Java version:
 5. Operating system:
 
-## Routine and configuration
+## Task and configuration
 
 <!-- Include the task cards/blueprint involved and relevant Lune settings. Redact private server details. -->
 
 ```text
-Routine or task:
+Task:
 Relevant settings:
+Omniscient modes (/lune omniscient):
 World or server type:
 ```
 

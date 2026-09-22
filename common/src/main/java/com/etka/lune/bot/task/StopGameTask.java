@@ -1,5 +1,6 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
@@ -148,14 +149,14 @@ public final class StopGameTask implements Task {
             status.set("lune.status.stop_game.server_world_keeps_running_choose_return");
             return TaskStatus.FAILED;
         }
-        if (ctx.mc.screen instanceof PauseScreen) {
+        if (Screens.current(ctx.mc) instanceof PauseScreen) {
             status.set("lune.status.stop_game.paused");
             return TaskStatus.SUCCESS;
         }
         // Scheduled rather than opened inline: this runs from the client tick, and swapping the
         // screen out from under the loop that is running is how a menu opens half-initialised.
         // `true` is the pause-the-world form; the cosmetic one does not stop the clock.
-        ctx.mc.schedule(() -> ctx.mc.setScreen(new PauseScreen(true)));
+        ctx.mc.schedule(() -> Screens.open(ctx.mc, new PauseScreen(true)));
         ctx.debug.decide("task asked to pause; opening the menu and stopping the world clock");
         status.set("lune.status.stop_game.pausing");
         return TaskStatus.RUNNING;

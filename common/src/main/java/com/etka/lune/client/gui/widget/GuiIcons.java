@@ -10,7 +10,8 @@ public final class GuiIcons {
         PAUSE,
         RENAME,
         VIEW,
-        STOP
+        STOP,
+        ADD
     }
 
     private GuiIcons() {}
@@ -23,6 +24,7 @@ public final class GuiIcons {
             case RENAME -> rename(extractor, x, y, colour);
             case VIEW -> view(extractor, x, y, colour);
             case STOP -> stop(extractor, x, y, colour);
+            case ADD -> add(extractor, x, y, colour);
         }
     }
 
@@ -49,17 +51,31 @@ public final class GuiIcons {
     }
 
     private static void view(GuiGraphicsExtractor extractor, int x, int y, int colour) {
-        // Pixel almond with a clear pupil; this reads better than a text glyph at small sizes.
-        fill(extractor, x + 4, y + 1, x + 6, y + 2, colour);
-        fill(extractor, x + 2, y + 2, x + 8, y + 3, colour);
-        fill(extractor, x + 1, y + 3, x + 9, y + 4, colour);
-        fill(extractor, x + 2, y + 4, x + 8, y + 5, colour);
-        fill(extractor, x + 4, y + 5, x + 6, y + 6, colour);
-        fill(extractor, x + 4, y + 2, x + 6, y + 5, colour);
+        // Pixel almond with a hole for the pupil; this reads better than a text glyph at small
+        // sizes. The hole is what makes it an eye: every row used to be drawn in one colour, the
+        // pupil included, so the icon rendered as a solid lozenge and was the least identifiable
+        // of the row actions. Left and right of the gap are drawn separately rather than filling
+        // the middle and punching it out, because there is no background colour to punch with.
+        fill(extractor, x + 4, y + 1, x + 6, y + 1, colour);
+        fill(extractor, x + 2, y + 2, x + 3, y + 2, colour);
+        fill(extractor, x + 7, y + 2, x + 8, y + 2, colour);
+        fill(extractor, x + 1, y + 3, x + 2, y + 3, colour);
+        fill(extractor, x + 8, y + 3, x + 9, y + 3, colour);
+        fill(extractor, x + 2, y + 4, x + 3, y + 4, colour);
+        fill(extractor, x + 7, y + 4, x + 8, y + 4, colour);
+        fill(extractor, x + 4, y + 5, x + 6, y + 5, colour);
+        // The pupil, two pixels across, floating clear of the lid above and below it.
+        fill(extractor, x + 4, y + 2, x + 5, y + 4, colour);
     }
 
     private static void stop(GuiGraphicsExtractor extractor, int x, int y, int colour) {
         fill(extractor, x + 2, y + 2, x + 8, y + 8, colour);
+    }
+
+    private static void add(GuiGraphicsExtractor extractor, int x, int y, int colour) {
+        // A plus, two pixels thick so it survives the small UI scale.
+        fill(extractor, x + 1, y + 4, x + 8, y + 5, colour);
+        fill(extractor, x + 4, y + 1, x + 5, y + 8, colour);
     }
 
     private static void fill(GuiGraphicsExtractor extractor, int left, int top,

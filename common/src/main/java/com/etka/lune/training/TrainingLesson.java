@@ -14,14 +14,14 @@ import java.util.Set;
 import java.util.function.Supplier;
 
 /**
- * One rung of the course: a routine with a hole in it, the card that fills the hole, and two wrong
+ * One rung of the course: a task with a hole in it, the card that fills the hole, and two wrong
  * answers worth considering.
  *
  * <p>A lesson owns its own marking. There is no separate answer key and no puzzle-only notion of
  * "correct", because {@link TaskConnectionAudit} already answers "is this graph whole?" for the
  * editor and {@link TaskWiring#poweredNodes} already answers "does this card actually run?" for the
  * safety check. A second opinion on either would drift from the one the player sees on the canvas,
- * and then a puzzle would pass a routine the editor calls broken.</p>
+ * and then a puzzle would pass a task the editor calls broken.</p>
  *
  * <h2>The decoys are the lesson</h2>
  *
@@ -35,7 +35,7 @@ import java.util.function.Supplier;
  * @param decoyCommandIds two plausible wrong answers
  * @param orderBefore     a command the answer must reach, or null when position does not matter;
  *                        see {@link #runsBefore}
- * @param starter         builds a fresh broken routine; never returns the same instance twice,
+ * @param starter         builds a fresh broken task; never returns the same instance twice,
  *                        because the player edits what they are given
  */
 public record TrainingLesson(String id, String answerCommandId,
@@ -46,7 +46,7 @@ public record TrainingLesson(String id, String answerCommandId,
         decoyCommandIds = List.copyOf(decoyCommandIds);
     }
 
-    /** A lesson whose answer is right wherever in the routine it ends up. */
+    /** A lesson whose answer is right wherever in the task it ends up. */
     public TrainingLesson(String id, String answerCommandId,
                           List<String> decoyCommandIds, Supplier<TaskGraph> starter) {
         this(id, answerCommandId, decoyCommandIds, null, starter);
@@ -57,7 +57,7 @@ public record TrainingLesson(String id, String answerCommandId,
         return Lang.get("lune.training." + id + ".title");
     }
 
-    /** What is wrong with the routine the player is handed. */
+    /** What is wrong with the task the player is handed. */
     public String about() {
         return Lang.get("lune.training." + id + ".about");
     }
@@ -67,7 +67,7 @@ public record TrainingLesson(String id, String answerCommandId,
         return Lang.get("lune.training." + id + ".hint");
     }
 
-    /** A fresh copy of the broken routine, named so the store knows it is scratch. */
+    /** A fresh copy of the broken task, named so the store knows it is scratch. */
     public TaskGraph newAttempt() {
         TaskGraph attempt = starter.get();
         attempt.name = com.etka.lune.task.TaskStore.TRAINING_PREFIX + title();
@@ -77,9 +77,9 @@ public record TrainingLesson(String id, String answerCommandId,
     /**
      * True when the graph is whole <em>and</em> the missing card is the one doing the work.
      *
-     * <p>Both halves are needed. A player who deletes the broken half of the routine has a graph
+     * <p>Both halves are needed. A player who deletes the broken half of the task has a graph
      * the audit is perfectly happy with and has learned nothing, and a player who drops the right
-     * card on the canvas without wiring it has the card but not the routine.</p>
+     * card on the canvas without wiring it has the card but not the task.</p>
      *
      * <p>Sources are exempt from the powered test rather than special-cased around it: a START or a
      * Pulse supplies power instead of receiving it, so it is never in the powered set. The audit
@@ -152,12 +152,12 @@ public record TrainingLesson(String id, String answerCommandId,
      * True when the answer card can still reach the card it is supposed to run in front of.
      *
      * <p>Only the ordering lessons set {@code orderBefore}, and they need it because a card that
-     * merely exists somewhere in the routine is not the same as a card that runs at the right
+     * merely exists somewhere in the task is not the same as a card that runs at the right
      * moment. Get Tools wired in <em>after</em> Mine is a graph the audit is perfectly happy with,
      * every card powered and every pin connected - and it is precisely the mistake that lesson
      * exists to correct, so marking it right would be worse than not asking.</p>
      *
-     * <p>Reachability rather than list position: the routine's order is its wiring, and the list is
+     * <p>Reachability rather than list position: the task's order is its wiring, and the list is
      * only a fallback for the pins nobody connected.</p>
      */
     private boolean runsBefore(TaskGraph attempt, TaskNode answer) {
@@ -185,7 +185,7 @@ public record TrainingLesson(String id, String answerCommandId,
      *
      * <p>The audit's own message comes first when there is one. It names the specific card and the
      * specific pin, which is a better teacher than any sentence written here could be - and it is
-     * the same sentence the player will meet later on their own routines.</p>
+     * the same sentence the player will meet later on their own tasks.</p>
      */
     public String critique(TaskGraph attempt) {
         if (isSolvedBy(attempt)) {

@@ -3,6 +3,8 @@ package com.etka.lune.client.gui;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.tabs.Tab;
+import net.minecraft.client.gui.layouts.Layout;
+import net.minecraft.client.gui.layouts.LayoutElement;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.network.chat.Component;
 
@@ -54,6 +56,58 @@ public abstract class LuneTab implements Tab {
         this.area = area;
         layout(area);
     }
+
+    /**
+     * Vanilla's {@code Tab} grew this in 26.2, and only its friends overlay reads it. A view of
+     * the tab's widgets satisfies it on every version; it is not annotated {@code @Override} because
+     * 26.1.2 has nothing to override.
+     */
+    public Layout getLayout() {
+        return layoutView;
+    }
+
+    private final Layout layoutView = new Layout() {
+        @Override
+        public void visitChildren(Consumer<LayoutElement> visitor) {
+            widgets.forEach(visitor);
+        }
+
+        @Override
+        public void arrangeElements() {
+            layout(area);
+        }
+
+        /** 26.2's {@code Layout} added this; there is nothing to override on 26.1.2. */
+        public void removeChildren() {
+            widgets.clear();
+        }
+
+        @Override
+        public void setX(int x) {}
+
+        @Override
+        public void setY(int y) {}
+
+        @Override
+        public int getX() {
+            return area.left();
+        }
+
+        @Override
+        public int getY() {
+            return area.top();
+        }
+
+        @Override
+        public int getWidth() {
+            return area.width();
+        }
+
+        @Override
+        public int getHeight() {
+            return area.height();
+        }
+    };
 
     /** Positions this tab's (already-created) widgets inside {@code area}. */
     protected abstract void layout(ScreenRectangle area);

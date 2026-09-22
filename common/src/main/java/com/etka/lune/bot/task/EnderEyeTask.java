@@ -1,5 +1,6 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.compat.Hands;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
@@ -110,7 +111,7 @@ public final class EnderEyeTask implements Task {
         }
 
         ctx.gameMode.useItem(ctx.player, InteractionHand.MAIN_HAND);
-        ctx.player.swing(InteractionHand.MAIN_HAND);
+        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
 
         lastThrowPos = ctx.player.blockPosition();
         eye = null;

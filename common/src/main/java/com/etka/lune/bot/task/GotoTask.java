@@ -7,6 +7,7 @@ import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.catalog.BlockCatalog;
 import com.etka.lune.bot.learning.LearningContext;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.AStarPathfinder;
 import com.etka.lune.bot.path.Goal;
 import com.etka.lune.bot.path.MovementHelper;
@@ -32,6 +33,14 @@ public final class GotoTask implements Task {
 
     /** Consecutive useless searches before admitting the goal is unreachable. */
     private static final int MAX_FAILED_PATHS = 3;
+    /**
+     * Ticks to keep waiting for a route out of the block underfoot before calling it walled in.
+     * <p>
+     * Two repath intervals. Long enough that a chunk finishing its load, or a mob stepping off the
+     * only way out, resolves itself without the caller ever hearing about it; short enough that a
+     * bot in a sealed cave gets its card back instead of standing there.
+     */
+    private static final int MAX_WALLED_TICKS = 200;
     /** Consecutive stalls before giving up rather than shuffling in place forever. */
     private static final int MAX_STUCKS = 4;
     /**
@@ -100,6 +109,8 @@ public final class GotoTask implements Task {
     /** Height gained by climbing on this goal, so one hole cannot be climbed out of forever. */
     private int climbedBlocks;
     private int ticksSincePath;
+    /** Consecutive ticks with no route out of the block underfoot and no recovery left to try. */
+    private int walledTicks;
     private int failedPaths;
     private int consecutiveStucks;
     /** Armed by a repeated stall, consumed by the next search; never latched. */
@@ -171,13 +182,29 @@ public final class GotoTask implements Task {
     }
 
     @Override
+    public LearningScope learningScope() {
+        return LearningScope.of("movement", null, routePhase());
+    }
+
+    @Override
     public LearningContext learningContext(BotContext ctx) {
         double distance = goal.heuristic(MovementHelper.feetPosition(ctx.player));
-        String phase = "goal=" + goal.getClass().getSimpleName()
+        String[] fixed = routePhase();
+        // How far away the goal is can only be measured here, and it sits second in the key,
+        // where every row already written has it. The order is part of the row's name.
+        String phase = fixed[0]
                 + ";distance=" + MovementPolicy.distanceBucket(distance)
-                + ";break=" + allowBreak + ";swim=" + allowSwim
-                + ";recovery=" + allowRecovery;
+                + ";" + fixed[1] + ";" + fixed[2] + ";" + fixed[3];
         return new LearningContext("skill", "movement", ctx.level.dimension().identifier().toString(), phase);
+    }
+
+    /** The parts of a movement key the caller decides: what kind of goal, and what the route may do. */
+    private String[] routePhase() {
+        return new String[] {
+                "goal=" + goal.getClass().getSimpleName(),
+                "break=" + allowBreak,
+                "swim=" + allowSwim,
+                "recovery=" + allowRecovery};
     }
 
     @Override
@@ -197,6 +224,7 @@ public final class GotoTask implements Task {
         lastProgressFeet = null;
         goalNoProgressTicks = 0;
         ticksSinceClosest = 0;
+        walledTicks = 0;
         ctx.debug.goal = goal.describe();
         ctx.debug.clearPath();
         ctx.debug.goalNoProgressTicks = 0;
@@ -291,13 +319,28 @@ public final class GotoTask implements Task {
                 // signature of being walled in, which is what digging your own staircase and then
                 // standing at the bottom of it looks like to the pathfinder.
                 if (tryCeilingBreak(ctx, feet) || tryClimbOut(ctx, feet)) {
+                    walledTicks = 0;
                     return TaskStatus.RUNNING;
                 }
-                // Wait for the next attempt instead of dereferencing a route we don't have.
+                // Both recoveries have refused, and then this waited for a better attempt for as
+                // long as the caller was willing to wait - which was forever. A measured run stood
+                // in a dripstone cave for 5126 ticks, 256 seconds, on "looking for a route": every
+                // search expanded exactly two nodes and reached nothing, because there was nowhere
+                // to step, and the climb is refused outright under a ceiling because jumping cannot
+                // gain height there. Waiting is right for a moment - the world loads, a mob moves
+                // off the only step - and after that it is a standstill wearing a progress bar. Say
+                // so, and let the caller try something else.
+                if (++walledTicks > MAX_WALLED_TICKS) {
+                    status.set("lune.status.goto.no_route_found");
+                    ctx.debug.decide("walled in for " + walledTicks
+                            + " ticks with no recovery available; giving the route up");
+                    return TaskStatus.FAILED;
+                }
                 status.set("lune.status.goto.looking_route");
                 ctx.debug.decide("no movable path yet; attempting recovery if possible");
                 return TaskStatus.RUNNING;
             }
+            walledTicks = 0;
         }
 
         PathExecutor.Status result = executor.tick(ctx, sprint && ctx.config.allowSprint, executorAllowsBreak);

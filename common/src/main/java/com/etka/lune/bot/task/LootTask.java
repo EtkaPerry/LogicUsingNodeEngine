@@ -7,6 +7,7 @@ import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.learning.LearningContext;
+import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goal;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.path.MovementHelper;
@@ -141,11 +142,22 @@ public final class LootTask implements Task {
     }
 
     @Override
+    public LearningScope learningScope() {
+        return LearningScope.of("item-collection", "lune.unit.items", collectionPhase());
+    }
+
+    @Override
     public LearningContext learningContext(BotContext ctx) {
-        String phase = "radius=" + CollectionPolicy.radiusBucket(radius)
-                + ";patience=" + (attemptDeadline <= 80 ? "short" : "normal");
         return new LearningContext("skill", "item-collection",
-                ctx.level.dimension().identifier().toString(), phase);
+                ctx.level.dimension().identifier().toString(),
+                String.join(";", collectionPhase()));
+    }
+
+    /** The situation a sweep is keyed on; both parts of it are the card's parameters. */
+    private String[] collectionPhase() {
+        return new String[] {
+                "radius=" + CollectionPolicy.radiusBucket(radius),
+                "patience=" + (attemptDeadline <= 80 ? "short" : "normal")};
     }
 
     @Override

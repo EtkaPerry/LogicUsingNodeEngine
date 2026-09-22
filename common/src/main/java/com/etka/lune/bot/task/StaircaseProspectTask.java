@@ -5,14 +5,12 @@ import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
-import com.etka.lune.bot.catalog.BlockCatalog;
 import com.etka.lune.bot.knowledge.OreKnowledge;
-import com.etka.lune.bot.memory.BlockMemory;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.util.BlockBreaker;
 import com.etka.lune.bot.util.BlockPlacer;
-import com.etka.lune.bot.util.Vision;
+import com.etka.lune.bot.util.ExposedVein;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.Entity;
@@ -23,6 +21,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.Locale;
 import java.util.Set;
 import java.util.HashSet;
 
@@ -299,97 +298,38 @@ public final class StaircaseProspectTask implements Task {
 
     /**
      * Breaks the first reachable target block exposed around the step (sides, front, back and ceiling).
-     * It only breaks blocks in the counted set, skips anything that would breach the staircase or
-     * expose a hazard, and returns RUNNING while breaking. Null when nothing is left to mine.
+     * Which one that is, is {@link ExposedVein}'s question - the corridor a Stripmine cuts asks it
+     * the same way. What is left here is what only a staircase can answer: a block that will not
+     * break, or a hazard behind one, is fatal to a stair the bot has to walk back up.
      */
     private TaskStatus breakExposedTargets(BotContext ctx, BlockPos stepFeet, int stepIndex) {
         if (countedTargets.isEmpty()) {
             return null;
         }
 
-        for (int dy = 0; dy <= 2; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                for (int dz = -1; dz <= 1; dz++) {
-                    if (dx == 0 && dz == 0 && (dy == 0 || dy == 1)) {
-                        // The two blocks the player is occupying.
-                        continue;
-                    }
-                    BlockPos candidate = stepFeet.offset(dx, dy, dz);
-                    if (protectedRoute.contains(candidate.asLong())) {
-                        continue;
-                    }
-                    Block block = ctx.level.getBlockState(candidate).getBlock();
-                    if (!countedTargets.contains(block)) {
-                        // The staircase exposed something else. If it is an ore the bot may need later,
-                        // remember the position so a future task can walk back to it.
-                        if (BlockCatalog.ores().contains(block) && Vision.isReachable(ctx, candidate)) {
-                            BlockMemory.get().remember(candidate, block);
-                        }
-                        continue;
-                    }
-                    if (MovementHelper.isPassable(ctx.level, candidate)) {
-                        continue;
-                    }
-                    if (!MovementHelper.isBreakable(ctx.level, candidate)) {
-                        continue;
-                    }
-                    if (MovementHelper.fallingBlocksAbove(ctx.level, candidate) >= 1) {
-                        continue;
-                    }
-                    if (!hasSafeLanding(ctx, candidate)) {
-                        // The block is overhanging an open drop; the item would fall somewhere we
-                        // can't collect it, so skip it.
-                        continue;
-                    }
-                    if (!Vision.isReachable(ctx, candidate)) {
-                        // Not a clear line of sight yet; leave it for the next block the stair clears.
-                        continue;
-                    }
-
-                    requestedBreak = candidate;
-                    requestedBreakCounts = true;
-                    BlockBreaker.Progress progress = breaker.tick(ctx, candidate, false, protectedRoute);
-                    if (progress == BlockBreaker.Progress.NO_TOOL) {
-                        status.set("lune.status.staircase_prospect.stair_target");
-                        return TaskStatus.FAILED;
-                    }
-                    if (progress == BlockBreaker.Progress.HAZARD) {
-                        status.set(breaker.getFailureReason());
-                        return TaskStatus.FAILED;
-                    }
-                    if (trackBlockWork(candidate)) {
-                        breaker.stop(ctx);
-                        status.set("lune.status.staircase_prospect.stair_target_stalled_abandoning_step");
-                        return TaskStatus.FAILED;
-                    }
-                    status.set("lune.status.staircase_prospect.mining_stair_target", stepIndex, steps);
-                    return TaskStatus.RUNNING;
-                }
-            }
+        BlockPos candidate = ExposedVein.next(ctx, stepFeet, countedTargets, protectedRoute);
+        if (candidate == null) {
+            return null;
         }
-        return null;
-    }
 
-    /**
-     * True when an item breaking off {@code pos} would land on a solid surface within a few blocks,
-     * rather than falling down a cave or ravine.
-     */
-    private boolean hasSafeLanding(BotContext ctx, BlockPos pos) {
-        int maxFall = 3;
-        for (int i = 1; i <= maxFall; i++) {
-            BlockPos below = pos.below(i);
-            if (protectedRoute.contains(below.asLong())) {
-                return true;
-            }
-            if (MovementHelper.isSolidFloor(ctx.level, below)) {
-                return true;
-            }
-            if (!MovementHelper.isPassable(ctx.level, below)) {
-                // A non-passable, non-floor block (e.g. lava) is not safe to drop onto.
-                return false;
-            }
+        requestedBreak = candidate;
+        requestedBreakCounts = true;
+        BlockBreaker.Progress progress = breaker.tick(ctx, candidate, false, protectedRoute);
+        if (progress == BlockBreaker.Progress.NO_TOOL) {
+            status.set("lune.status.staircase_prospect.stair_target");
+            return TaskStatus.FAILED;
         }
-        return false;
+        if (progress == BlockBreaker.Progress.HAZARD) {
+            status.set(breaker.getFailureReason());
+            return TaskStatus.FAILED;
+        }
+        if (trackBlockWork(candidate)) {
+            breaker.stop(ctx);
+            status.set("lune.status.staircase_prospect.stair_target_stalled_abandoning_step");
+            return TaskStatus.FAILED;
+        }
+        status.set("lune.status.staircase_prospect.mining_stair_target", stepIndex, steps);
+        return TaskStatus.RUNNING;
     }
 
     private void creditCompletedBreak(BotContext ctx) {
@@ -524,7 +464,7 @@ public final class StaircaseProspectTask implements Task {
             } else if (!sealing.isTransient() || sealTicks >= MAX_SEAL_TICKS) {
                 caveSealed = true;
                 sealTicks = 0;
-                status.set("lune.status.staircase_prospect.could_not_seal_cave_leaving_anyway", sealing.name().toLowerCase());
+                status.set("lune.status.staircase_prospect.could_not_seal_cave_leaving_anyway", sealing.name().toLowerCase(Locale.ROOT));
             } else {
                 status.set("lune.status.staircase_prospect.sealing_cave_entrance");
                 return TaskStatus.RUNNING;

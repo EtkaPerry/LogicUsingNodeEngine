@@ -1,5 +1,6 @@
 package com.etka.lune.client;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.Constants;
 import com.etka.lune.bot.BotEngine;
@@ -8,11 +9,11 @@ import com.etka.lune.client.gui.TermsScreen;
 import com.etka.lune.config.BotConfig;
 import com.etka.lune.config.Terms;
 import com.etka.lune.platform.BuildFeatures;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
-import org.lwjgl.glfw.GLFW;
 
 /**
  * Lune's keybinds, plus the per-tick entry point every loader calls. Keeping the handling here
@@ -31,25 +32,25 @@ public final class LuneKeybinds {
      */
     public static final KeyMapping.Category CATEGORY = registerCategory();
 
-    /** Opens the control panel (default <b>J</b>). */
+    /** Opens the control panel (default <b>X</b>). */
     public static final KeyMapping OPEN =
-            new KeyMapping("key.lune.open", GLFW.GLFW_KEY_J, CATEGORY);
+            new KeyMapping("key.lune.open", InputConstants.KEY_X, CATEGORY);
 
-    /** Pauses or resumes the bot (default <b>K</b>); hold Shift for the emergency stop. */
+    /** Pauses or resumes the bot (default <b>C</b>); hold Shift for the emergency stop. */
     public static final KeyMapping PAUSE =
-            new KeyMapping("key.lune.pause", GLFW.GLFW_KEY_K, CATEGORY);
+            new KeyMapping("key.lune.pause", InputConstants.KEY_C, CATEGORY);
 
     /** Shows or hides the telemetry overlay (default <b>F6</b>). */
     public static final KeyMapping TOGGLE_DEBUG =
-            new KeyMapping("key.lune.toggle_debug", GLFW.GLFW_KEY_F6, CATEGORY);
+            new KeyMapping("key.lune.toggle_debug", InputConstants.KEY_F6, CATEGORY);
 
     /** Developer-only approval feedback (default <b>F7</b>). */
     public static final KeyMapping LEARNING_GOOD =
-            new KeyMapping("key.lune.learning_good", GLFW.GLFW_KEY_F7, CATEGORY);
+            new KeyMapping("key.lune.learning_good", InputConstants.KEY_F7, CATEGORY);
 
     /** Developer-only rejection feedback (default <b>F8</b>). */
     public static final KeyMapping LEARNING_BAD =
-            new KeyMapping("key.lune.learning_bad", GLFW.GLFW_KEY_F8, CATEGORY);
+            new KeyMapping("key.lune.learning_bad", InputConstants.KEY_F8, CATEGORY);
 
     private LuneKeybinds() {}
 
@@ -73,26 +74,31 @@ public final class LuneKeybinds {
             while (OPEN.consumeClick()) {
                 // Reaching for the panel is the first moment the terms are anyone's business, and
                 // the only one: nothing is put in front of a player who has not asked for Lune yet.
-                mc.setScreen(Terms.accepted() ? new LuneScreen()
-                        : new TermsScreen(null, () -> mc.setScreen(new LuneScreen())));
+                Screens.open(mc, Terms.accepted() ? new LuneScreen()
+                        : new TermsScreen(null, () -> Screens.open(mc, new LuneScreen())));
             }
             while (PAUSE.consumeClick()) {
-                boolean shift = GLFW.glfwGetKey(mc.getWindow().handle(), GLFW.GLFW_KEY_LEFT_SHIFT) == GLFW.GLFW_PRESS
-                        || GLFW.glfwGetKey(mc.getWindow().handle(), GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
+                boolean shift = mc.hasShiftDown();
                 if (shift) {
                     BotEngine.get().stopAll();
                     mc.player.sendOverlayMessage(Component.literal(Lang.get("lune.gui.lune_keybinds.lune_stopped")));
                 } else {
                     BotEngine engine = BotEngine.get();
                     engine.setPaused(!engine.isPaused());
-                    mc.player.sendOverlayMessage(Component.literal(Lang.get("lune.gui.bot_context.lune", (engine.isPaused() ? "Paused" : "Resumed"))));
+                    // Looked up rather than written in: the template around it is translated, so
+                    // an English word dropped into the middle reads as half a sentence.
+                    mc.player.sendOverlayMessage(Component.literal(
+                            Lang.get("lune.gui.bot_context.lune", Lang.get(engine.isPaused()
+                                    ? "lune.gui.overlay.paused" : "lune.gui.lune_keybinds.resumed"))));
                 }
             }
             while (TOGGLE_DEBUG.consumeClick()) {
                 BotConfig config = BotConfig.get();
                 config.showDebug = !config.showDebug;
                 config.save();
-                mc.player.sendOverlayMessage(Component.literal(Lang.get("lune.gui.lune_keybinds.lune_debug_overlay", (config.showDebug ? "on" : "off"))));
+                mc.player.sendOverlayMessage(Component.literal(
+                        Lang.get("lune.gui.lune_keybinds.lune_debug_overlay",
+                                Lang.get(config.showDebug ? "lune.cheat.on" : "lune.cheat.off"))));
             }
             if (BuildFeatures.approvalFeedback()) {
                 while (LEARNING_GOOD.consumeClick()) {

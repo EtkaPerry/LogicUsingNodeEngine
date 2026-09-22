@@ -1,6 +1,9 @@
 package com.etka.lune.bot.knowledge;
 
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 
@@ -29,6 +32,13 @@ public enum Need {
 
     private final String label;
 
+    /**
+     * The saplings block tag. The {@code BlockTags.SAPLINGS} constant left in 26.2 while the tag itself
+     * is still shipped, so it is named here and the lookup works on every version.
+     */
+    private static final TagKey<Block> SAPLINGS =
+            TagKey.create(Registries.BLOCK, Identifier.withDefaultNamespace("saplings"));
+
     Need(String label) {
         this.label = label;
     }
@@ -51,7 +61,7 @@ public enum Need {
 
         for (Block block : targets) {
             var state = block.defaultBlockState();
-            if (state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES) || state.is(BlockTags.SAPLINGS)) {
+            if (state.is(BlockTags.LOGS) || state.is(BlockTags.LEAVES) || state.is(SAPLINGS)) {
                 needs.add(WOOD);
             } else if (state.is(BlockTags.CROPS) || state.is(BlockTags.FLOWERS)
                     || block == Blocks.PUMPKIN || block == Blocks.MELON

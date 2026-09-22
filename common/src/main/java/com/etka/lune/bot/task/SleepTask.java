@@ -2,6 +2,8 @@ package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.compat.Beds;
+import com.etka.lune.compat.Mobs;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -16,7 +18,6 @@ import net.minecraft.tags.ItemTags;
 import net.minecraft.world.attribute.BedRule;
 import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -212,7 +213,7 @@ public final class SleepTask implements Task {
     static boolean canSleepNow(BotContext ctx) {
         BedRule rule = ctx.level.environmentAttributes()
                 .getValue(EnvironmentAttributes.BED_RULE, ctx.player.position());
-        return !rule.explodes() && rule.canSleep(ctx.level);
+        return !Beds.explodes(rule) && rule.canSleep(ctx.level);
     }
 
     private TaskStatus tickAsleep(BotContext ctx) {
@@ -392,7 +393,7 @@ public final class SleepTask implements Task {
                         + plan.woolStillNeeded() + " wool short");
                 // Kill rather than roam: the whole point of this diversion is that the animals are
                 // already in front of the bot, and a roaming hunt would walk eighty blocks first.
-                return start(ctx, new KillTask(Set.of(EntityType.SHEEP), SHEEP_VIEW_RADIUS,
+                return start(ctx, new KillTask(Set.of(Mobs.SHEEP), SHEEP_VIEW_RADIUS,
                         KillOptions.basic()), Lang.get("lune.status.sleep.taking_wool_from_flock"));
             }
             case NO_MATCHING_DYE -> {
@@ -402,7 +403,7 @@ public final class SleepTask implements Task {
                 if (visibleSheep(ctx) > 0 && woolRounds <= MAX_WOOL_ROUNDS) {
                     woolRounds++;
                     ctx.debug.decide("colours do not match and nothing to dye with; take another fleece");
-                    return start(ctx, new KillTask(Set.of(EntityType.SHEEP), SHEEP_VIEW_RADIUS,
+                    return start(ctx, new KillTask(Set.of(Mobs.SHEEP), SHEEP_VIEW_RADIUS,
                             KillOptions.basic()), Lang.get("lune.status.sleep.taking_another_fleece_find_matching"));
                 }
                 status.set("lune.status.sleep.wool_colours_do_not_match_no_usable");
@@ -559,7 +560,7 @@ public final class SleepTask implements Task {
         AABB area = ctx.player.getBoundingBox().inflate(viewRadius);
         int seen = 0;
         for (Entity entity : ctx.level.getEntities(ctx.player, area,
-                entity -> entity.getType() == EntityType.SHEEP && entity.isAlive()
+                entity -> entity.getType() == Mobs.SHEEP && entity.isAlive()
                         // Lambs carry no wool, so a field of them is not three sheep.
                         && !(entity instanceof net.minecraft.world.entity.LivingEntity living
                                 && KillTask.isWorthlessCalf(living)))) {

@@ -18,6 +18,20 @@ tasks.named('processResources') {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Per-version shims.
+//
+// One source tree builds for every Minecraft version under gradle/versions. The handful of vanilla
+// members that differ between those versions - see com.etka.lune.compat - live in
+// src/compat/<compat_variant>/java, one complete folder per API generation, and the target file
+// names the folder. Everything else in the tree only ever sees the shim classes.
+// ---------------------------------------------------------------------------
+def compatDir = file("src/compat/${compat_variant}/java")
+if (!compatDir.isDirectory()) {
+    throw new GradleException("compat_variant=${compat_variant} names no folder: expected ${compatDir}")
+}
+sourceSets.main.java.srcDir(compatDir)
+
 neoForge {
     neoFormVersion = neo_form_version
     // Minecraft on the unit-test classpath, so the movement code can be tested against real block
@@ -62,7 +76,9 @@ configurations {
 }
 
 artifacts {
-    commonJava sourceSets.main.java.sourceDirectories.singleFile
+    // Every main source folder, the shared tree and the shim folder alike: the loader modules compile
+    // all of it a second time against their own classpath.
+    sourceSets.main.java.sourceDirectories.each { dir -> commonJava dir }
     commonResources sourceSets.main.resources.sourceDirectories.singleFile
 }
 

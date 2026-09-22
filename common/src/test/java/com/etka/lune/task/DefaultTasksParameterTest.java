@@ -11,6 +11,7 @@ import net.minecraft.tags.TagKey;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
@@ -183,19 +184,47 @@ class DefaultTasksParameterTest {
                 .orElse(null);
     }
 
+    /**
+     * Every block tag vanilla names in code. 26.2 moved the tags a block shares with its item onto
+     * {@code BlockItemTags}, and {@code BlockTags} re-exposes only some of them (the ore tags, for
+     * one, it does not), so that class is read as well wherever it exists; 26.1.2 has no such class.
+     */
     private static Set<String> vanillaBlockTagIds() {
-        return Arrays.stream(BlockTags.class.getDeclaredFields())
+        Set<String> ids = new LinkedHashSet<>();
+        for (Field field : staticFields(BlockTags.class)) {
+            if (TagKey.class.isAssignableFrom(field.getType())) {
+                ids.add(((TagKey<?>) read(field)).location().toString());
+            }
+        }
+        try {
+            Class<?> blockItemTags = Class.forName("net.minecraft.tags.BlockItemTags");
+            for (Field field : staticFields(blockItemTags)) {
+                Object id = read(field);
+                if (id != null && id.getClass().getMethod("block").invoke(id) instanceof TagKey<?> tag) {
+                    ids.add(tag.location().toString());
+                }
+            }
+        } catch (ClassNotFoundException before26_2) {
+            // Every block tag is on BlockTags here.
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("could not read BlockItemTags", e);
+        }
+        return ids;
+    }
+
+    private static List<Field> staticFields(Class<?> holder) {
+        return Arrays.stream(holder.getDeclaredFields())
                 .filter(field -> Modifier.isStatic(field.getModifiers()))
-                .filter(field -> TagKey.class.isAssignableFrom(field.getType()))
-                .map(field -> {
-                    try {
-                        field.setAccessible(true);
-                        return (TagKey<?>) field.get(null);
-                    } catch (ReflectiveOperationException e) {
-                        throw new AssertionError("could not read BlockTags." + field.getName(), e);
-                    }
-                })
-                .map(tag -> tag.location().toString())
-                .collect(Collectors.toSet());
+                .toList();
+    }
+
+    private static Object read(Field field) {
+        try {
+            field.setAccessible(true);
+            return field.get(null);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("could not read " + field.getDeclaringClass().getSimpleName()
+                    + "." + field.getName(), e);
+        }
     }
 }

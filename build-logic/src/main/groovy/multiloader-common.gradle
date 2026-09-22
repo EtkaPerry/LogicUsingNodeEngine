@@ -15,6 +15,36 @@ java {
 
 repositories {
     mavenCentral()
+    // JourneyMap's API, for the Waypoints tab's bridge into JourneyMap's list. Exclusive, so no
+    // other repository is asked for it and this one is asked for nothing else.
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = 'JourneyMap'
+                url = uri('https://jm.gserv.me/repository/maven-public/')
+            }
+        }
+        filter {
+            includeGroup('info.journeymap')
+        }
+    }
+}
+
+dependencies {
+    // Compile-time only. Lune ships no copy: the one class that implements the API,
+    // com.etka.lune.waypoint.external.LuneJourneyMapPlugin, is loaded by JourneyMap and by nothing
+    // else, so a game without JourneyMap never resolves it. Applied here rather than in :common
+    // alone because every loader module compiles common's sources a second time.
+    compileOnly("info.journeymap:journeymap-api-common:${journeymap_api_version}") {
+        transitive = false
+        // JourneyMap builds with the same multiloader conventions, so its artifact carries the
+        // loader attribute too, marked 'common'. A loader module asks its whole classpath for its
+        // own loader and would find no matching variant; asking for 'common' on this dependency
+        // alone is the same trick multiloader-loader.gradle uses to consume :common itself.
+        attributes {
+            attribute(Attribute.of('io.github.mcgradleconventions.loader', String), 'common')
+        }
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {

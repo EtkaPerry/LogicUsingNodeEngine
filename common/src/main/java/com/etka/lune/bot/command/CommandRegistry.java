@@ -1,10 +1,13 @@
 package com.etka.lune.bot.command;
 
 import com.etka.lune.bot.util.InventoryHelper;
+import com.etka.lune.compat.Mobs;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.catalog.BlockCatalog;
+import com.etka.lune.bot.catalog.SoundCatalog;
 import com.etka.lune.bot.catalog.BlockTarget;
 import com.etka.lune.bot.catalog.CraftRecipe;
+import com.etka.lune.bot.catalog.NetheriteUpgrades;
 import com.etka.lune.bot.catalog.ToolCatalog;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.task.TaskRunner;
@@ -13,10 +16,20 @@ import com.etka.lune.bot.task.CraftTask;
 import com.etka.lune.bot.task.FailTask;
 import com.etka.lune.bot.task.EnsureToolTask;
 import com.etka.lune.bot.task.GridCraftTask;
+import com.etka.lune.bot.task.NetheriteUpgradeTask;
 import com.etka.lune.bot.task.FindMapTask;
 import com.etka.lune.bot.task.FindTask;
+import com.etka.lune.bot.task.BackpackDepositTask;
+import com.etka.lune.bot.task.BackpackTakeTask;
+import com.etka.lune.bot.task.CompassFindTask;
+import com.etka.lune.bot.util.ItemFilters;
+import com.etka.lune.mods.Backpacks;
+import com.etka.lune.mods.CompassHook;
+import com.etka.lune.waypoint.Discovery;
+import com.etka.lune.waypoint.DiscoveryStore;
 import com.etka.lune.bot.task.FishTask;
 import com.etka.lune.bot.task.HuntEndermenTask;
+import com.etka.lune.bot.task.DragonEggTask;
 import com.etka.lune.bot.task.HuntBlazesTask;
 import com.etka.lune.bot.task.HuntCreepersTask;
 import com.etka.lune.bot.task.HuntSkeletonsTask;
@@ -24,6 +37,8 @@ import com.etka.lune.bot.task.HuntSheepTask;
 import com.etka.lune.bot.task.KillTask;
 import com.etka.lune.bot.task.KillOptions;
 import com.etka.lune.bot.task.LootTask;
+import com.etka.lune.bot.task.NotifyTask;
+import com.etka.lune.bot.task.RecoverDeathTask;
 import com.etka.lune.bot.task.StripmineTask;
 import com.etka.lune.bot.task.TunnelTask;
 import com.etka.lune.bot.task.GotoTask;
@@ -31,6 +46,7 @@ import com.etka.lune.bot.task.SpeedrunTask;
 import com.etka.lune.bot.task.ConditionTask;
 import com.etka.lune.bot.task.CountdownTask;
 import com.etka.lune.bot.task.EatTask;
+import com.etka.lune.bot.task.EquipTask;
 import com.etka.lune.bot.task.BoatTask;
 import com.etka.lune.bot.task.BridgeTask;
 import com.etka.lune.bot.task.BuildPortalTask;
@@ -39,7 +55,10 @@ import com.etka.lune.bot.task.DirectionalGotoTask;
 import com.etka.lune.bot.task.ExploreTask;
 import com.etka.lune.bot.util.ClockSource;
 import com.etka.lune.bot.util.HeadScanner;
+import com.etka.lune.bot.util.PlayerMetric;
+import com.etka.lune.bot.util.Weather;
 import com.etka.lune.bot.util.WorldClock;
+import com.etka.lune.bot.util.WorldDimension;
 import com.etka.lune.bot.task.SmeltTask;
 import com.etka.lune.bot.task.SaveWaypointTask;
 import com.etka.lune.bot.task.SelectItemTask;
@@ -55,8 +74,13 @@ import com.etka.lune.bot.task.MineTask;
 import com.etka.lune.bot.task.PlaceBlockTask;
 import com.etka.lune.bot.task.TimerTask;
 import com.etka.lune.waypoint.WaypointStore;
+import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
@@ -68,6 +92,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
+import java.util.function.UnaryOperator;
 import java.util.stream.Stream;
 
 /**
@@ -87,6 +113,39 @@ public final class CommandRegistry {
         return BlockCatalog.ores();
     }
 
+    /**
+     * Every biome or structure the world knows, by id, sorted by what it is called. Nothing
+     * outside a world: the registries are the world's, and the dropdown is only ever opened in one.
+     */
+    private static List<String> biomeIds() {
+        return registryIds(Registries.BIOME, CommandRegistry::biomeLabel);
+    }
+
+    private static List<String> structureIds() {
+        return registryIds(Registries.STRUCTURE, CommandRegistry::structureLabel);
+    }
+
+    private static <T> List<String> registryIds(ResourceKey<? extends Registry<? extends T>> registry,
+                                                UnaryOperator<String> label) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) {
+            return List.of();
+        }
+        return mc.level.registryAccess().lookupOrThrow(registry).keySet().stream()
+                .map(Identifier::toString)
+                .sorted(Comparator.comparing(label, String.CASE_INSENSITIVE_ORDER))
+                .toList();
+    }
+
+    /** A biome by the game's own name for it; the value stays the id, which is what is saved. */
+    private static String biomeLabel(String id) {
+        return DiscoveryStore.displayName(Discovery.BIOME, id);
+    }
+
+    private static String structureLabel(String id) {
+        return DiscoveryStore.displayName(Discovery.STRUCTURE, id);
+    }
+
     private static List<Item> items() {
         return BuiltInRegistries.ITEM.stream()
                 .filter(item -> item != Items.AIR)
@@ -95,21 +154,29 @@ public final class CommandRegistry {
     }
 
     private static final List<EntityType<?>> MOBS = List.of(
-            EntityType.ZOMBIE, EntityType.ZOMBIE_VILLAGER, EntityType.HUSK, EntityType.DROWNED,
-            EntityType.SKELETON, EntityType.STRAY, EntityType.BOGGED, EntityType.WITHER_SKELETON,
-            EntityType.CREEPER, EntityType.SPIDER, EntityType.CAVE_SPIDER, EntityType.ENDERMAN,
-            EntityType.ENDERMITE, EntityType.SLIME, EntityType.MAGMA_CUBE, EntityType.WITCH,
-            EntityType.BLAZE, EntityType.GHAST, EntityType.PHANTOM, EntityType.BREEZE,
-            EntityType.PIGLIN, EntityType.PIGLIN_BRUTE, EntityType.ZOMBIFIED_PIGLIN,
-            EntityType.HOGLIN, EntityType.ZOGLIN, EntityType.GUARDIAN, EntityType.ELDER_GUARDIAN,
-            EntityType.SHULKER, EntityType.SILVERFISH, EntityType.VEX, EntityType.VINDICATOR,
-            EntityType.EVOKER, EntityType.PILLAGER, EntityType.RAVAGER, EntityType.WARDEN,
-            EntityType.COW, EntityType.PIG, EntityType.SHEEP, EntityType.CHICKEN,
-            EntityType.HORSE, EntityType.DONKEY, EntityType.MULE, EntityType.RABBIT,
-            EntityType.WOLF, EntityType.CAT, EntityType.GOAT, EntityType.TURTLE,
-            EntityType.FOX, EntityType.BEE, EntityType.CAMEL, EntityType.ARMADILLO,
-            EntityType.VILLAGER, EntityType.IRON_GOLEM
+            Mobs.ZOMBIE, Mobs.ZOMBIE_VILLAGER, Mobs.HUSK, Mobs.DROWNED,
+            Mobs.SKELETON, Mobs.STRAY, Mobs.BOGGED, Mobs.WITHER_SKELETON,
+            Mobs.CREEPER, Mobs.SPIDER, Mobs.CAVE_SPIDER, Mobs.ENDERMAN,
+            Mobs.ENDERMITE, Mobs.SLIME, Mobs.MAGMA_CUBE, Mobs.WITCH,
+            Mobs.BLAZE, Mobs.GHAST, Mobs.PHANTOM, Mobs.BREEZE,
+            Mobs.PIGLIN, Mobs.PIGLIN_BRUTE, Mobs.ZOMBIFIED_PIGLIN,
+            Mobs.HOGLIN, Mobs.ZOGLIN, Mobs.GUARDIAN, Mobs.ELDER_GUARDIAN,
+            Mobs.SHULKER, Mobs.SILVERFISH, Mobs.VEX, Mobs.VINDICATOR,
+            Mobs.EVOKER, Mobs.PILLAGER, Mobs.RAVAGER, Mobs.WARDEN,
+            Mobs.COW, Mobs.PIG, Mobs.SHEEP, Mobs.CHICKEN,
+            Mobs.HORSE, Mobs.DONKEY, Mobs.MULE, Mobs.RABBIT,
+            Mobs.WOLF, Mobs.CAT, Mobs.GOAT, Mobs.TURTLE,
+            Mobs.FOX, Mobs.BEE, Mobs.CAMEL, Mobs.ARMADILLO,
+            Mobs.VILLAGER, Mobs.IRON_GOLEM
     );
+
+    /**
+     * What a fresh Notify card is set to: the sound the Bell alert has always used.
+     *
+     * <p>A full id rather than a bare path, because that is what the registry hands back and what
+     * a saved task holds, and a modded sound has a namespace of its own.</p>
+     */
+    private static final String DEFAULT_NOTIFY_SOUND = "minecraft:block.bell.use";
 
     private static final List<String> ENDERMAN_SAFETY = List.of(
             "Auto", "Boat", "Two-block shelter", "Direct melee");
@@ -129,7 +196,7 @@ public final class CommandRegistry {
     private static final List<String> TOOL_CHOICES = Stream.concat(
             Stream.of(TOOL_FROM_BLOCK), ToolCatalog.kindNames().stream()).toList();
 
-    public static final Set<EntityType<?>> ENDERMAN = Set.of(EntityType.ENDERMAN);
+    public static final Set<EntityType<?>> ENDERMAN = Set.of(Mobs.ENDERMAN);
 
     private static final List<String> COMPARISONS = List.of(
             "Less than", "At most", "Equal to", "At least", "Greater than", "Not equal");
@@ -159,7 +226,11 @@ public final class CommandRegistry {
             "Raw Iron", new SmeltRecipe(Items.RAW_IRON, Set.of(Items.RAW_IRON, Items.IRON_ORE, Items.DEEPSLATE_IRON_ORE), Items.IRON_INGOT),
             "Raw Gold", new SmeltRecipe(Items.RAW_GOLD, Set.of(Items.RAW_GOLD, Items.GOLD_ORE, Items.DEEPSLATE_GOLD_ORE), Items.GOLD_INGOT),
             "Raw Copper", new SmeltRecipe(Items.RAW_COPPER, Set.of(Items.RAW_COPPER, Items.COPPER_ORE, Items.DEEPSLATE_COPPER_ORE), Items.COPPER_INGOT),
-            "Cobblestone", new SmeltRecipe(Items.COBBLESTONE, Set.of(Items.COBBLESTONE), Items.STONE)
+            "Cobblestone", new SmeltRecipe(Items.COBBLESTONE, Set.of(Items.COBBLESTONE), Items.STONE),
+            // The one smelt that is not an ingot: four of these and four gold make the ingot that
+            // Upgrade to Netherite then puts in a smithing table. Ancient debris is the block and
+            // the item both, so there is no raw form to name beside it.
+            "Ancient Debris", new SmeltRecipe(Items.ANCIENT_DEBRIS, Set.of(Items.ANCIENT_DEBRIS), Items.NETHERITE_SCRAP)
     );
 
     /**
@@ -191,16 +262,21 @@ public final class CommandRegistry {
             Map.entry("save_waypoint", "Movement"),
             Map.entry("step", "Movement"),
             Map.entry("explore", "Movement"),
+            Map.entry("find_biome", "Movement"),
+            Map.entry("find_structure", "Movement"),
             Map.entry("mine", "Gathering"),
             Map.entry("chop", "Gathering"),
             Map.entry("find", "Gathering"),
             Map.entry("harvest", "Gathering"),
+            Map.entry("dragon_egg", "Gathering"),
             Map.entry("gettool", "Gathering"),
             Map.entry("check_item", "Logic & Conditions"),
             Map.entry("check_player", "Logic & Conditions"),
             Map.entry("check_distance", "Logic & Conditions"),
             Map.entry("check_time", "Logic & Conditions"),
             Map.entry("check_clock", "Logic & Conditions"),
+            Map.entry("check_weather", "Logic & Conditions"),
+            Map.entry("check_dimension", "Logic & Conditions"),
             Map.entry("countdown", "Logic & Conditions"),
             Map.entry("tunnel", "Mining & Building"),
             Map.entry("stripmine", "Mining & Building"),
@@ -214,9 +290,15 @@ public final class CommandRegistry {
             Map.entry("huntskeletons", "Combat"),
             Map.entry("huntsheep", "Gathering"),
             Map.entry("select_item", "Items & Storage"),
+            Map.entry("equip", "Items & Storage"),
             Map.entry("loot", "Items & Storage"),
+            Map.entry("recover_death", "Items & Storage"),
+            Map.entry("notify", "General"),
             Map.entry("deposit", "Items & Storage"),
+            Map.entry("backpack_deposit", "Items & Storage"),
+            Map.entry("backpack_take", "Items & Storage"),
             Map.entry("smelt", "Items & Storage"),
+            Map.entry("upgrade_netherite", "Items & Storage"),
             Map.entry("craft", "Items & Storage"),
             Map.entry("fish", "Items & Storage"),
             Map.entry("eat", "Items & Storage"),
@@ -232,6 +314,25 @@ public final class CommandRegistry {
             Map.entry("observer", "General"),
             Map.entry("button", "General")
     );
+
+    /**
+     * The cards that only exist because another mod does, and the question that decides each.
+     *
+     * <p>A gated card is registered like every other one and is still found by {@link #byId}: a
+     * task built where the mod is installed still loads, still draws and still runs where it is
+     * not, and fails there the way it would have failed anyway. The gate decides one thing only -
+     * whether the card is <em>offered</em> - because a palette that hands Deposit to Backpack to
+     * a player with no backpack mod is handing them a card that can do nothing but fail.</p>
+     *
+     * <p>Asked through a supplier rather than answered here, because this map is built while the
+     * class loads and the answer comes from the loader: the registry is also built in headless
+     * tests, where there is no loader to ask.</p>
+     */
+    private static final Map<String, BooleanSupplier> MOD_CARDS = Map.of(
+            "find_biome", () -> CompassHook.NATURE.installed(),
+            "find_structure", () -> CompassHook.EXPLORER.installed(),
+            "backpack_deposit", Backpacks::anyInstalled,
+            "backpack_take", Backpacks::anyInstalled);
 
     static {
         register(new CommandDef("mine", List.of(
@@ -301,14 +402,18 @@ public final class CommandRegistry {
         register(new CommandDef("check_item", List.of(
                 new Param.ItemChoice("item", items(), Items.COBBLESTONE),
                 new Param.Choice("comparison", COMPARISONS, "Less than"),
-                new Param.Ints("count", 10, 0, 9999)
+                new Param.Ints("count", 10, 0, 9999),
+                new Param.Choice("where", List.of(ConditionTask.INVENTORY, ConditionTask.INVENTORY_AND_WORN),
+                        ConditionTask.INVENTORY)
         ), def -> ConditionTask.itemCount(def.itemValue("item"), def.choiceValue("comparison"),
-                def.intValue("count"))));
+                def.intValue("count"), ConditionTask.INVENTORY_AND_WORN.equals(def.choiceValue("where")))));
 
+        // The threshold reaches well past the 300 that Air maxes out at, because the same box now
+        // holds an XP level and a distance to another player.
         register(new CommandDef("check_player", List.of(
-                new Param.Choice("metric", List.of("Health", "Hunger", "Air"), "Health"),
+                new Param.Choice("metric", PlayerMetric.labels(), PlayerMetric.HEALTH.label()),
                 new Param.Choice("comparison", COMPARISONS, "At most"),
-                new Param.Ints("threshold", 8, 0, 300)
+                new Param.Ints("threshold", 8, 0, 9999)
         ), def -> ConditionTask.playerValue(def.choiceValue("metric"), def.choiceValue("comparison"),
                 def.intValue("threshold"))));
 
@@ -326,6 +431,16 @@ public final class CommandRegistry {
         register(new CommandDef("check_time", List.of(
                 new Param.Choice("phase", WorldClock.phaseNames(), WorldClock.Phase.DAY.label())
         ), def -> ConditionTask.worldTime(def.choiceValue("phase"))));
+
+        // Weather and dimension are names rather than numbers, so they ask which one rather than
+        // carrying the six comparisons the other conditions do - the same shape as Check Time.
+        register(new CommandDef("check_weather", List.of(
+                new Param.Choice("weather", Weather.labels(), Weather.CLEAR.label())
+        ), def -> ConditionTask.weather(def.choiceValue("weather"))));
+
+        register(new CommandDef("check_dimension", List.of(
+                new Param.Choice("dimension", WorldDimension.labels(), WorldDimension.OVERWORLD.label())
+        ), def -> ConditionTask.dimension(def.choiceValue("dimension"))));
 
         // The hour is asked for as two numbers rather than a typed "20:00", so there is no format
         // to get wrong and no way to save a card that reads 25:70.
@@ -355,7 +470,7 @@ public final class CommandRegistry {
                 new Param.BlockSet("targets", ores(),
                         Set.of(Blocks.DIAMOND_ORE, Blocks.DEEPSLATE_DIAMOND_ORE)),
                 new Param.EntitySet("entities", MOBS,
-                        Set.of(EntityType.SHEEP)),
+                        Set.of(Mobs.SHEEP)),
                 new Param.Ints("radius", 64, 1, 512),
                 new Param.Ints("y_min", -64, -64, 320),
                 new Param.Ints("y_max", 320, -64, 320),
@@ -401,6 +516,36 @@ public final class CommandRegistry {
         ), def -> new StepTask(StepPolicy.Side.fromLabel(def.choiceValue("side")),
                 def.intValue("blocks"), def.boolValue("careful"))));
 
+        register(new CommandDef("find_biome", List.of(
+                new Param.Choice("biome", CommandRegistry::biomeIds, "minecraft:jungle",
+                        CommandRegistry::biomeLabel),
+                new Param.Choice("then", CompassFindTask.THEN_OPTIONS, CompassFindTask.WALK_THERE),
+                new Param.Ints("tolerance", 16, 1, 64),
+                new Param.Bool("fresh", false)
+        ), def -> {
+            String biome = def.choiceValue("biome");
+            if (biome == null || biome.isBlank()) {
+                return FailTask.forCommand("find_biome", "Find Biome", "lune.status.fail.no_biome_chosen");
+            }
+            return new CompassFindTask(CompassHook.NATURE, biome, def.choiceValue("then"),
+                    def.intValue("tolerance"), def.boolValue("fresh"));
+        }));
+
+        register(new CommandDef("find_structure", List.of(
+                new Param.Choice("structure", CommandRegistry::structureIds, "minecraft:village_plains",
+                        CommandRegistry::structureLabel),
+                new Param.Choice("then", CompassFindTask.THEN_OPTIONS, CompassFindTask.WALK_THERE),
+                new Param.Ints("tolerance", 16, 1, 64),
+                new Param.Bool("fresh", false)
+        ), def -> {
+            String structure = def.choiceValue("structure");
+            if (structure == null || structure.isBlank()) {
+                return FailTask.forCommand("find_structure", "Find Structure", "lune.status.fail.no_structure_chosen");
+            }
+            return new CompassFindTask(CompassHook.EXPLORER, structure, def.choiceValue("then"),
+                    def.intValue("tolerance"), def.boolValue("fresh"));
+        }));
+
         register(new CommandDef("waypoint", List.of(
                 new Param.Choice("name", () -> WaypointStore.get().names(), ""),
                 new Param.Ints("tolerance", 2, 0, 32)
@@ -427,7 +572,7 @@ public final class CommandRegistry {
         }));
 
         register(new CommandDef("kill", List.of(
-                new Param.EntitySet("targets", MOBS, Set.of(EntityType.ZOMBIE)),
+                new Param.EntitySet("targets", MOBS, Set.of(Mobs.ZOMBIE)),
                 new Param.Ints("radius", 16, 1, 64),
                 new Param.Bool("fire_resistance", true),
                 new Param.Bool("use_shield", true),
@@ -532,6 +677,15 @@ public final class CommandRegistry {
                 new Param.Ints("radius", 16, 1, 64)
         ), def -> new LootTask(def.intValue("radius"))));
 
+        register(new CommandDef("recover_death", List.of(
+                new Param.Choice("which", RecoverDeathTask.WHICH_OPTIONS, RecoverDeathTask.NEAREST),
+                new Param.Ints("radius", 8, 1, 32)
+        ), def -> new RecoverDeathTask(def.choiceValue("which"), def.intValue("radius"))));
+
+        register(new CommandDef("dragon_egg", List.of(
+                new Param.Ints("radius", 24, 1, 64)
+        ), def -> new DragonEggTask(def.intValue("radius"))));
+
         register(new CommandDef("tunnel", List.of(
                 new Param.Choice("direction", List.of("Facing", "North", "South", "East", "West"), "Facing"),
                 new Param.Ints("length", 64, 1, 512),
@@ -589,11 +743,24 @@ public final class CommandRegistry {
                 def.blockValue("corner_materials").resolvedBlocks())));
 
         register(new CommandDef("deposit", List.of(
-                new Param.Choice("filter", List.of("Ores", "Logs", "Crops", "Stone", "All"), "Ores"),
+                new Param.Choice("filter", ItemFilters.DEPOSIT, ItemFilters.ORES),
                 new Param.Ints("radius", 16, 1, 64),
                 new Param.Bool("optional", false)
         ), def -> new DepositTask(def.choiceValue("filter"), def.intValue("radius"),
                 def.boolValue("optional"))));
+
+        register(new CommandDef("backpack_deposit", List.of(
+                new Param.Choice("filter", ItemFilters.DEPOSIT, ItemFilters.ORES),
+                new Param.Bool("optional", false)
+        ), def -> new BackpackDepositTask(def.choiceValue("filter"), def.boolValue("optional"))));
+
+        register(new CommandDef("backpack_take", List.of(
+                new Param.Choice("filter", ItemFilters.TAKE, ItemFilters.ITEM),
+                new Param.ItemChoice("item", items(), Items.BREAD),
+                new Param.Ints("count", 16, 0, 2304),
+                new Param.Bool("optional", false)
+        ), def -> new BackpackTakeTask(def.choiceValue("filter"), def.itemValue("item"),
+                def.intValue("count"), def.boolValue("optional"))));
 
         register(new CommandDef("smelt", List.of(
                 new Param.Choice("input", () -> List.copyOf(SMELT_RECIPES.keySet()), "Raw Iron",
@@ -606,6 +773,20 @@ public final class CommandRegistry {
                 return FailTask.forCommand("smelt", "Smelt", "lune.status.fail.unknown_input", input);
             }
             return new SmeltTask(recipe.inputs, recipe.output, def.intValue("count"));
+        }));
+
+        // The gear is asked for as an item rather than as a tool-and-tier the way Get Tools asks,
+        // because the smithing table's answer is not a ladder: it upgrades armour, a horse's armour
+        // and whatever else a version has added beside the five hand tools, and the pairing comes
+        // out of the registry rather than out of a list here.
+        register(new CommandDef("upgrade_netherite", List.of(
+                new Param.ItemChoice("gear", NetheriteUpgrades.bases(), Items.DIAMOND_PICKAXE)
+        ), def -> {
+            Item gear = def.itemValue("gear");
+            return gear == null
+                    ? FailTask.forCommand("upgrade_netherite", "Upgrade to Netherite",
+                            "lune.status.fail.pick_gear_to_upgrade")
+                    : new NetheriteUpgradeTask(gear);
         }));
 
         register(new CommandDef("fish", List.of(
@@ -632,6 +813,14 @@ public final class CommandRegistry {
 
         register(new CommandDef("timer", List.of(new Param.Ints("seconds", 5, 0, 3600)),
                 def -> new TimerTask(def.intValue("seconds"))));
+
+        // Any sound the game has, not a shortlist Lune keeps: a registry of a thousand-odd is why
+        // this one is edited by a picker with a search box rather than by the inline dropdown.
+        register(new CommandDef("notify", List.of(
+                new Param.Text("message", "", 64),
+                new Param.Choice("sound", SoundCatalog::ids, DEFAULT_NOTIFY_SOUND, SoundCatalog::label)
+                        .editedBy(Param.Choice.SOUND_PICKER)
+        ), def -> new NotifyTask(def.textValue("message"), def.choiceValue("sound"))));
 
         register(new CommandDef("stop_game", List.of(
                 new Param.Choice("ending", java.util.Arrays.stream(StopGameTask.Ending.values())
@@ -669,6 +858,18 @@ public final class CommandRegistry {
                 SelectItemTask.Hand.fromLabel(def.choiceValue("hand")),
                 def.intValue("min_durability"),
                 SelectItemTask.Preference.fromLabel(def.choiceValue("prefer")))));
+
+        // Two rows, because there are two questions and the second one is only sometimes asked:
+        // a whole-kit swap needs no item, and CommandDef.isRelevant hides the row while that is
+        // what is being asked for.
+        register(new CommandDef("equip", List.of(
+                new Param.Choice("what", java.util.Arrays.stream(EquipTask.What.values())
+                                .map(EquipTask.What::label).toList(),
+                        EquipTask.What.BEST_ARMOR.label()),
+                new Param.ItemChoice("item", items(), Items.ELYTRA)
+        ), def -> new EquipTask(
+                EquipTask.What.fromLabel(def.choiceValue("what")),
+                def.itemValue("item"))));
 
         register(new CommandDef("craft", List.of(
                 // One row, because "which recipe?" is one question. Clicking it opens the editor,
@@ -762,22 +963,59 @@ public final class CommandRegistry {
         COMMANDS.add(def);
     }
 
-    /** Shared factory for Walk and Run, which differ only in whether they sprint. */
+    /**
+     * Shared factory for Walk and Run, which differ only in whether they sprint.
+     *
+     * <p>{@code label} is not what the player reads any more: a title is drawn from the card's
+     * own {@code lune.command.*.name} line, so the id goes across too. The English word stays
+     * because it is the learner's row key, and those rows are already on disk. The same split
+     * {@link FailTask#forCommand} makes below, for the same reason - which is also why the id
+     * is asked of the card rather than worked out a second time from {@code sprint}.</p>
+     */
     private static com.etka.lune.bot.Task gotoTask(CommandDef def, String label, boolean sprint) {
         String direction = def.choiceValue("direction");
         if (!"Coordinates".equals(direction)) {
-            return new DirectionalGotoTask(label, direction, def.intValue("distance"),
+            return new DirectionalGotoTask(def.id(), label, direction, def.intValue("distance"),
                     def.intValue("tolerance"), sprint);
         }
         BlockPos target = def.posValue("target");
         if (target == null) {
-            return FailTask.forCommand(sprint ? "run" : "walk", label, "lune.status.fail.no_destination");
+            return FailTask.forCommand(def.id(), label, "lune.status.fail.no_destination");
         }
         return new GotoTask(new Goals.Near(target, def.intValue("tolerance")), sprint, false);
     }
 
     public static List<CommandDef> all() {
         return List.copyOf(COMMANDS);
+    }
+
+    /**
+     * Whether a card is worth offering here: true unless it needs a mod this game does not have.
+     *
+     * <p>Not a question about the world or the inventory. Find Biome is offered to anyone with
+     * Nature's Compass installed, whether or not they have crafted one yet - crafting it is an
+     * Ensure Tool card in front of it, and a card that tells you to go and get the compass is
+     * useful in a way that a card that is not there is not.</p>
+     */
+    public static boolean isAvailable(String id) {
+        BooleanSupplier gate = MOD_CARDS.get(id);
+        return gate == null || gate.getAsBoolean();
+    }
+
+    /** Every command the palette should offer, in registration order. */
+    public static List<CommandDef> available() {
+        return COMMANDS.stream().filter(def -> isAvailable(def.id())).toList();
+    }
+
+    /**
+     * The cards that are only offered when another mod is installed, by id.
+     *
+     * <p>The ids alone, so they can be named without asking the loader anything. A gate whose id
+     * no longer matches a card is a gate that quietly stops gating, which looks exactly like the
+     * card having been un-gated on purpose.</p>
+     */
+    public static Set<String> modCards() {
+        return MOD_CARDS.keySet();
     }
 
     /** Returns the task-palette folder for a command. */

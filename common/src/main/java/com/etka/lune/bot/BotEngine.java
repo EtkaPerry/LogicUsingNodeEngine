@@ -10,11 +10,15 @@ import com.etka.lune.bot.learning.LearningSession;
 import com.etka.lune.bot.learning.LearningStore;
 import com.etka.lune.bot.learning.TaskLearning;
 import com.etka.lune.bot.util.Leash;
-import com.etka.lune.bot.util.OmniscientAccess;
+import com.etka.lune.bot.util.Cheats;
 import com.etka.lune.config.BotConfig;
 import com.etka.lune.config.Terms;
+import com.etka.lune.util.Alerts;
 import com.etka.lune.util.Lang;
 import com.etka.lune.platform.BuildFeatures;
+import com.etka.lune.waypoint.Death;
+import com.etka.lune.waypoint.DeathStore;
+import com.etka.lune.waypoint.WaypointStore;
 import net.minecraft.core.BlockPos;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -69,6 +73,14 @@ public final class BotEngine {
     private String lastThought = "";
     private int thoughtRepeat;
     private static final int MAX_THOUGHTS = 7;
+    /**
+     * Whether the death on screen right now has already been written down.
+     *
+     * <p>The death screen leaves the player object in place, so the branch that notices it runs
+     * every tick until they respawn. Without this the store would fill with the same death several
+     * hundred times and push every earlier one out of it.</p>
+     */
+    private boolean deathRecorded;
 
     private BotEngine() {}
 
@@ -294,6 +306,30 @@ public final class BotEngine {
         input.reset();
     }
 
+    /**
+     * Writes down where the player died, once, and says so out loud.
+     *
+     * <p>This lives in the engine rather than on the canvas, and it is the one thing that has to:
+     * by the time the player is dead there is no task left to ask - the queue is being torn down in
+     * the same breath - so no card could ever catch it. What it does is take a note. Nothing moves,
+     * nothing is collected, and a Recover Death Drop card still has to be on the canvas for
+     * anything to come of it.</p>
+     *
+     * <p>It is not conditional on a task having been running. A death in a session where nobody
+     * pressed Run is still a death the player would like the coordinates of, and a note that is
+     * only taken when a setting was switched on beforehand is a note nobody has when they need
+     * it.</p>
+     */
+    private void recordDeath(LocalPlayer player) {
+        if (deathRecorded) {
+            return;
+        }
+        deathRecorded = true;
+        BlockPos pos = player.blockPosition().immutable();
+        DeathStore.get().record(Death.at(pos, WaypointStore.currentDimension(), System.currentTimeMillis()));
+        Alerts.died(Lang.get("lune.alert.died_at", pos.getX(), pos.getY(), pos.getZ()));
+    }
+
     // --- ticking -------------------------------------------------------------
 
     public void tick(Minecraft mc) {
@@ -312,6 +348,9 @@ public final class BotEngine {
         if (LuneProfiler.isEnabled() != BotConfig.get().debugProfiler) {
             LuneProfiler.setEnabled(BotConfig.get().debugProfiler);
         }
+        // Before tickInternal, which returns immediately without a player: leaving a world is
+        // exactly when the cheat switches have to be dropped, and there is no player by then.
+        Cheats.enforce(mc);
         // Before tickInternal, which returns immediately without a player - and a test run that has
         // to build its own world has no player yet.
         AutoRun.beforeWorld(mc);
@@ -347,6 +386,7 @@ public final class BotEngine {
         // the task against that dead entity; the next world must start with a clean queue and a
         // closed trace.
         if (!player.isAlive()) {
+            recordDeath(player);
             if (current != null || !queue.isEmpty()) {
                 // Say which one it was. The plain stopAll() closes the journal as "stopped by
                 // user", so every death read back afterwards as the player having pressed stop -
@@ -363,15 +403,7 @@ public final class BotEngine {
             return;
         }
 
-        // A saved developer setting is not authority on a dedicated server. Clear it as soon as a
-        // world is active as well as checking it dynamically in BotContext, so every task and the
-        // run trace agree even when the player changes worlds without closing the config screen.
-        BotConfig config = BotConfig.get();
-        if (!OmniscientAccess.isAllowed(mc)) {
-            config.omniscientMining = false;
-            config.omniscientHarvesting = false;
-        }
-
+        deathRecorded = false;
         botTicks++;
 
         installInputHook(player);
@@ -391,9 +423,10 @@ public final class BotEngine {
         // analysis reads both. Nothing is driven: isDriving() is false while current is null, so
         // BotClientInput hands the player their own keys back untouched.
         if (AutoRun.isRecordingSession() && runTrace == null && current == null) {
-            openRunTrace(player, mc.level, config, true);
+            openRunTrace(player, mc.level, BotConfig.get(), true);
             if (runTrace != null) {
                 debug.taskName = "recorded session";
+                debug.taskId = "recorded session";
                 debug.intent = "human play; nothing is driving";
                 runTrace.event(botTicks, "recording-started", debug, player, mc.level);
             }
@@ -421,10 +454,15 @@ public final class BotEngine {
             openRunTrace(player, mc.level, startCtx.config);
             ensureLearningSession(player, mc.level);
             startCtx = buildContext(mc, player, mc.level);
-            currentLearningContext = LearningContext.of(current.name(), current.name(),
+            // mission(), which asks the task for its learning id rather than its displayed name.
+            // This used to pass current.name() twice - the sentence from the Main tab, translated -
+            // so the table gained a fresh, empty set of rows for every language the player used,
+            // and the 28 rows shipped under the old English wording became unreachable.
+            currentLearningContext = LearningContext.mission(current,
                     mc.level.dimension().identifier().toString());
             current.start(startCtx);
             debug.taskName = current.name();
+            debug.taskId = current.learningId();
             debug.taskStatus = current.status();
             if (runTrace != null) {
                 runTrace.event(botTicks, "task-start", debug, player, mc.level);
@@ -488,6 +526,9 @@ public final class BotEngine {
                     finishLearningSession(Lang.get("lune.engine.queue_complete"), true);
                     closeRunTrace(Lang.get("lune.engine.queue_complete"));
                     finishRunStatistics();
+                    // The whole run, not each task in it: a queue of nine would otherwise raise
+                    // eight alerts nobody asked for before the one they were waiting for.
+                    Alerts.runFinished(finished.name(), false);
                 }
             }
             case FAILED -> {
@@ -514,6 +555,8 @@ public final class BotEngine {
                 }
                 // Halt the rest of the queue: continuing after a failure usually compounds it.
                 queue.clear();
+                // A failure always ends the run, so this needs no queue check of its own.
+                Alerts.runFinished(failed.name(), true);
                 finishLearningSession(Lang.get("lune.engine.task_failed"), false);
                 closeRunTrace(Lang.get("lune.engine.task_failed"));
                 finishRunStatistics();
@@ -544,6 +587,9 @@ public final class BotEngine {
         debug.taskName = current == null
                 ? (recording ? "recorded session" : "-")
                 : current.name();
+        debug.taskId = current == null
+                ? (recording ? "recorded session" : "-")
+                : current.learningId();
         // A journal with an empty status column summarises to nothing at all. Say plainly that the
         // person is playing, so the closing summary has something to divide the time between.
         debug.taskStatus = current != null ? current.status()

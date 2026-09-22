@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.tab;
 
+import com.etka.lune.util.Alerts;
 import com.etka.lune.util.Lang;
 import com.etka.lune.util.LuneLanguages;
 import com.etka.lune.bot.command.CommandDef;
@@ -8,13 +9,11 @@ import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.LuneTab;
 import com.etka.lune.client.gui.mascot.MascotAdvisor;
 import com.etka.lune.client.gui.widget.ParamPanel;
-import com.etka.lune.bot.util.OmniscientAccess;
 import com.etka.lune.config.BotConfig;
 import com.etka.lune.platform.BuildFeatures;
 import com.etka.lune.task.TaskStore;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.network.chat.Component;
 
@@ -69,8 +68,6 @@ public class ConfigTab extends LuneTab {
         panel = add(new ParamPanel(0, 0, 10, 10));
         panel.setCommand(settings);
         panel.setCompactMode(true);
-        panel.setParameterEnabled(id -> !isOmniscientParameter(id)
-                || OmniscientAccess.isAllowed(Minecraft.getInstance()));
         panel.setSections(configSections());
         restoreSuggestionsButton = add(Button.builder(Component.literal(Lang.get("lune.gui.config.restore_lune_suggestions")),
                 button -> restoreSuggestions()).size(180, 18).build());
@@ -88,7 +85,6 @@ public class ConfigTab extends LuneTab {
      * defaults by definition, and copies those values across. No second list of defaults to drift.</p>
      */
     private List<Param<?>> buildParameters(BotConfig config) {
-        boolean omniscientAllowed = OmniscientAccess.isAllowed(Minecraft.getInstance());
         List<Param<?>> parameters = new ArrayList<>(List.of(
                 new Param.Bool("allow_sprint", config.allowSprint),
                 new Param.Bool("allow_swim", config.allowSwim),
@@ -101,6 +97,14 @@ public class ConfigTab extends LuneTab {
                         LuneLanguages::displayName),
                 new Param.Choice("ui_scale", List.of(BotConfig.LUNE_UI_AUTO, BotConfig.LUNE_UI_MATCH_GAME,
                                 BotConfig.LUNE_UI_COMPACT), config.luneUiScale),
+                // The accessibility group, kept contiguous: a section header is emitted wherever
+                // the section changes, so a stray member further down prints the heading twice.
+                new Param.Choice("lune_text_size", BotConfig.TEXT_SIZES, config.luneTextSize),
+                new Param.Choice("lune_font", List.of(BotConfig.FONT_DEFAULT,
+                                BotConfig.FONT_UNIFORM), config.luneFont),
+                new Param.Bool("high_contrast", config.highContrast),
+                new Param.Choice("blueprint_pins", List.of(BotConfig.PINS_CLASSIC,
+                                BotConfig.PINS_COLOUR_BLIND), config.blueprintPins),
                 new Param.Ints("dashboard_line_height", config.dashboardLineHeight, DashboardFrame.MIN_ROW_H, DashboardFrame.MAX_ROW_H),
                 new Param.Bool("dashboard_coordinates", config.dashboardShowCoordinates),
                 new Param.Bool("dashboard_seed", config.dashboardShowSeed),
@@ -116,8 +120,6 @@ public class ConfigTab extends LuneTab {
                 new Param.Choice("blueprint_theme", List.of(BotConfig.THEME_ORANGE, BotConfig.THEME_SLATE, BotConfig.THEME_BLUE,
                                 BotConfig.THEME_PURPLE, BotConfig.THEME_AMBER,
                                 BotConfig.THEME_GREEN), config.blueprintTheme),
-                new Param.Choice("blueprint_pins", List.of(BotConfig.PINS_CLASSIC, BotConfig.PINS_COLOUR_BLIND),
-                        config.blueprintPins),
                 new Param.Bool("close_on_run", config.closePanelOnRun),
                 new Param.Bool("show_lune", config.showLune),
                 new Param.Choice("lune_speech", List.of(BotConfig.LUNE_SPEECH_SILENT, BotConfig.LUNE_SPEECH_QUIET,
@@ -127,15 +129,23 @@ public class ConfigTab extends LuneTab {
                 new Param.Choice("lune_chatbox", List.of(BotConfig.LUNE_SIZE_SMALL, BotConfig.LUNE_SIZE_NORMAL,
                                  BotConfig.LUNE_SIZE_LARGE), config.luneChatboxSize),
                 new Param.Bool("warn_slow_steps", config.warnAboutSlowSteps),
+                new Param.Bool("alert_task_end", config.alertOnTaskEnd),
+                new Param.Bool("alert_death", config.alertOnDeath),
+                new Param.Bool("alert_sound", config.alertSound),
+                new Param.Ints("alert_volume", config.alertVolume, 0, Alerts.MAX_VOLUME_PERCENT),
+                new Param.Choice("alert_tone_finished", Alerts.Tone.labels(), config.alertToneFinished),
+                new Param.Choice("alert_tone_failed", Alerts.Tone.labels(), config.alertToneFailed),
+                new Param.Choice("alert_tone_death", Alerts.Tone.labels(), config.alertToneDeath),
+                new Param.Bool("alert_toast", config.alertToast),
+                new Param.Bool("alert_chat", config.alertChat),
                 new Param.Bool("show_debug", config.showDebug),
                 new Param.Bool("debug_detail", config.debugPathDetail),
                 new Param.Bool("debug_profiler", config.debugProfiler),
                 new Param.Bool("debug_run_log", config.debugRunLog),
                 new Param.Bool("action_markers", config.showActionMarkers),
                 new Param.Bool("learning", config.learningEnabled),
-                new Param.Bool("user_learning", config.userLearningEnabled),
-                new Param.Bool("omniscient_mining", omniscientAllowed && config.omniscientMining),
-                new Param.Bool("omniscient_harvesting", omniscientAllowed && config.omniscientHarvesting)
+                new Param.Bool("node_stats", config.nodeStats),
+                new Param.Bool("user_learning", config.userLearningEnabled)
         ));
         if (!BuildFeatures.approvalFeedback()) {
             parameters.removeIf(parameter -> parameter.id().equals("user_learning")
@@ -160,6 +170,9 @@ public class ConfigTab extends LuneTab {
         // this frame comes from the new file.
         Lang.select(config.language);
         config.luneUiScale = settings.choiceValue("ui_scale");
+        config.luneTextSize = settings.choiceValue("lune_text_size");
+        config.luneFont = settings.choiceValue("lune_font");
+        config.highContrast = settings.boolValue("high_contrast");
         config.dashboardLineHeight = settings.intValue("dashboard_line_height");
         config.dashboardShowCoordinates = settings.boolValue("dashboard_coordinates");
         config.dashboardShowSeed = settings.boolValue("dashboard_seed");
@@ -180,6 +193,15 @@ public class ConfigTab extends LuneTab {
         config.luneSize = settings.choiceValue("lune_size");
         config.luneChatboxSize = settings.choiceValue("lune_chatbox");
         config.warnAboutSlowSteps = settings.boolValue("warn_slow_steps");
+        config.alertOnTaskEnd = settings.boolValue("alert_task_end");
+        config.alertOnDeath = settings.boolValue("alert_death");
+        config.alertSound = settings.boolValue("alert_sound");
+        config.alertVolume = settings.intValue("alert_volume");
+        config.alertToneFinished = settings.choiceValue("alert_tone_finished");
+        config.alertToneFailed = settings.choiceValue("alert_tone_failed");
+        config.alertToneDeath = settings.choiceValue("alert_tone_death");
+        config.alertToast = settings.boolValue("alert_toast");
+        config.alertChat = settings.boolValue("alert_chat");
         config.showDebug = settings.boolValue("show_debug");
         config.debugPathDetail = settings.boolValue("debug_detail");
         config.debugProfiler = settings.boolValue("debug_profiler");
@@ -188,19 +210,12 @@ public class ConfigTab extends LuneTab {
                 && settings.boolValue("debug_run_log");
         config.showActionMarkers = settings.boolValue("action_markers");
         config.learningEnabled = settings.boolValue("learning");
+        config.nodeStats = settings.boolValue("node_stats");
         if (BuildFeatures.approvalFeedback()) {
             config.userLearningEnabled = settings.boolValue("user_learning");
         }
-        if (OmniscientAccess.isAllowed(Minecraft.getInstance())) {
-            config.omniscientMining = settings.boolValue("omniscient_mining");
-            config.omniscientHarvesting = settings.boolValue("omniscient_harvesting");
-        } else {
-            // A config file may have been edited while outside a world, or may still contain a
-            // value from a previous singleplayer session. Never carry that value into a server.
-            settings.apply(Map.of("omniscient_mining", "false", "omniscient_harvesting", "false"));
-            config.omniscientMining = false;
-            config.omniscientHarvesting = false;
-        }
+        // The omniscient modes are not here on purpose. They are cheats, they last one session, and
+        // they are switched with /lune omniscient - see com.etka.lune.bot.util.Cheats.
     }
 
     /** Called when the panel closes; avoids writing the file on every tick. */
@@ -288,6 +303,10 @@ public class ConfigTab extends LuneTab {
                 Map.entry("repath", "Movement & Pathfinding"),
                 Map.entry("language", "Lune & Interface"),
                 Map.entry("ui_scale", "Lune & Interface"),
+                Map.entry("lune_text_size", "Accessibility"),
+                Map.entry("lune_font", "Accessibility"),
+                Map.entry("high_contrast", "Accessibility"),
+                Map.entry("blueprint_pins", "Accessibility"),
                 Map.entry("dashboard_line_height", "Lune & Interface"),
                 Map.entry("dashboard_coordinates", "Lune & Interface"),
                 Map.entry("dashboard_seed", "Lune & Interface"),
@@ -301,23 +320,29 @@ public class ConfigTab extends LuneTab {
                 Map.entry("dashboard_facing", "Lune & Interface"),
                 Map.entry("dashboard_learning", "Lune & Interface"),
                 Map.entry("blueprint_theme", "Lune & Interface"),
-                Map.entry("blueprint_pins", "Lune & Interface"),
+                Map.entry("close_on_run", "Lune & Interface"),
                 Map.entry("show_lune", "Lune & Interface"),
                 Map.entry("lune_speech", "Lune & Interface"),
                 Map.entry("lune_size", "Lune & Interface"),
                 Map.entry("lune_chatbox", "Lune & Interface"),
+                Map.entry("warn_slow_steps", "Alerts"),
+                Map.entry("alert_task_end", "Alerts"),
+                Map.entry("alert_death", "Alerts"),
+                Map.entry("alert_sound", "Alerts"),
+                Map.entry("alert_volume", "Alerts"),
+                Map.entry("alert_tone_finished", "Alerts"),
+                Map.entry("alert_tone_failed", "Alerts"),
+                Map.entry("alert_tone_death", "Alerts"),
+                Map.entry("alert_toast", "Alerts"),
+                Map.entry("alert_chat", "Alerts"),
                 Map.entry("show_debug", "Debug & Learning"),
                 Map.entry("debug_detail", "Debug & Learning"),
+                Map.entry("debug_profiler", "Debug & Learning"),
                 Map.entry("debug_run_log", "Debug & Learning"),
                 Map.entry("action_markers", "Debug & Learning"),
                 Map.entry("learning", "Debug & Learning"),
-                Map.entry("user_learning", "Debug & Learning"),
-                Map.entry("omniscient_mining", "Advanced World Access"),
-                Map.entry("omniscient_harvesting", "Advanced World Access"));
-    }
-
-    private static boolean isOmniscientParameter(String id) {
-        return "omniscient_mining".equals(id) || "omniscient_harvesting".equals(id);
+                Map.entry("node_stats", "Debug & Learning"),
+                Map.entry("user_learning", "Debug & Learning"));
     }
 
     /**

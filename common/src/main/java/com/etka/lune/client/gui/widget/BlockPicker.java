@@ -1,5 +1,6 @@
 package com.etka.lune.client.gui.widget;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.catalog.BlockCatalog;
 import com.etka.lune.bot.catalog.BlockCategories;
@@ -7,6 +8,7 @@ import com.etka.lune.bot.catalog.BlockTarget;
 import com.etka.lune.bot.command.Param;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.UiScale;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -26,7 +28,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -173,7 +174,7 @@ public class BlockPicker extends AbstractWidget {
         Layout layout = layout();
 
         // Dim the rest of the screen behind the popup.
-        extractor.fill(0, 0, mc.screen.width, mc.screen.height, DIM);
+        extractor.fill(0, 0, Screens.current(mc).width, Screens.current(mc).height, DIM);
         LuneScreen.panel(extractor, layout.popupX(), layout.popupY(), layout.popupW(), layout.popupH());
         extractor.fill(layout.popupX() + 1, layout.buttonY() - PADDING, layout.popupX() + layout.popupW() - 1,
                 layout.buttonY() - PADDING + 1, LuneScreen.PANEL_BORDER);
@@ -212,8 +213,10 @@ public class BlockPicker extends AbstractWidget {
         extractor.fill(layout.searchX(), layout.searchY() + SEARCH_H - 1, layout.searchX() + layout.searchW(),
                 layout.searchY() + SEARCH_H, LuneScreen.ACCENT);
 
+        // Two whole sentences rather than one with a noun slot: the English reads the same either
+        // way, but a language that inflects the noun cannot get there by substitution.
         String prompt = filter.isEmpty()
-                ? Lang.get("lune.gui.block.search_every_by_name_or_id", (tagsTab ? "tag" : "block"))
+                ? Lang.get(tagsTab ? "lune.gui.block.search_tags" : "lune.gui.block.search_blocks")
                 : filter;
         text.accept(layout.searchX() + 5, layout.searchY() + 4,
                 Component.literal(prompt).withColor(filter.isEmpty() ? LuneScreen.TEXT_DIM : LuneScreen.TEXT));
@@ -371,8 +374,8 @@ public class BlockPicker extends AbstractWidget {
 
     private Layout layout() {
         Minecraft mc = Minecraft.getInstance();
-        int screenW = mc.screen.width;
-        int screenH = mc.screen.height;
+        int screenW = Screens.current(mc).width;
+        int screenH = Screens.current(mc).height;
         int popupW = (int) (screenW * 0.85);
         int popupH = (int) (screenH * 0.85);
         int popupX = (screenW - popupW) / 2;
@@ -520,14 +523,14 @@ public class BlockPicker extends AbstractWidget {
             return;
         }
         switch (keyCode) {
-            case GLFW.GLFW_KEY_BACKSPACE -> {
+            case InputConstants.KEY_BACKSPACE -> {
                 if (!filter.isEmpty()) {
                     setFilter(filter.substring(0, filter.length() - 1));
                 }
             }
-            case GLFW.GLFW_KEY_DELETE -> setFilter("");
-            case GLFW.GLFW_KEY_ESCAPE -> close(false);
-            case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> close(true);
+            case InputConstants.KEY_DELETE -> setFilter("");
+            case InputConstants.KEY_ESCAPE -> close(false);
+            case InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER -> close(true);
         }
     }
 

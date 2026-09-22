@@ -1,6 +1,7 @@
 package com.etka.lune.config;
 
 import com.etka.lune.bot.AutoRun;
+import com.etka.lune.util.Lang;
 
 import java.util.List;
 
@@ -35,10 +36,31 @@ public final class Terms {
      */
     public static final int VERSION = 1;
 
-    /** One thing the player is agreeing to: a short label to tick, and the sentence it means. */
-    public record Point(String label, String detail) {}
+    /**
+     * One thing the player is agreeing to: a short label to tick, and the sentence it means.
+     *
+     * <p>Holds the two keys rather than the two sentences. What a player is asked to agree to has
+     * to be in a language they read - a tick box is not consent if the line above it is in
+     * somebody else's - and the words themselves belong in the language file with every other line
+     * Lune says. Resolved on the way to the screen and never at class-load, so switching language
+     * in the Config tab re-reads them rather than freezing whichever one loaded first.</p>
+     */
+    public record Point(String labelKey, String detailKey) {
 
-    public static final String TITLE = "Before Lune plays for you";
+        /** The short line beside the tick box. */
+        public String label() {
+            return Lang.get(labelKey);
+        }
+
+        /** The one sentence underneath it. */
+        public String detail() {
+            return Lang.get(detailKey);
+        }
+    }
+
+    public static String title() {
+        return Lang.get("lune.terms.title");
+    }
 
     /**
      * The whole page is written to be short, and the labels carry the meaning.
@@ -47,23 +69,24 @@ public final class Terms {
      * scale to, and terms that run off the bottom edge are terms nobody read. And a page dense
      * enough to look like paperwork gets skimmed, which is the same failure by a slower route: the
      * one line under each box is there to be read, so it is one line.</p>
+     *
+     * <p>Translation makes the first pressure worse rather than better - Turkish runs noticeably
+     * longer than the English it is translated from - which is why the page that shows these
+     * scrolls and pins its buttons rather than trusting the wording to stay short.</p>
      */
-    public static final String INTRO =
-            "Lune presses the keys for you. That is against the rules on most servers, and she digs "
-                    + "in a world you may not have backed up.";
+    public static String intro() {
+        return Lang.get("lune.terms.intro");
+    }
 
     public static final List<Point> POINTS = List.of(
-            new Point("The server rules are mine to check",
-                    "I have read the rules where I play, and a ban there is mine to carry."),
-            new Point("I will use her fairly",
-                    "No griefing, harassing or stealing, and I stop where I am asked to."),
-            new Point("I accept the license, and the risk",
-                    "The Lune Personal Use License. No warranty; a lost world is mine."));
+            new Point("lune.terms.point.rules.label", "lune.terms.point.rules.detail"),
+            new Point("lune.terms.point.fair.label", "lune.terms.point.fair.detail"),
+            new Point("lune.terms.point.license.label", "lune.terms.point.license.detail"));
 
     /** Shown under the boxes, so the two buttons are not the only explanation of what happens next. */
-    public static final String FOOTNOTE =
-            "Until you accept, the panel stays shut and Lune runs nothing. "
-                    + "About -> Review terms brings this back.";
+    public static String footnote() {
+        return Lang.get("lune.terms.footnote");
+    }
 
     private Terms() {}
 

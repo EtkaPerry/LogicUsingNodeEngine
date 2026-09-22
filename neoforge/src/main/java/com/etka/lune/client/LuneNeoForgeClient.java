@@ -1,7 +1,9 @@
 package com.etka.lune.client;
 
 import com.etka.lune.Constants;
+import com.etka.lune.client.command.LuneChatCommand;
 import com.etka.lune.client.gui.DebugOverlay;
+import com.etka.lune.compat.Screens;
 import com.etka.lune.platform.BuildFeatures;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
@@ -13,10 +15,11 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
-import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
 /**
@@ -34,11 +37,15 @@ public class LuneNeoForgeClient {
         NeoForge.EVENT_BUS.addListener((RenderGuiEvent.Post event) ->
                 DebugOverlay.render(event.getGuiGraphics()));
 
-        NeoForge.EVENT_BUS.addListener((RenderLevelStageEvent.AfterTranslucentBlocks event) -> {
-            Minecraft minecraft = Minecraft.getInstance();
-            WorldActionOverlay.render(event.getPoseStack(), minecraft.gameRenderer.getMainCamera(),
-                    minecraft.renderBuffers().bufferSource());
-        });
+        // Submits rather than a buffer source: the collector and the render state are what every
+        // Minecraft version Lune builds for has in common (MultiBufferSource left in 26.2, and the
+        // camera accessor on GameRenderer was renamed in the same release).
+        NeoForge.EVENT_BUS.addListener((SubmitCustomGeometryEvent event) ->
+                WorldActionOverlay.render(event.getPoseStack(), event.getLevelRenderState(),
+                        event.getSubmitNodeCollector()));
+
+        NeoForge.EVENT_BUS.addListener((RegisterClientCommandsEvent event) ->
+                event.getDispatcher().register(LuneChatCommand.build(LuneChatCommand.VANILLA)));
 
         NeoForge.EVENT_BUS.addListener(LuneNeoForgeClient::replaceTestWorldButton);
     }
@@ -66,8 +73,8 @@ public class LuneNeoForgeClient {
         event.removeListener(testWorldButton);
         Button survivalWorldButton = Button.builder(testWorldButton.getMessage(), button -> {
                     Minecraft minecraft = Minecraft.getInstance();
-                    CreateWorldScreen.openFresh(minecraft, () -> minecraft.setScreen(titleScreen));
-                    if (minecraft.screen instanceof CreateWorldScreen createWorldScreen) {
+                    CreateWorldScreen.openFresh(minecraft, () -> Screens.open(minecraft, titleScreen));
+                    if (Screens.current(minecraft) instanceof CreateWorldScreen createWorldScreen) {
                         createWorldScreen.getUiState().setGameMode(WorldCreationUiState.SelectedGameMode.SURVIVAL);
                         createWorldScreen.getUiState().setAllowCommands(true);
                     }

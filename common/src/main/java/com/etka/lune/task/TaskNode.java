@@ -147,6 +147,14 @@ public final class TaskNode {
     public Integer editorX;
     public Integer editorY;
 
+    /**
+     * Whether a run stops when it reaches this card.
+     *
+     * <p>Read by {@link TaskDebug} on arrival, and by nothing else: the card still does exactly its
+     * own job, and a breakpoint on it changes when that job starts rather than what it is.</p>
+     */
+    public boolean breakpoint;
+
     public TaskNode() {}
 
     public TaskNode(String commandId) {
@@ -198,6 +206,8 @@ public final class TaskNode {
         copy.alwaysIntervalSeconds = alwaysIntervalSeconds;
         copy.editorX = editorX;
         copy.editorY = editorY;
+        // Not the breakpoint. A fresh id means a card the player has not looked at yet, and a
+        // stop they never asked for is the worst kind: it is on a card they did not place it on.
         return copy;
     }
 

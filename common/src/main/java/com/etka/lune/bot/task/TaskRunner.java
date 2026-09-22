@@ -11,6 +11,7 @@ import com.etka.lune.bot.WhileMonitor;
 import com.etka.lune.bot.command.CommandDef;
 import com.etka.lune.bot.command.CommandRegistry;
 import com.etka.lune.bot.util.InventoryHelper;
+import com.etka.lune.task.TaskDebug;
 import com.etka.lune.task.TaskGraph;
 import com.etka.lune.task.TaskDataLink;
 import com.etka.lune.task.TaskNode;
@@ -246,6 +247,9 @@ public final class TaskRunner implements Task {
         } else {
             node = nextSequentialNode(-1);
         }
+        // A hold belongs to a run, not to the player's breakpoints: starting again starts running.
+        TaskDebug.clear();
+        TaskDebug.arrive(node);
         iteration = 0;
         timerStarted = false;
         timerWaitTicks = 0;
@@ -263,6 +267,15 @@ public final class TaskRunner implements Task {
             status.set(startupError);
             markFailed();
             return TaskStatus.FAILED;
+        }
+        if (TaskDebug.holding()) {
+            // Nothing below is ticked, and the movement keys are dropped rather than left where
+            // the last tick put them - a bot stopped at a breakpoint that keeps walking has
+            // stopped in the only sense that does not help anybody watching it.
+            ctx.input.reset();
+            TaskNode held = graph.nodeById(TaskDebug.haltedNodeId());
+            status.set("lune.status.task_runner.held_at_card", nodeName(held));
+            return TaskStatus.RUNNING;
         }
         // Sampled before anything moves, so an Observer compares like with like: this is the
         // picture as the previous tick left it, and a change in it is a real transition.
@@ -517,6 +530,7 @@ public final class TaskRunner implements Task {
         node = null;
         wirePulses.clear();
         sourcePulses.clear();
+        TaskDebug.clear();
     }
 
     /** Follows an explicit edge, or falls through to the next node in the list when there is none. */
@@ -530,6 +544,7 @@ public final class TaskRunner implements Task {
             node = index < 0 ? null : nextSequentialNode(index);
         }
         wireFrom(from, targetId, kind, node);
+        TaskDebug.arrive(node);
     }
 
     private TaskNode nextSequentialNode(int afterIndex) {
@@ -839,6 +854,9 @@ public final class TaskRunner implements Task {
             this.origin = origin;
             this.originWire = originWire;
             this.node = start;
+            // A branch off Always is as much "where the run has got to" as the primary lane is, so
+            // a breakpoint on its first card holds exactly as one on the first card of START does.
+            TaskDebug.arrive(start);
         }
 
         private boolean periodic() {
@@ -870,6 +888,7 @@ public final class TaskRunner implements Task {
                 node = entryNode;
                 iteration = 0;
                 recordPulse(origin, originWire);
+                TaskDebug.arrive(node);
                 status.set("lune.status.task_runner.new_signal");
             }
             if (cooldown > 0) {
@@ -1151,6 +1170,7 @@ public final class TaskRunner implements Task {
                 node = index < 0 ? null : nextSequentialNode(index);
             }
             wireFrom(from, targetId, kind, node);
+            TaskDebug.arrive(node);
         }
 
         private void onStop(BotContext ctx) {

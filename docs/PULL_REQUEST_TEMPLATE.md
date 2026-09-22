@@ -60,8 +60,11 @@ Deliberately not reached: <!-- and which it does not, and why -->
      to do with picking targets. -->
 
 - [ ] Targets are filtered through `Vision` before the bot acts on them
-- [ ] `omniscientMining` / `omniscientHarvesting` still default to `false` and still
-      gate any see-through behaviour
+- [ ] See-through behaviour is still gated on `ctx.omniscientMining()` /
+      `ctx.omniscientHarvesting()`, which are off unless the session switched the
+      cheat on with `/lune omniscient`
+- [ ] No cheat was added to `BotConfig` or to the Config tab — a new one is a
+      constant in `Cheats.Mode` and two lines in `en_us.json`
 - [ ] When nothing visible is left, the task says so instead of falling back to
       hidden targets
 

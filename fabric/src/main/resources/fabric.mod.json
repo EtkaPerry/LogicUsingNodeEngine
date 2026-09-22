@@ -9,7 +9,8 @@
     "environment": "client",
     "entrypoints": {
         "main": [ "com.etka.lune.LuneFabric" ],
-        "client": [ "com.etka.lune.client.LuneFabricClient" ]
+        "client": [ "com.etka.lune.client.LuneFabricClient" ],
+        "journeymap": [ "com.etka.lune.waypoint.external.LuneJourneyMapPlugin" ]
     },
     "depends": {
         "fabricloader": ">=${fabric_loader_version}",

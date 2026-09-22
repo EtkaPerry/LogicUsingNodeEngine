@@ -1,5 +1,7 @@
 package com.etka.lune.bot.task;
 
+import java.util.Locale;
+
 /**
  * Optional preparation and safety behaviour for {@link KillTask}.
  *
@@ -54,7 +56,7 @@ public record KillOptions(
             if (value == null) {
                 return AUTO;
             }
-            return switch (value.trim().toLowerCase()) {
+            return switch (value.trim().toLowerCase(Locale.ROOT)) {
                 case "boat" -> BOAT;
                 case "two-block shelter", "two_block_shelter", "shelter" -> TWO_BLOCK_SHELTER;
                 case "direct melee", "direct", "melee" -> DIRECT;
@@ -75,7 +77,7 @@ public record KillOptions(
             if (value == null) {
                 return AUTO;
             }
-            return switch (value.trim().toLowerCase()) {
+            return switch (value.trim().toLowerCase(Locale.ROOT)) {
                 case "sword" -> SWORD;
                 case "axe" -> AXE;
                 case "bow" -> BOW;

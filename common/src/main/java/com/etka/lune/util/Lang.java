@@ -3,7 +3,6 @@ package com.etka.lune.util;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import net.minecraft.client.resources.language.I18n;
 import net.minecraft.locale.Language;
 
 import java.io.InputStream;
@@ -222,7 +221,7 @@ public final class Lang {
             }
         }
         try {
-            if (I18n.exists(key)) {
+            if (Language.getInstance().has(key)) {
                 // I18n.get formats immediately. Calling it without arguments turns a valid "%s"
                 // line into Minecraft's "Format error: ..." text before get() can fill it.
                 return Language.getInstance().getOrDefault(key);

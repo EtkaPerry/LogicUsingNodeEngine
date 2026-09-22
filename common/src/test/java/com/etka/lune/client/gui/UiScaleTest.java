@@ -57,4 +57,39 @@ class UiScaleTest {
             assertTrue(UiScale.menuScale(gameScale, 1920, 1080, AUTO) >= 1);
         }
     }
+
+    /**
+     * The text size gets the last word over the layout.
+     *
+     * <p>Everything before it is the panels arguing about how much room they would like. This is
+     * somebody saying they cannot read it, which outranks the argument - so a positive step is
+     * allowed to push the layout back below the size it asked for.</p>
+     */
+    @Test
+    void theTextSizeStepMovesTheFittedScale() {
+        int fitted = UiScale.menuScale(4, 1920, 1080, AUTO);
+        assertEquals(3, fitted);
+        assertEquals(fitted - 1, UiScale.menuScale(4, 1920, 1080, AUTO, -1));
+        assertEquals(fitted + 1, UiScale.menuScale(4, 1920, 1080, AUTO, 1));
+    }
+
+    /** Never past the player's own scale, however large a step they asked for. */
+    @Test
+    void theTextSizeStepStopsAtTheGameScale() {
+        assertEquals(4, UiScale.menuScale(4, 1920, 1080, AUTO, 2));
+        assertEquals(4, UiScale.menuScale(4, 1920, 1080, BotConfig.LUNE_UI_MATCH_GAME, 2));
+        for (int step = -3; step <= 3; step++) {
+            int scale = UiScale.menuScale(4, 1920, 1080, AUTO, step);
+            assertTrue(scale >= 1 && scale <= 4, "step " + step + " gave scale " + scale);
+        }
+    }
+
+    /** A step of zero is the behaviour every existing caller already had. */
+    @Test
+    void noStepIsTheOldAnswer() {
+        for (int gameScale = 1; gameScale <= 10; gameScale++) {
+            assertEquals(UiScale.menuScale(gameScale, 1920, 1080, AUTO),
+                    UiScale.menuScale(gameScale, 1920, 1080, AUTO, 0));
+        }
+    }
 }

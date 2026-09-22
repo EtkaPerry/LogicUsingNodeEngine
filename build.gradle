@@ -2,7 +2,10 @@ plugins {
     // https://maven.fabricmc.net/fabric-loom/fabric-loom.gradle.plugin/maven-metadata.xml
     id 'net.fabricmc.fabric-loom' version '1.16.3' apply false
     // https://projects.neoforged.net/neoforged/moddevgradle
-    id 'net.neoforged.moddev' version '2.0.141' apply false
+    // 2.0.147 is the floor for the 26.2 and 26.3 targets: under 2.0.141 the NeoForm runtime cannot
+    // recompile NeoForge-patched 26.2+ ("HolderSet$1.contents() attempting to assign weaker access
+    // privileges"), which fails :neoforge:createMinecraftArtifacts before Lune compiles at all.
+    id 'net.neoforged.moddev' version '2.0.147' apply false
     // https://plugins.gradle.org/plugin/net.minecraftforge.gradle
     // Pinned below 7.0.35: that release contains ForgeGradle PR #1084 (2026-08-21), which reworked
     // the SlimeLauncher metadata task and broke runClient with "Querying the mapped value of

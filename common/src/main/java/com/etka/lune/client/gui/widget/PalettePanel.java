@@ -13,9 +13,11 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -126,7 +128,11 @@ public class PalettePanel extends AbstractWidget {
     private void rebuild() {
         sections.clear();
         Map<String, List<Item>> grouped = new LinkedHashMap<>();
-        for (CommandDef def : CommandRegistry.all()) {
+        // available(), not all(): the cards that drive another mod are not offered when that mod
+        // is not installed, because a Deposit to Backpack in a pack with no backpack mod is a card
+        // that can do nothing but fail. A task built elsewhere still opens with its card intact -
+        // the canvas looks the node up by id, and that does not filter.
+        for (CommandDef def : CommandRegistry.available()) {
             grouped.computeIfAbsent(CommandRegistry.categoryFor(def.id()), ignored -> new ArrayList<>())
                     .add(new Command(def.id(), def.name(), def.description()));
         }
@@ -137,11 +143,15 @@ public class PalettePanel extends AbstractWidget {
 
         for (String name : List.of("General", "Movement", "Gathering", "Logic & Conditions", "Mining & Building",
                 "Combat", "Items & Storage", "Tasks & Missions", "Other")) {
-            // Taken out of the map either way. The General folder is written by hand below, and
-            // the registry's own General entries are the same three cards - leaving them behind
-            // meant the leftovers loop added a second folder with the same name.
+            // Taken out of the map either way, or the leftovers loop below adds a second folder
+            // with the same name. General is written by hand because its pulse nodes are not
+            // registry commands at all - but anything else the registry files under General is
+            // appended to it rather than dropped. Dropping the lot used to be safe, on the
+            // grounds that the registry's General entries "are the same three cards"; the first
+            // card that was not one of those three registered fine, translated fine, and could
+            // not be found in the palette or by searching for it.
             List<Item> fromRegistry = grouped.remove(name);
-            List<Item> groupedItems = "General".equals(name)
+            List<Item> handWritten = "General".equals(name)
                     ? List.<Item>of(
                     new General(TaskNode.START_COMMAND, Lang.get("lune.gui.tasks.start"),
                             Lang.get("lune.gui.palette.explicit_task_entry_connect_first_action")),
@@ -157,7 +167,9 @@ public class PalettePanel extends AbstractWidget {
                             Lang.get("lune.gui.palette.send_one_manual_pulse_from_editor")),
                     new General(TaskNode.END_COMMAND, Lang.get("lune.gui.palette.end"),
                             Lang.get("lune.gui.palette.consume_pulse_finish_circuit")))
-                    : fromRegistry;
+                    : null;
+            List<Item> groupedItems = handWritten == null ? fromRegistry
+                    : withRegistryExtras(handWritten, fromRegistry);
             if (groupedItems != null && !groupedItems.isEmpty()) {
                 sections.add(new Section(name, groupedItems));
             }
@@ -184,7 +196,10 @@ public class PalettePanel extends AbstractWidget {
     }
 
     public void setFilter(String value) {
-        filter = value == null ? "" : value.trim().toLowerCase();
+        // Locale.ROOT, not the platform default: Turkish lower-cases I to a dotless ı, so a bare
+        // toLowerCase makes typing "i" stop matching a card labelled with "I" - on exactly the
+        // locale this mod ships a translation for.
+        filter = value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
         scroll = 0;
         applyFilter();
     }
@@ -248,13 +263,47 @@ public class PalettePanel extends AbstractWidget {
         return null;
     }
 
+    /**
+     * A hand-written folder, followed by whatever else the registry filed under it.
+     *
+     * <p>The three pulse cards the General folder writes out by hand - End, Observer, Button - are
+     * in the registry too, so they are matched by id and not added twice. Everything else is
+     * appended, which is what keeps a new card from vanishing because somebody gave it a category
+     * that happened to be spoken for.</p>
+     */
+    static List<Item> withRegistryExtras(List<Item> handWritten, List<Item> fromRegistry) {
+        if (fromRegistry == null || fromRegistry.isEmpty()) {
+            return handWritten;
+        }
+        Set<String> already = new HashSet<>();
+        for (Item item : handWritten) {
+            already.add(itemId(item));
+        }
+        List<Item> all = new ArrayList<>(handWritten);
+        for (Item item : fromRegistry) {
+            if (!already.contains(itemId(item))) {
+                all.add(item);
+            }
+        }
+        return all;
+    }
+
+    static String itemId(Item item) {
+        return switch (item) {
+            case Command command -> command.id();
+            case General general -> general.id();
+            case Blueprint blueprint -> blueprint.name();
+            default -> "";
+        };
+    }
+
     private boolean matches(Item item) {
         String label = item instanceof Command c
                 ? c.name() + " " + c.id() + " " + c.description()
                 : item instanceof General g
                 ? g.name() + " " + g.id() + " " + g.description()
                 : ((Blueprint) item).name();
-        return label.toLowerCase().contains(filter);
+        return label.toLowerCase(java.util.Locale.ROOT).contains(filter);
     }
 
     /**

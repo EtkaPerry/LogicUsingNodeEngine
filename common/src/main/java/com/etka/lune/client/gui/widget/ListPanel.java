@@ -2,10 +2,12 @@ package com.etka.lune.client.gui.widget;
 
 import com.etka.lune.util.Lang;
 import com.etka.lune.client.gui.LuneScreen;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
@@ -14,6 +16,7 @@ import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 /**
  * A scrollable, single-selection list.
@@ -22,6 +25,17 @@ import java.util.function.Predicate;
  * because vanilla's list wants one widget per entry and owns its own layout, which fights the
  * fixed two-pane arrangement here. This draws rows directly and clips by simply not drawing rows
  * that fall outside its bounds, so it needs no scissor handling.
+ *
+ * <h2>Reaching it without a mouse</h2>
+ *
+ * <p>Drawing rows rather than making them widgets is what costs this list its keyboard, so it has
+ * to grow one by hand. Tab reaches the list; the arrows move the selection inside it, scrolling to
+ * follow; Enter runs the row's first available action, which on the dashboard is Start. Without
+ * that, the panel's whole reason for existing - pressing Start - was a thing only a pointer could
+ * do, and the row actions were 14px cells you had to hover to discover.
+ *
+ * <p>The narration says the row and what can be done to it, because a name on its own tells a
+ * screen reader user that something is selected and nothing about what that buys them.</p>
  *
  * @param <T> the row model type
  */
@@ -101,6 +115,11 @@ public class ListPanel<T> extends AbstractWidget {
         var text = extractor.textRenderer();
         // Rebuilt each frame from whichever row is under the pointer; see the trimmed labels below.
         setTooltip(null);
+        // Where the keyboard is. Without it, tabbing to the list moves the focus somewhere the
+        // player cannot see, which is the same as it having gone nowhere.
+        if (isFocused()) {
+            extractor.outline(getX(), getY(), getWidth(), getHeight(), LuneScreen.ACCENT);
+        }
 
         for (int row = 0; row < visible; row++) {
             int index = scrollRows + row;
@@ -190,12 +209,94 @@ public class ListPanel<T> extends AbstractWidget {
         return true;
     }
 
+    /**
+     * Arrows move the selection, Enter runs the row's first available action.
+     *
+     * <p>First rather than a chosen one: the actions are written most-useful-first, so Enter on a
+     * saved task starts it and Enter on one already running pauses it - which is what the two
+     * leading actions are in both cases. A row whose actions are all unavailable does nothing
+     * rather than guessing.</p>
+     */
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        if (items.isEmpty()) {
+            return false;
+        }
+        int key = event.key();
+        if (key == InputConstants.KEY_DOWN || key == InputConstants.KEY_UP) {
+            move(key == InputConstants.KEY_DOWN ? 1 : -1);
+            return true;
+        }
+        if (key == InputConstants.KEY_HOME || key == InputConstants.KEY_END) {
+            selected = items.get(key == InputConstants.KEY_HOME ? 0 : items.size() - 1);
+            onSelect.accept(selected);
+            revealSelected();
+            return true;
+        }
+        if (key == InputConstants.KEY_RETURN || key == InputConstants.KEY_NUMPADENTER) {
+            return runFirstAction();
+        }
+        return super.keyPressed(event);
+    }
+
+    private void move(int delta) {
+        int at = selected == null ? -1 : items.indexOf(selected);
+        // No selection yet: down lands on the first row and up on the last, so one key press from
+        // focusing the list always puts you somewhere.
+        int next = at < 0 ? (delta > 0 ? 0 : items.size() - 1) : Math.clamp(at + delta, 0, items.size() - 1);
+        selected = items.get(next);
+        onSelect.accept(selected);
+        revealSelected();
+    }
+
+    /** Scrolls the least amount that brings the selected row inside the visible window. */
+    private void revealSelected() {
+        int at = selected == null ? -1 : items.indexOf(selected);
+        if (at < 0) {
+            return;
+        }
+        int visible = visibleRows();
+        if (at < scrollRows) {
+            scrollRows = at;
+        } else if (at >= scrollRows + visible) {
+            scrollRows = at - visible + 1;
+        }
+        clampScroll();
+    }
+
+    private boolean runFirstAction() {
+        if (selected == null) {
+            return false;
+        }
+        for (RowAction<T> action : visibleActions(selected)) {
+            if (action.enabled().test(selected)) {
+                action.handler().accept(selected);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * What the list is and what Enter would do, rather than only which row is selected.
+     *
+     * <p>A name on its own tells somebody that a thing is selected; it does not tell them the row
+     * can be started, renamed or opened, which is the part they cannot see.</p>
+     */
     @Override
     protected void updateWidgetNarration(NarrationElementOutput output) {
-        if (selected != null) {
-            output.add(net.minecraft.client.gui.narration.NarratedElementType.TITLE,
-                    Component.literal(labeller.apply(selected)));
+        if (selected == null) {
+            return;
         }
+        List<RowAction<T>> available = visibleActions(selected).stream()
+                .filter(action -> action.enabled().test(selected))
+                .toList();
+        String actions = available.isEmpty()
+                ? Lang.get("lune.gui.list.no_actions")
+                : available.stream().map(RowAction::label).collect(Collectors.joining(", "));
+        output.add(net.minecraft.client.gui.narration.NarratedElementType.TITLE,
+                Component.literal(Lang.get("lune.gui.list.keyboard_hint",
+                        labeller.apply(selected), actions)));
     }
 
     private int actionStart(int actionCount) {

@@ -77,6 +77,54 @@ class SoulAnimationTest {
     }
 
     @Test
+    void poolSinksToALowerPoolInsteadOfBeingEatenFromBelow() {
+        SoulAnimation soul = new SoulAnimation();
+        soul.layers(MascotAdvisor.Mood.WORKING, 0L);
+        soul.layers(MascotAdvisor.Mood.PAUSED, 1_000L);
+
+        List<SoulAnimation.Layer> halfway =
+                soul.layers(MascotAdvisor.Mood.PAUSED, 1_000L + SoulAnimation.WIPE_MILLIS / 2);
+        SoulAnimation.Layer old = halfway.get(0);
+        SoulAnimation.Layer fresh = halfway.get(1);
+        assertEquals(SoulAnimation.ROW_WORKING, old.row());
+        assertEquals(0.5f, old.from(), 0.01f);
+        assertEquals(1f, old.to());
+        assertEquals(SoulAnimation.ROW_PAUSED, fresh.row());
+        assertEquals(0f, fresh.from());
+        assertEquals(0.5f, fresh.to(), 0.01f);
+    }
+
+    @Test
+    void poolClimbsToAHigherPool() {
+        SoulAnimation soul = new SoulAnimation();
+        soul.layers(MascotAdvisor.Mood.PAUSED, 0L);
+        soul.layers(MascotAdvisor.Mood.WORKING, 1_000L);
+
+        List<SoulAnimation.Layer> halfway =
+                soul.layers(MascotAdvisor.Mood.WORKING, 1_000L + SoulAnimation.WIPE_MILLIS / 2);
+        SoulAnimation.Layer old = halfway.get(0);
+        SoulAnimation.Layer fresh = halfway.get(1);
+        assertEquals(SoulAnimation.ROW_PAUSED, old.row());
+        assertEquals(0f, old.from());
+        assertEquals(0.5f, old.to(), 0.01f);
+        assertEquals(SoulAnimation.ROW_WORKING, fresh.row());
+        assertEquals(0.5f, fresh.from(), 0.01f);
+        assertEquals(1f, fresh.to());
+    }
+
+    @Test
+    void everyPoolHasASurfaceInsideTheCell() {
+        for (int row = 0; row < SoulAnimation.ROWS; row++) {
+            if (SoulAnimation.pool(row)) {
+                int surface = SoulAnimation.surface(row);
+                assertTrue(surface > 0 && surface < 96, "row " + row + " surface " + surface);
+            }
+        }
+        assertTrue(SoulAnimation.surface(SoulAnimation.ROW_PAUSED)
+                > SoulAnimation.surface(SoulAnimation.ROW_WORKING));
+    }
+
+    @Test
     void aMoodChangeMidWipeStartsFromTheFormOnScreen() {
         SoulAnimation soul = new SoulAnimation();
         soul.layers(MascotAdvisor.Mood.IDLE, 0L);

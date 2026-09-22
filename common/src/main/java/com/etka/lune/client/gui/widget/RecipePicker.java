@@ -1,10 +1,12 @@
 package com.etka.lune.client.gui.widget;
 
+import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.catalog.CraftPattern;
 import com.etka.lune.bot.catalog.CraftRecipe;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.UiScale;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -22,7 +24,6 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -256,7 +257,7 @@ public class RecipePicker extends AbstractWidget {
         Font font = mc.font;
         Layout layout = layout();
 
-        extractor.fill(0, 0, mc.screen.width, mc.screen.height, DIM);
+        extractor.fill(0, 0, Screens.current(mc).width, Screens.current(mc).height, DIM);
         LuneScreen.panel(extractor, layout.popupX(), layout.popupY(), layout.popupW(), layout.popupH());
 
         var text = extractor.textRenderer();
@@ -461,8 +462,8 @@ public class RecipePicker extends AbstractWidget {
 
     private Layout layout() {
         Minecraft mc = Minecraft.getInstance();
-        int screenW = mc.screen.width;
-        int screenH = mc.screen.height;
+        int screenW = Screens.current(mc).width;
+        int screenH = Screens.current(mc).height;
         int popupW = Math.min(screenW - 20, (int) (screenW * 0.8));
         int popupH = Math.min(screenH - 20, (int) (screenH * 0.8));
         int popupX = (screenW - popupW) / 2;
@@ -554,7 +555,7 @@ public class RecipePicker extends AbstractWidget {
             int size = pattern.size();
             int row = cell / size;
             int column = cell % size;
-            if (button == GLFW.GLFW_MOUSE_BUTTON_RIGHT) {
+            if (button == InputConstants.MOUSE_BUTTON_RIGHT) {
                 working = working.withPattern(pattern.withCell(row, column, null));
                 return;
             }
@@ -575,7 +576,7 @@ public class RecipePicker extends AbstractWidget {
         int index = entryAt(layout, mouseX, mouseY);
         if (index >= 0) {
             Item picked = shown.get(index).item();
-            if (drawing && button == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+            if (drawing && button == InputConstants.MOUSE_BUTTON_LEFT) {
                 // Held rather than chosen: releasing over a cell drops it there, releasing over
                 // the catalog picks it up the way a plain click always did.
                 dragItem = picked;
@@ -734,14 +735,14 @@ public class RecipePicker extends AbstractWidget {
             return;
         }
         switch (keyCode) {
-            case GLFW.GLFW_KEY_BACKSPACE -> {
+            case InputConstants.KEY_BACKSPACE -> {
                 if (!filter.isEmpty()) {
                     setFilter(filter.substring(0, filter.length() - 1));
                 }
             }
-            case GLFW.GLFW_KEY_DELETE -> setFilter("");
-            case GLFW.GLFW_KEY_ESCAPE -> close(false);
-            case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> close(purpose == Purpose.RECIPE);
+            case InputConstants.KEY_DELETE -> setFilter("");
+            case InputConstants.KEY_ESCAPE -> close(false);
+            case InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER -> close(purpose == Purpose.RECIPE);
         }
     }
 
