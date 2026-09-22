@@ -26,6 +26,8 @@ permissions:
   contents: write
 
 env:
+  # Modrinth channel for every version this publishes: release, beta or alpha.
+  RELEASE_CHANNEL: alpha
   # The publish job has no checkout, so gh has no remote to infer this from.
   GH_REPO: ${{ github.repository }}
   MODRINTH_PROJECT: logicusingnodeengine
@@ -64,14 +66,12 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "mod_id=$mod_id" >> "$GITHUB_OUTPUT"
 
-          lower=$(printf '%s' "$version" | LC_ALL=C tr 'A-Z' 'a-z')
-          case "$lower" in
-            *alpha*|*snapshot*) channel=alpha ;;
-            *beta*|*rc*|*pre*)  channel=beta ;;
-            *)                  channel=release ;;
+          case "$RELEASE_CHANNEL" in
+            release|beta|alpha) ;;
+            *) echo "::error::RELEASE_CHANNEL is '$RELEASE_CHANNEL'; Modrinth takes release, beta or alpha."; exit 1 ;;
           esac
-          echo "channel=$channel" >> "$GITHUB_OUTPUT"
-          echo "Version $version, channel $channel."
+          echo "channel=$RELEASE_CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "Version $version, Modrinth channel $RELEASE_CHANNEL."
 
           # Compared against the commit the branch was on before this push, not
           # HEAD^: a push can carry several commits and the bump is not always
@@ -330,17 +330,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          prerelease=""
-          if [ "$CHANNEL" != "release" ]; then prerelease="--prerelease"; fi
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             echo "Release v$VERSION exists; uploading the jars into it."
             gh release upload "v$VERSION" jars/*.jar --clobber
           else
-            # shellcheck disable=SC2086
             gh release create "v$VERSION" jars/*.jar \
               --title "Lune $VERSION" \
               --generate-notes \
-              --latest $prerelease
+              --latest
           fi
 
       - name: Upload to Modrinth
@@ -357,10 +354,12 @@ jobs:
           changelog=$(printf '%s\n\n---\nAll downloads and the full notes: https://github.com/%s/releases/tag/v%s\n' \
             "$notes" "$GH_REPO" "$VERSION")
 
-          # Skipping what is already up makes a re-run finish a partial upload.
+          # Keyed on the jar name rather than the version number: every version
+          # here carries the same number, and Modrinth does not require it to
+          # be unique. Skipping what is already up finishes a partial upload.
           existing=$(curl -sS --fail-with-body \
             -H "Authorization: $MODRINTH_TOKEN" -H "User-Agent: $MODRINTH_UA" \
-            "https://api.modrinth.com/v2/project/$PROJECT_ID/version" | jq -r '.[].version_number')
+            "https://api.modrinth.com/v2/project/$PROJECT_ID/version" | jq -r '.[].files[].filename')
 
           uploaded=0
           skipped=0
@@ -368,10 +367,9 @@ jobs:
             mc=$(printf '%s' "$row" | jq -r '.mc')
             loader=$(printf '%s' "$row" | jq -r '.loader')
             file=$(printf '%s' "$row" | jq -r '.file')
-            number="$VERSION+$mc-$loader"
 
-            if printf '%s\n' "$existing" | grep -qxF "$number"; then
-              echo "  skip  $number (already on Modrinth)"
+            if printf '%s\n' "$existing" | grep -qxF "$file"; then
+              echo "  skip  $file (already on Modrinth)"
               skipped=$((skipped + 1))
               continue
             fi
@@ -384,7 +382,7 @@ jobs:
 
             data=$(jq -n -c \
               --arg name "Lune $VERSION for Minecraft $mc ($loader)" \
-              --arg number "$number" \
+              --arg number "$VERSION" \
               --arg changelog "$changelog" \
               --arg project "$PROJECT_ID" \
               --arg mc "$mc" \
@@ -407,10 +405,10 @@ jobs:
               -F "data=</tmp/modrinth-version.json;type=application/json" \
               -F "$file=@jars/$file;type=application/java-archive" \
               "https://api.modrinth.com/v2/version") || {
-                echo "::error::Modrinth rejected $number: $response"
+                echo "::error::Modrinth rejected $file: $response"
                 exit 1
               }
-            echo "  up    $number -> $(printf '%s' "$response" | jq -r '.id')"
+            echo "  up    $file -> $(printf '%s' "$response" | jq -r '.id')"
             uploaded=$((uploaded + 1))
           done < <(printf '%s' "$MANIFEST" | jq -c '.[]')
 
