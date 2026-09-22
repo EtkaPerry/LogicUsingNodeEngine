@@ -76,15 +76,13 @@ jobs:
       targets: ${{ steps.targets.outputs.targets }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          # HEAD and its parent: enough to see whether version= moved.
-          fetch-depth: 2
 
       - name: Decide whether to release
         id: decide
         env:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+          BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
 
@@ -114,20 +112,33 @@ jobs:
           echo "Version $version, channel $channel."
 
           # -- did the version actually move? ---------------------------------
-          # A manual run is taken at its word. A push is compared against its
-          # parent commit, which is the previous state of the tree.
+          # A manual run is taken at its word. A push is compared against the
+          # commit the branch was on *before* it, not against HEAD^: a push can
+          # carry more than one commit and the bump is not always the last of
+          # them, which silently skips the release. Read through the API so the
+          # comparison needs no extra history fetched, and so it still works
+          # when the previous head is no longer on a branch.
+          zero=0000000000000000000000000000000000000000
+          was=""
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "Manual run."
-          elif previous=$(git show 'HEAD^:gradle.properties' 2>/dev/null); then
-            was=$(printf '%s\n' "$previous" | sed -n 's/^version=//p' | head -n 1 | tr -d '\r')
-            if [ "$was" = "$version" ]; then
+          else
+            if [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "$zero" ]; then
+              was=$(gh api "repos/$GH_REPO/contents/gradle.properties?ref=$BEFORE" \
+                      --jq '.content' 2>/dev/null | base64 -d 2>/dev/null |
+                    sed -n 's/^version=//p' | head -n 1 | tr -d '\r') || was=""
+            fi
+            if [ -z "$was" ]; then
+              # A brand new branch, or a previous head GitHub will not serve.
+              # The already-released guard below is what stops a repeat.
+              echo "Nothing to compare $version against; leaving it to the release guard."
+            elif [ "$was" = "$version" ]; then
               echo "gradle.properties changed but version is still $version. Nothing to release."
               echo "release=false" >> "$GITHUB_OUTPUT"
               exit 0
+            else
+              echo "Version moved: $was -> $version."
             fi
-            echo "Version moved: ${was:-<none>} -> $version."
-          else
-            echo "No parent commit to compare against; treating $version as new."
           fi
 
           # -- has it been released already? ----------------------------------
