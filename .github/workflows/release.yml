@@ -1,0 +1,520 @@
+name: Release
+
+# ---------------------------------------------------------------------------
+#  Lune - build and publish.
+#
+#  Fires when the version= line in gradle.properties changes on main, builds
+#  every Minecraft target under gradle/versions for every loader that target
+#  has, then attaches the jars to a GitHub release and uploads them to
+#  Modrinth.
+#
+#  Nothing here lists the Minecraft versions or the loaders. Both are read
+#  from gradle/versions/*.properties at run time, the same way settings.gradle
+#  reads them: one file per Minecraft version, and an empty forge_version means
+#  Forge has no build for it yet and the :forge module is not part of that
+#  target. Adding a Minecraft version stays one new file there.
+#
+#  Needs secrets.MODRINTH_TOKEN, a Modrinth PAT with the "Create versions",
+#  "Read versions" and "Read projects" scopes. Everything else uses the
+#  automatic GITHUB_TOKEN.
+# ---------------------------------------------------------------------------
+
+on:
+  push:
+    branches: [main]
+    # A push that does not touch gradle.properties cannot have changed the
+    # version, so it does not need to start a run at all.
+    paths:
+      - gradle.properties
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build every target, check the Modrinth token, publish nothing
+        type: boolean
+        required: false
+        default: true
+      force:
+        description: Publish even when a release for this version already exists
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create the tag and the GitHub release
+
+env:
+  # gh works out which repository it is talking to from the git remote, and the
+  # publish job has no checkout - it only needs the build artifacts. Naming the
+  # repository here is what stops it from looking for a .git that is not there.
+  GH_REPO: ${{ github.repository }}
+  # The project URL's slug works here; the project id (Modrinth -> Settings ->
+  # General) is stabler, because a slug can be renamed out from under this.
+  # Either one is resolved to the id before anything is uploaded.
+  MODRINTH_PROJECT: logicusingnodeengine
+  # Modrinth asks every API client to identify itself.
+  MODRINTH_UA: "EtkaPerry/LogicUsingNodeEngine (github-actions release)"
+  # Fabric API, which fabric.mod.json declares as a hard dependency. Declaring
+  # it on the Modrinth version too is what makes launchers and modpacks pull it
+  # in instead of handing the player a crash on first load.
+  FABRIC_API_PROJECT: P7dR8mSH
+
+jobs:
+  # =========================================================================
+  #  Decide whether this push is a release, and work out what to build.
+  # =========================================================================
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.decide.outputs.release }}
+      version: ${{ steps.decide.outputs.version }}
+      mod_id: ${{ steps.decide.outputs.mod_id }}
+      channel: ${{ steps.decide.outputs.channel }}
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # HEAD and its parent: enough to see whether version= moved.
+          fetch-depth: 2
+
+      - name: Decide whether to release
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+        run: |
+          set -euo pipefail
+
+          # gradle.properties holds version, mod_name, java_version and a dozen
+          # more, so every read is anchored at the start of the line.
+          prop() { sed -n "s/^$1=//p" gradle.properties | head -n 1 | tr -d '\r'; }
+
+          version=$(prop version)
+          mod_id=$(prop mod_id)
+          if [ -z "$version" ] || [ -z "$mod_id" ]; then
+            echo "::error::Could not read version / mod_id from gradle.properties"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "mod_id=$mod_id" >> "$GITHUB_OUTPUT"
+
+          # Release channel from the version string itself, so a 0.5.4-beta1 is
+          # not offered to everyone as a stable build. LC_ALL=C because this
+          # only ever has to fold ASCII and a locale-aware fold is a trap.
+          lower=$(printf '%s' "$version" | LC_ALL=C tr 'A-Z' 'a-z')
+          case "$lower" in
+            *alpha*|*snapshot*) channel=alpha ;;
+            *beta*|*rc*|*pre*)  channel=beta ;;
+            *)                  channel=release ;;
+          esac
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "Version $version, channel $channel."
+
+          # -- did the version actually move? ---------------------------------
+          # A manual run is taken at its word. A push is compared against its
+          # parent commit, which is the previous state of the tree.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual run."
+          elif previous=$(git show 'HEAD^:gradle.properties' 2>/dev/null); then
+            was=$(printf '%s\n' "$previous" | sed -n 's/^version=//p' | head -n 1 | tr -d '\r')
+            if [ "$was" = "$version" ]; then
+              echo "gradle.properties changed but version is still $version. Nothing to release."
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Version moved: ${was:-<none>} -> $version."
+          else
+            echo "No parent commit to compare against; treating $version as new."
+          fi
+
+          # -- has it been released already? ----------------------------------
+          # The guard that matters, because it also covers a re-run, a repeated
+          # push of the same commit and a hand-rolled retry.
+          if gh release view "v$version" >/dev/null 2>&1; then
+            if [ "$FORCE" = "true" ]; then
+              echo "::warning::Release v$version already exists; force was requested, continuing."
+            else
+              echo "Release v$version already exists. Nothing to do."
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
+      # Not gated on the decision above: a job whose strategy.matrix reads an
+      # empty output is a workflow-level error, not a skipped job.
+      - name: Find the Minecraft targets
+        id: targets
+        run: |
+          set -euo pipefail
+          targets=$(node -e '
+            const fs = require("fs");
+            const dir = "gradle/versions";
+            // latin1 on purpose: Gradle reads .properties as ISO-8859-1, so this
+            // reads them the same way the build does.
+            const read = (name) => fs.readFileSync(`${dir}/${name}`, "latin1");
+            const value = (text, key) => {
+              const m = text.match(new RegExp(`^${key}=(.*)$`, "m"));
+              return m ? m[1].trim() : "";
+            };
+            // A plain string sort puts 26.1.2 after 26.2 the moment a fourth
+            // digit appears, so each run of digits is padded before comparing.
+            const key = (s) => s.split(/[^0-9]+/).filter(Boolean)
+                                .map((n) => n.padStart(5, "0")).join(".");
+            const rows = fs.readdirSync(dir)
+              .filter((n) => n.endsWith(".properties"))
+              .map((name) => {
+                const text = read(name);
+                const mc = name.slice(0, -".properties".length);
+                const minecraft = value(text, "minecraft_version") || mc;
+                // Forge lags a Minecraft release. An empty forge_version means
+                // it has no build for this one yet and settings.gradle leaves
+                // the :forge module out of the target entirely.
+                const loaders = ["neoforge", "fabric"];
+                if (value(text, "forge_version")) loaders.push("forge");
+                return { mc, minecraft, loaders };
+              })
+              .sort((a, b) => key(a.mc).localeCompare(key(b.mc)));
+            if (rows.length === 0) throw new Error("No .properties files under gradle/versions");
+            process.stdout.write(JSON.stringify(rows));
+          ')
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "$targets" | node -e '
+            const rows = JSON.parse(require("fs").readFileSync(0, "utf8"));
+            for (const r of rows) console.log(`  ${r.mc}  ${r.loaders.join(" + ")}`);
+          '
+
+  # =========================================================================
+  #  One job per Minecraft version. Each builds every loader that target has.
+  # =========================================================================
+  build:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      # One broken target should still show what the others did, rather than
+      # cancelling them and leaving nothing to look at.
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.plan.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Gradle runs on 21 and compiles with 25. JAVA_HOME is the last entry
+      # listed, and ForgeGradle 7 is the reason it is the older one: Gradle
+      # itself is happy on 25, ForgeGradle is not a thing to find that out
+      # during a release. 25 is still the java_version toolchain the code is
+      # compiled against - forked javac, which is the whole point of toolchains.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            25
+            21
+
+      - name: Point Gradle at both JDKs
+        run: |
+          set -euo pipefail
+          # Gradle only auto-detects the JVM it is running on. setup-java exports
+          # JAVA_HOME_<major>_<arch> for each install; naming them here means the
+          # 25 toolchain is found instead of downloaded. foojay (settings.gradle)
+          # stays as the fallback for anything else a loader plugin asks for.
+          mkdir -p ~/.gradle
+          echo "org.gradle.java.installations.fromEnv=JAVA_HOME_25_X64,JAVA_HOME_21_X64" \
+            >> ~/.gradle/gradle.properties
+
+      - name: Cache Gradle and the decompiled Minecraft
+        uses: actions/cache@v4
+        with:
+          # Beyond the usual dependency cache: neoformruntime, fabric-loom,
+          # minecraft and minecraftforge each hold a decompiled Minecraft, which
+          # is the expensive part of a cold build by a wide margin.
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/caches/jars-*
+            ~/.gradle/caches/build-cache-1
+            ~/.gradle/caches/neoformruntime
+            ~/.gradle/caches/fabric-loom
+            ~/.gradle/caches/minecraft
+            ~/.gradle/caches/minecraftforge
+            ~/.gradle/wrapper/dists
+            ~/.gradle/jdks
+          key: gradle-mc${{ matrix.target.mc }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'gradle.properties', 'gradle/versions/*.properties', '**/*.gradle', 'build-logic/**') }}
+          restore-keys: |
+            gradle-mc${{ matrix.target.mc }}-
+
+      - name: Build Minecraft ${{ matrix.target.mc }}
+        env:
+          MC: ${{ matrix.target.mc }}
+        run: |
+          set -euo pipefail
+          # gradlew is committed non-executable, so it cannot just be run.
+          chmod +x ./gradlew
+          # luneRelease makes the shipped learned profile read-only and drops
+          # developer approval feedback; the checks below refuse to publish a
+          # jar that was built without it.
+          ./gradlew --no-daemon --stacktrace build -PluneRelease=true "-Pmc=$MC"
+
+      - name: Check the release marker and the bundled profile
+        env:
+          MC_VERSION: ${{ matrix.target.minecraft }}
+        run: |
+          set -euo pipefail
+          marker=common/build/resources/main/lune-build.properties
+          profile=common/build/resources/main/lune-learning.json
+
+          [ -f "$marker" ] || { echo "::error::Release marker is missing: $marker"; exit 1; }
+          grep -qx 'lune.release=true' "$marker" \
+            || { echo "::error::Release marker is not set to true: $marker"; exit 1; }
+          # The marker names the Minecraft version it was built for. Without this
+          # a marker left by another target would sail straight through.
+          grep -qx "lune.minecraft=$MC_VERSION" "$marker" \
+            || { echo "::error::Release marker was not built for Minecraft $MC_VERSION: $(cat "$marker")"; exit 1; }
+
+          [ -f "$profile" ] || { echo "::error::Bundled learning profile is missing: $profile"; exit 1; }
+          if grep -qE '"(approved|disapproved|automatic|totalAutomatic)[^"]*"[[:space:]]*:' "$profile"; then
+            echo "::error::Bundled release learning profile contains developer-only approval metadata"
+            exit 1
+          fi
+          echo "Release marker and bundled learning profile verified."
+
+      - name: Collect the loader jars
+        id: collect
+        env:
+          MOD_ID: ${{ needs.plan.outputs.mod_id }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          MC: ${{ matrix.target.mc }}
+          MC_VERSION: ${{ matrix.target.minecraft }}
+          LOADERS: ${{ join(matrix.target.loaders, ' ') }}
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+
+          # common/ builds a jar too, but it is the shared module rather than
+          # something a player installs, and the -sources / -javadoc jars are
+          # not shipped either. The archive name carries the Minecraft version
+          # (multiloader-common.gradle), so each loader has exactly one name to
+          # look for and a near miss is an error rather than a silent swap.
+          missing=""
+          rows="[]"
+          for loader in $LOADERS; do
+            file="$MOD_ID-$loader-$MC_VERSION-$VERSION.jar"
+            path="$loader/build/libs/$file"
+            if [ -f "$path" ]; then
+              cp "$path" "staging/$file"
+              rows=$(printf '%s' "$rows" | jq -c \
+                --arg mc "$MC_VERSION" --arg loader "$loader" --arg file "$file" \
+                '. + [{mc: $mc, loader: $loader, file: $file}]')
+              echo "  $file  ($(du -h "$path" | cut -f1))"
+            else
+              missing="$missing $loader"
+              echo "::error::No jar at $path"
+              ls -la "$loader/build/libs" 2>/dev/null || echo "  (no build/libs at all)"
+            fi
+          done
+
+          if [ -n "$missing" ]; then
+            echo "::error::Missing jars for:$missing"
+            exit 1
+          fi
+
+          # The publish job reads this instead of parsing filenames back apart.
+          printf '%s' "$rows" > "staging/manifest-$MC.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jars-${{ matrix.target.mc }}
+          path: staging/
+          if-no-files-found: error
+          retention-days: 14
+
+  # =========================================================================
+  #  Publish. One GitHub release with every jar, then one Modrinth version per
+  #  loader per Minecraft version.
+  # =========================================================================
+  publish:
+    needs: [plan, build]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      # A push is always for real. A manual run publishes nothing unless the
+      # dry_run box was cleared.
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      MOD_ID: ${{ needs.plan.outputs.mod_id }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: jars
+          pattern: jars-*
+          merge-multiple: true
+
+      - name: List what was built
+        id: inventory
+        run: |
+          set -euo pipefail
+          manifest=$(jq -s -c 'add | sort_by(.mc, .loader)' jars/manifest-*.json)
+          count=$(printf '%s' "$manifest" | jq 'length')
+          files=$(ls jars/*.jar | wc -l)
+          if [ "$count" -ne "$files" ]; then
+            echo "::error::$count jars in the manifests but $files on disk."
+            exit 1
+          fi
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Lune $VERSION ($CHANNEL)"
+            echo
+            echo "| Minecraft | Loader | File |"
+            echo "|---|---|---|"
+            printf '%s' "$manifest" | jq -r '.[] | "| \(.mc) | \(.loader) | \(.file) |"'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Done before anything is uploaded, so a bad token or a renamed slug
+      # fails while nothing has been published yet - and so a dry run proves
+      # the Modrinth side without touching it.
+      - name: Check the Modrinth project and token
+        id: modrinth
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MODRINTH_TOKEN:-}" ]; then
+            echo "::error::Secret MODRINTH_TOKEN is not set. Create a Modrinth PAT with the 'Create versions' scope and add it to this repository's secrets."
+            exit 1
+          fi
+          body=$(curl -sS --fail-with-body \
+            -H "Authorization: $MODRINTH_TOKEN" -H "User-Agent: $MODRINTH_UA" \
+            "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT") || {
+              echo "::error::Modrinth rejected the lookup of project '$MODRINTH_PROJECT': $body"
+              exit 1
+            }
+          id=$(printf '%s' "$body" | jq -r '.id')
+          echo "project_id=$id" >> "$GITHUB_OUTPUT"
+          echo "Modrinth project $(printf '%s' "$body" | jq -r '.title') ($id), status $(printf '%s' "$body" | jq -r '.status')."
+
+      - name: GitHub release
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prerelease=""
+          if [ "$CHANNEL" != "release" ]; then prerelease="--prerelease"; fi
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "Release v$VERSION exists; uploading the jars into it."
+            gh release upload "v$VERSION" jars/*.jar --clobber
+          else
+            # shellcheck disable=SC2086
+            gh release create "v$VERSION" jars/*.jar \
+              --title "Lune $VERSION" \
+              --generate-notes \
+              --latest $prerelease
+          fi
+
+      - name: Upload to Modrinth
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          PROJECT_ID: ${{ steps.modrinth.outputs.project_id }}
+          MANIFEST: ${{ steps.inventory.outputs.manifest }}
+        run: |
+          set -euo pipefail
+
+          notes=$(gh release view "v$VERSION" --json body --jq '.body' 2>/dev/null || true)
+          changelog=$(printf '%s\n\n---\nAll downloads and the full notes: https://github.com/%s/releases/tag/v%s\n' \
+            "$notes" "$GH_REPO" "$VERSION")
+
+          # Every version_number already on the project. A partial failure
+          # halfway through can then be fixed by re-running the job: what is
+          # already up is skipped and the rest goes.
+          existing=$(curl -sS --fail-with-body \
+            -H "Authorization: $MODRINTH_TOKEN" -H "User-Agent: $MODRINTH_UA" \
+            "https://api.modrinth.com/v2/project/$PROJECT_ID/version" | jq -r '.[].version_number')
+
+          uploaded=0
+          skipped=0
+          while read -r row; do
+            mc=$(printf '%s' "$row" | jq -r '.mc')
+            loader=$(printf '%s' "$row" | jq -r '.loader')
+            file=$(printf '%s' "$row" | jq -r '.file')
+            number="$VERSION+$mc-$loader"
+
+            if printf '%s\n' "$existing" | grep -qxF "$number"; then
+              echo "  skip  $number (already on Modrinth)"
+              skipped=$((skipped + 1))
+              continue
+            fi
+
+            # fabric.mod.json declares Fabric API as a hard dependency, so the
+            # Fabric jar says so here too. NeoForge and Forge need nothing.
+            # Spelled as an if rather than "test && assign": under set -e a
+            # trailing && whose test fails ends the step.
+            deps='[]'
+            if [ "$loader" = "fabric" ]; then
+              deps=$(jq -n -c --arg p "$FABRIC_API_PROJECT" \
+                '[{project_id: $p, dependency_type: "required"}]')
+            fi
+
+            data=$(jq -n -c \
+              --arg name "Lune $VERSION for Minecraft $mc ($loader)" \
+              --arg number "$number" \
+              --arg changelog "$changelog" \
+              --arg project "$PROJECT_ID" \
+              --arg mc "$mc" \
+              --arg loader "$loader" \
+              --arg channel "$CHANNEL" \
+              --arg file "$file" \
+              --argjson deps "$deps" \
+              '{
+                 name: $name, version_number: $number, changelog: $changelog,
+                 dependencies: $deps, game_versions: [$mc], version_type: $channel,
+                 loaders: [$loader], featured: false, status: "listed",
+                 project_id: $project, file_parts: [$file], primary_file: $file
+               }')
+
+            # data goes through a file, read back with -F "name=<path". Inlined
+            # as -F "data=$data" curl would treat a ';' anywhere in the JSON -
+            # the changelog is release notes, so there will be one - as the
+            # start of a content-type argument and truncate the field there.
+            printf '%s' "$data" > /tmp/modrinth-version.json
+            response=$(curl -sS --fail-with-body -X POST \
+              -H "Authorization: $MODRINTH_TOKEN" -H "User-Agent: $MODRINTH_UA" \
+              -F "data=</tmp/modrinth-version.json;type=application/json" \
+              -F "$file=@jars/$file;type=application/java-archive" \
+              "https://api.modrinth.com/v2/version") || {
+                echo "::error::Modrinth rejected $number: $response"
+                exit 1
+              }
+            echo "  up    $number -> $(printf '%s' "$response" | jq -r '.id')"
+            uploaded=$((uploaded + 1))
+          done < <(printf '%s' "$MANIFEST" | jq -c '.[]')
+
+          echo "Modrinth: $uploaded uploaded, $skipped already there."
+          echo "- Modrinth: $uploaded uploaded, $skipped already there" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dry run summary
+        if: env.DRY_RUN == 'true'
+        run: |
+          echo "Dry run: every target built, the Modrinth project and token check out, nothing was published."
+          echo "Re-run from the Actions tab with the dry_run box cleared to publish v$VERSION."
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Dry run** - nothing was published." >> "$GITHUB_STEP_SUMMARY"
+
+  # =========================================================================
+  #  A skipped run should say so on the run page rather than looking broken.
+  # =========================================================================
+  skipped:
+    needs: plan
+    if: needs.plan.outputs.release != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "No release: gradle.properties changed but the version did not, or v${{ needs.plan.outputs.version }} is already out."
+          echo "No release for this push (version unchanged, or already published)." >> "$GITHUB_STEP_SUMMARY"
