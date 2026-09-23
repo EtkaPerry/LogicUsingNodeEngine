@@ -57,8 +57,9 @@ public final class TaskSearch {
         }
         if (task.notes != null) {
             for (TaskNote note : task.notes) {
-                if (note != null && contains(note.text, needle)) {
-                    hits.add(new Hit(Kind.NOTE, note.id, firstLine(note.text), note.text,
+                if (note != null && contains(note.displayText(), needle)) {
+                    String words = note.displayText();
+                    hits.add(new Hit(Kind.NOTE, note.id, firstLine(words), words,
                             note.x + Math.max(TaskNote.MIN_WIDTH, note.width) / 2,
                             note.y + Math.max(TaskNote.MIN_HEIGHT, note.height) / 2));
                 }
@@ -66,8 +67,9 @@ public final class TaskSearch {
         }
         if (task.groups != null) {
             for (TaskGroup group : task.groups) {
-                if (group != null && contains(group.title, needle)) {
-                    hits.add(new Hit(Kind.GROUP, group.id, group.title, group.title,
+                if (group != null && contains(group.displayTitle(), needle)) {
+                    String title = group.displayTitle();
+                    hits.add(new Hit(Kind.GROUP, group.id, title, title,
                             group.x + Math.max(TaskGroup.MIN_WIDTH, group.width) / 2,
                             group.y + Math.max(TaskGroup.HEADER_HEIGHT, group.height) / 2));
                 }

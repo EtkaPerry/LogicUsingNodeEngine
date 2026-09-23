@@ -46,16 +46,16 @@ class SecretTasksTest {
     @Test
     void hiddenUntilUnlockedAndPreservesRenamedEditedCopiesAcrossSerialization() {
         List<TaskGraph> tasks = new ArrayList<>(DefaultTasks.create());
-        assertEquals(6, tasks.size());
+        int shelf = tasks.size();
         assertTrue(tasks.stream().noneMatch(task -> task.name.equals(SecretTasks.NAME)));
         TaskGraph main = SecretTasks.restoreInto(tasks);
-        assertEquals(8, tasks.size());
+        assertEquals(shelf + 2, tasks.size());
         main.name = "My renamed lab";
         main.nodeById("healthy").params.put("threshold", "2");
         Gson gson = new Gson();
         List<TaskGraph> restored = new ArrayList<>(List.of(gson.fromJson(gson.toJson(tasks), TaskGraph[].class)));
         TaskGraph again = SecretTasks.restoreInto(restored);
-        assertEquals(8, restored.size());
+        assertEquals(shelf + 2, restored.size());
         assertEquals("My renamed lab", again.name);
         assertEquals("2", again.nodeById("healthy").params.get("threshold"));
     }

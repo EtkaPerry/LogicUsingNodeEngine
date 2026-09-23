@@ -1,5 +1,7 @@
 package com.etka.lune.task;
 
+import com.etka.lune.util.Lang;
+
 import java.util.UUID;
 
 /**
@@ -34,6 +36,16 @@ public final class TaskNote {
     public String text = "";
 
     /**
+     * Which starter-job note this is, or null for one the player wrote.
+     *
+     * <p>The same bargain as {@link TaskGraph#seededId}. A note shipped with a starter job is drawn
+     * in the player's language, from {@code lune.task.note.} plus this id, and {@link #text} holds
+     * its English only as the fallback. The first edit makes the note the player's own, in the
+     * words they were reading when they started typing.</p>
+     */
+    public String seededId;
+
+    /**
      * Which of the editor's note colours this one wears.
      *
      * <p>An index rather than a pixel value, so a note keeps its meaning if the palette is ever
@@ -54,8 +66,29 @@ public final class TaskNote {
         copy.width = width;
         copy.height = height;
         copy.text = text;
+        copy.seededId = seededId;
         copy.colour = colour;
         return copy;
+    }
+
+    /** The words to draw: a starter note in the player's language, anything else as written. */
+    public String displayText() {
+        String own = text == null ? "" : text;
+        return seededId == null || seededId.isBlank() ? own
+                : Lang.getOr("lune.task.note." + seededId, own);
+    }
+
+    /**
+     * Makes a starter note the player's own, keeping the words they could see.
+     *
+     * <p>Called as editing begins. Leaving the id on would put their edit underneath a translation
+     * that then carried on being drawn over it.</p>
+     */
+    public void adopt() {
+        if (seededId != null) {
+            text = displayText();
+            seededId = null;
+        }
     }
 
     public int right() {

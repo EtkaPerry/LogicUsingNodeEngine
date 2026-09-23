@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /**
  * A named graph of {@link TaskNode}s - the user's own "go mine" or "harvest" job.
@@ -19,7 +20,7 @@ public final class TaskGraph {
 
     public String name = "New Task";
     /**
-     * Which starter job this is, for the six the mod ships with. Null for anything the player made.
+     * Which starter job this is, for the ones the mod ships with. Null for anything the player made.
      *
      * <p>The name cannot do this job. It is the task's identity on disk, what other tasks point at
      * from a Run Task card, and what {@code uniqueName} keeps distinct - so it has to stay the same
@@ -113,6 +114,31 @@ public final class TaskGraph {
             return name;
         }
         return Lang.getOr("lune.task.seeded." + seededId, name);
+    }
+
+    /**
+     * Whether this task belongs in the lists a player picks from, given which cards this game offers.
+     *
+     * <p>A starter job built on a card the palette will not offer - Find Structure without the
+     * Explorer's Compass mod - is not listed. It would be a job made of cards the player can find
+     * nowhere else, waiting on a mod they do not have. It is kept rather than deleted, so it is
+     * listed the moment the mod is installed; the same bargain the palette keeps for the cards
+     * themselves.</p>
+     *
+     * <p>The player's own tasks are always listed, whatever they hold. A task built in a modded pack
+     * still opens and explains itself in a vanilla one, and hiding somebody's work because a mod
+     * went missing would look exactly like losing it.</p>
+     */
+    public boolean isListed(Predicate<String> cardOffered) {
+        if (seededId == null || seededId.isBlank() || nodes == null) {
+            return true;
+        }
+        for (TaskNode node : nodes) {
+            if (node != null && node.commandId != null && !cardOffered.test(node.commandId)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public String describe() {

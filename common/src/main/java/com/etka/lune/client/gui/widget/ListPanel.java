@@ -19,7 +19,8 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
- * A scrollable, single-selection list.
+ * A scrollable list with one open row, and optionally more selected beside it
+ * ({@link #setMultiSelect}).
  * <p>
  * Written rather than reusing {@link net.minecraft.client.gui.components.ObjectSelectionList}
  * because vanilla's list wants one widget per entry and owns its own layout, which fights the
@@ -67,7 +68,9 @@ public class ListPanel<T> extends AbstractWidget {
     private final Consumer<T> onSelect;
     private List<RowAction<T>> actions = List.of();
 
-    private T selected;
+    private final ListSelection<T> selection = new ListSelection<>();
+    private boolean multiSelect;
+    private Runnable onDeleteKey;
     private int scrollRows;
 
     public ListPanel(int x, int y, int width, int height, Function<T, String> labeller, Consumer<T> onSelect) {
@@ -80,18 +83,41 @@ public class ListPanel<T> extends AbstractWidget {
         items.clear();
         items.addAll(newItems);
         // Keep the selection only if it survived the update (e.g. after filtering by search).
-        if (selected != null && !items.contains(selected)) {
-            selected = null;
-        }
+        selection.retain(items);
         clampScroll();
     }
 
+    /** The open row: the one the rest of the screen is showing. */
     public T getSelected() {
-        return selected;
+        return selection.open();
     }
 
+    /** Opens one row on its own, dropping any others that were selected beside it. */
     public void setSelected(T item) {
-        this.selected = item;
+        selection.only(item);
+    }
+
+    /** Every selected row in list order - the open one and any chosen beside it. */
+    public List<T> getSelection() {
+        return selection.inOrder(items);
+    }
+
+    /**
+     * Lets Ctrl+click add or remove a row, Shift+click take a run of rows and Ctrl+A take them all.
+     *
+     * <p>Off unless asked for: on a list whose rows are started or paused one at a time, a second
+     * highlighted row would promise an action that nothing performs.</p>
+     */
+    public void setMultiSelect(boolean multiSelect) {
+        this.multiSelect = multiSelect;
+        if (!multiSelect) {
+            selection.only(selection.open());
+        }
+    }
+
+    /** What Delete or Backspace does while the list has the keyboard; nothing when unset. */
+    public void setOnDeleteKey(Runnable onDeleteKey) {
+        this.onDeleteKey = onDeleteKey;
     }
 
     /** Adds small per-row controls without changing the normal click-to-select behavior. */
@@ -131,13 +157,14 @@ public class ListPanel<T> extends AbstractWidget {
 
             boolean hovered = mouseX >= getX() && mouseX < getX() + getWidth()
                     && mouseY >= rowY && mouseY < rowY + ROW_HEIGHT;
-            if (item.equals(selected)) {
+            if (selection.contains(item)) {
                 extractor.fill(getX() + 1, rowY, getX() + getWidth() - 1, rowY + ROW_HEIGHT, ROW_SELECTED);
             } else if (hovered) {
                 extractor.fill(getX() + 1, rowY, getX() + getWidth() - 1, rowY + ROW_HEIGHT, ROW_HOVER);
             }
 
-            int colour = item.equals(selected) ? LuneScreen.ACCENT : LuneScreen.TEXT;
+            // Every selected row is filled; only the open one - the one on screen - is lit too.
+            int colour = item.equals(selection.open()) ? LuneScreen.ACCENT : LuneScreen.TEXT;
             List<RowAction<T>> visibleActions = visibleActions(item);
             int textRight = actionStart(visibleActions.size()) - 5;
             String label = labeller.apply(item);
@@ -189,14 +216,27 @@ public class ListPanel<T> extends AbstractWidget {
                 visibleActions.size());
         if (actionIndex >= 0) {
             RowAction<T> action = visibleActions.get(actionIndex);
-            selected = item;
+            selection.only(item);
             if (action.enabled().test(item)) {
                 action.handler().accept(item);
             }
             return;
         }
-        selected = item;
-        onSelect.accept(selected);
+        if (multiSelect && event.hasShiftDown()) {
+            if (selection.range(items, item)) {
+                onSelect.accept(selection.open());
+            }
+            return;
+        }
+        // With the quirk: Cmd on a Mac, where Ctrl+click is already the right button.
+        if (multiSelect && event.hasControlDownWithQuirk()) {
+            if (selection.toggle(item)) {
+                onSelect.accept(selection.open());
+            }
+            return;
+        }
+        selection.only(item);
+        onSelect.accept(item);
     }
 
     @Override
@@ -216,6 +256,9 @@ public class ListPanel<T> extends AbstractWidget {
      * saved task starts it and Enter on one already running pauses it - which is what the two
      * leading actions are in both cases. A row whose actions are all unavailable does nothing
      * rather than guessing.</p>
+     *
+     * <p>Where several rows can be chosen, Ctrl+A chooses them all; and where rows can be deleted,
+     * Delete or Backspace asks to, the same two keys that delete cards on the canvas.</p>
      */
     @Override
     public boolean keyPressed(KeyEvent event) {
@@ -223,13 +266,22 @@ public class ListPanel<T> extends AbstractWidget {
             return false;
         }
         int key = event.key();
+        if (multiSelect && event.isSelectAll()) {
+            selection.all(items);
+            return true;
+        }
+        if (onDeleteKey != null
+                && (key == InputConstants.KEY_DELETE || key == InputConstants.KEY_BACKSPACE)) {
+            onDeleteKey.run();
+            return true;
+        }
         if (key == InputConstants.KEY_DOWN || key == InputConstants.KEY_UP) {
             move(key == InputConstants.KEY_DOWN ? 1 : -1);
             return true;
         }
         if (key == InputConstants.KEY_HOME || key == InputConstants.KEY_END) {
-            selected = items.get(key == InputConstants.KEY_HOME ? 0 : items.size() - 1);
-            onSelect.accept(selected);
+            selection.only(items.get(key == InputConstants.KEY_HOME ? 0 : items.size() - 1));
+            onSelect.accept(selection.open());
             revealSelected();
             return true;
         }
@@ -240,17 +292,19 @@ public class ListPanel<T> extends AbstractWidget {
     }
 
     private void move(int delta) {
+        T selected = selection.open();
         int at = selected == null ? -1 : items.indexOf(selected);
         // No selection yet: down lands on the first row and up on the last, so one key press from
         // focusing the list always puts you somewhere.
         int next = at < 0 ? (delta > 0 ? 0 : items.size() - 1) : Math.clamp(at + delta, 0, items.size() - 1);
-        selected = items.get(next);
-        onSelect.accept(selected);
+        selection.only(items.get(next));
+        onSelect.accept(selection.open());
         revealSelected();
     }
 
     /** Scrolls the least amount that brings the selected row inside the visible window. */
     private void revealSelected() {
+        T selected = selection.open();
         int at = selected == null ? -1 : items.indexOf(selected);
         if (at < 0) {
             return;
@@ -265,6 +319,7 @@ public class ListPanel<T> extends AbstractWidget {
     }
 
     private boolean runFirstAction() {
+        T selected = selection.open();
         if (selected == null) {
             return false;
         }
@@ -285,6 +340,7 @@ public class ListPanel<T> extends AbstractWidget {
      */
     @Override
     protected void updateWidgetNarration(NarrationElementOutput output) {
+        T selected = selection.open();
         if (selected == null) {
             return;
         }

@@ -17,33 +17,46 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Structural checks for the jobs every new profile receives. */
 class DefaultTasksTest {
 
-    private static final String LOGS_JOB = "1. Chop 12 Logs";
-    private static final String STONE_JOB = "2. Wood, Pickaxe, 20 Stone";
-    private static final String HOMESTEAD_JOB = "3. Homestead: Farm and Guard";
-    private static final String NIGHTFALL_JOB = "4. Fish Till Dusk, Then Sleep";
-    private static final String PORTAL_JOB = "5. Stone Tools to a Lit Portal";
-    private static final String DRAGON_JOB = "6. New World to Ender Dragon";
+    private static final List<String> DEMOS = List.of(DefaultTasks.CHOP_WOOD,
+            DefaultTasks.STONE_TOOLS, DefaultTasks.GO_FISHING, DefaultTasks.DIG_TUNNEL);
+    private static final List<String> CHORES = List.of(DefaultTasks.LUMBER_CAMP,
+            DefaultTasks.STONE_QUARRY, DefaultTasks.HOMESTEAD, DefaultTasks.SMELTERY,
+            DefaultTasks.NIGHT_WATCH);
+    private static final List<String> EXPEDITIONS = List.of(DefaultTasks.STUFF_BACK,
+            DefaultTasks.LIT_PORTAL, DefaultTasks.ENDER_DRAGON, DefaultTasks.NETHERITE,
+            DefaultTasks.FIND_VILLAGE, DefaultTasks.CHERRY_TIMBER);
 
-    private static final List<String> EXPECTED_NAMES = List.of(LOGS_JOB, STONE_JOB, HOMESTEAD_JOB,
-            NIGHTFALL_JOB, PORTAL_JOB, DRAGON_JOB);
+    /** The chores that run for hours: guarded by an Always card, ended by a Countdown. */
+    private static final List<String> SHIFTS = List.of(DefaultTasks.LUMBER_CAMP,
+            DefaultTasks.STONE_QUARRY, DefaultTasks.HOMESTEAD);
+
+    /** Jobs that must end on their own, which is why none of them owns a clock or a Button. */
+    private static final List<String> FINISHING = List.of(DefaultTasks.CHOP_WOOD,
+            DefaultTasks.STONE_TOOLS, DefaultTasks.GO_FISHING, DefaultTasks.DIG_TUNNEL,
+            DefaultTasks.SMELTERY, DefaultTasks.NIGHT_WATCH, DefaultTasks.STUFF_BACK,
+            DefaultTasks.FIND_VILLAGE, DefaultTasks.CHERRY_TIMBER);
 
     /** Quoted in the README's table of what ships, so the doc goes stale loudly rather than quietly. */
-    private static final List<Integer> EXPECTED_SIZES = List.of(8, 17, 22, 27, 53, 79);
+    private static final List<Integer> EXPECTED_SIZES =
+            List.of(12, 16, 10, 10, 27, 25, 34, 17, 18, 11, 56, 79, 46, 13, 16);
 
     /** The Task tab's rename box; a seeded name longer than this cannot be typed back. */
     private static final int NAME_BOX_LIMIT = 32;
 
     @Test
-    void shipsExactlyTheSixLadderJobsInRungOrder() {
+    void shipsFifteenJobsFromDemoToExpedition() {
         List<TaskGraph> tasks = DefaultTasks.create();
-        assertEquals(EXPECTED_NAMES, tasks.stream().map(task -> task.name).toList());
-        assertEquals(EXPECTED_SIZES, tasks.stream().map(task -> task.nodes.size()).toList());
-
-        int previousSize = 0;
-        for (TaskGraph task : tasks) {
-            assertTrue(task.nodes.size() > previousSize,
-                    task.name + " should be more structurally ambitious than the rung below it");
-            previousSize = task.nodes.size();
+        List<String> names = tasks.stream().map(task -> task.name).toList();
+        assertEquals(15, tasks.size());
+        assertEquals(DEMOS, names.subList(0, 4), "the demos come first, in the order to try them");
+        assertEquals(CHORES, names.subList(4, 9));
+        assertEquals(EXPEDITIONS, names.subList(9, 15));
+        assertEquals(EXPECTED_SIZES, tasks.stream().map(task -> task.nodes.size()).toList(),
+                "a job changed size - update the README table and this list together");
+        for (int i = 0; i < tasks.size(); i++) {
+            TaskGraph task = tasks.get(i);
+            assertTrue(task.name.startsWith((i + 1) + ". "),
+                    task.name + " should carry its place on the shelf");
             assertTrue(task.name.length() <= NAME_BOX_LIMIT,
                     task.name + " is longer than the rename box allows");
         }
@@ -60,7 +73,6 @@ class DefaultTasksTest {
                     assertTrue(node.whileVisible,
                             task.name + ": " + node.id + " hides its While protection output");
                 }
-
                 for (String target : node.alwaysTargets) {
                     assertNotNull(task.nodeById(target),
                             task.name + ": clock points at missing node " + target);
@@ -81,6 +93,26 @@ class DefaultTasksTest {
             assertTrue(TaskConnectionAudit.firstIssue(task).isEmpty(),
                     () -> task.name + ": " + TaskConnectionAudit.firstIssue(task)
                             .map(TaskConnectionAudit.Issue::message).orElse("unknown issue"));
+        }
+    }
+
+    /**
+     * A card with no Fail wire fails the whole run when it fails. Every card in a seeded job is
+     * one whose failure the job has an answer for, so every one of them has the wire.
+     */
+    @Test
+    void everyWorkingCardSaysWhereFailureGoes() {
+        for (TaskGraph task : DefaultTasks.create()) {
+            for (TaskNode node : task.nodes) {
+                if (node.isSourceNode() || node.isPulseNode() || isCompanion(task, node)) {
+                    continue;
+                }
+                assertNotNull(node.onFailure,
+                        task.name + ": " + node.id + " would fail the whole run when it fails");
+                assertNotNull(node.onSuccess,
+                        task.name + ": " + node.id + " falls through to whatever card is next in "
+                                + "the list, which is not a wire anybody drew");
+            }
         }
     }
 
@@ -106,8 +138,7 @@ class DefaultTasksTest {
     /**
      * The complaint that produced this layout: bands used to restart at column zero on a new row,
      * so the cable out of one band swept all the way back across the canvas to reach the start of
-     * the next - a typewriter carriage return drawn in dotted line. The main lane is now one row
-     * that only ever moves right, with detours hanging underneath it.
+     * the next. The main lane is one row that only ever moves right, however long the job.
      */
     @Test
     void theMainLaneRunsLeftToRightAndNeverWraps() {
@@ -115,6 +146,7 @@ class DefaultTasksTest {
             TaskNode start = TaskWiring.explicitStart(task);
             assertNotNull(start, task.name + " has no START to anchor the lane on");
             int laneY = start.editorY;
+            assertEquals(DefaultTasks.LANE_Y, laneY, task.name + ": the lane moved");
 
             List<TaskNode> lane = task.nodes.stream()
                     .filter(node -> node.editorY == laneY)
@@ -127,7 +159,6 @@ class DefaultTasksTest {
                         task.name + ": " + lane.get(i).id + " does not sit right of "
                                 + lane.get(i - 1).id);
             }
-
             for (TaskNode node : task.nodes) {
                 assertTrue(node.editorY >= laneY,
                         task.name + ": " + node.id + " sits above the main lane");
@@ -138,16 +169,12 @@ class DefaultTasksTest {
     }
 
     /**
-     * The measurement that actually catches a wrap: how far back a cable has to reach.
-     *
-     * <p>A retry wire reaches back a column or two, and job 4's day loop reaches back five. A band
-     * that restarted at column zero made the cable into it reach back across the entire job -
-     * forty columns, in the case of the dragon run. Anything past a short hop is a lane that wrapped
-     * rather than a loop that was meant.</p>
+     * How far back a cable reaches. A chore loops from the chest back to the top of its shift, a
+     * dozen columns; a lane that had wrapped would reach back across the whole job.
      */
     @Test
     void noCableSweepsBackAcrossTheCanvas() {
-        int longestHopBack = 8;
+        int longestHopBack = 16;
         for (TaskGraph task : DefaultTasks.create()) {
             for (TaskNode node : task.nodes) {
                 for (String targetId : List.of(
@@ -157,8 +184,7 @@ class DefaultTasksTest {
                     int columnsBack = (node.editorX - target.editorX) / 208;
                     assertTrue(columnsBack <= longestHopBack,
                             task.name + ": " + node.id + " -> " + targetId + " reaches back "
-                                    + columnsBack + " columns, which is a wrapped lane rather than "
-                                    + "a deliberate loop");
+                                    + columnsBack + " columns");
                 }
             }
         }
@@ -169,17 +195,22 @@ class DefaultTasksTest {
     void everyDetourSitsUnderTheGateThatChoosesIt() {
         record Anchored(String job, String gate, String detour) {}
         for (Anchored pair : List.of(
-                new Anchored(LOGS_JOB, "chop_12", "tree_search"),
-                new Anchored(STONE_JOB, "stone_count", "stone_top_up"),
-                new Anchored(HOMESTEAD_JOB, "larder", "stock_meat"),
-                new Anchored(HOMESTEAD_JOB, "arm_gate", "forge_sword"),
-                new Anchored(NIGHTFALL_JOB, "rod_gate", "shore_hunt"),
-                new Anchored(NIGHTFALL_JOB, "bedtime_gate", "chore_wood"),
-                new Anchored(PORTAL_JOB, "kit_gate", "earn_kit"),
-                new Anchored(PORTAL_JOB, "diamond_count", "branch_two"),
-                new Anchored(PORTAL_JOB, "portal_build", "portal_retry"),
-                new Anchored(DRAGON_JOB, "e_scan", "e_branch_one"),
-                new Anchored(DRAGON_JOB, "mission_end", "mission_watch"))) {
+                new Anchored(DefaultTasks.CHOP_WOOD, "chop_hands", "look_for_trees"),
+                new Anchored(DefaultTasks.STONE_TOOLS, "stone_count", "top_up"),
+                new Anchored(DefaultTasks.GO_FISHING, "rod", "no_rod"),
+                new Anchored(DefaultTasks.LUMBER_CAMP, "chop", "search"),
+                new Anchored(DefaultTasks.LUMBER_CAMP, "eat", "hunt"),
+                new Anchored(DefaultTasks.LUMBER_CAMP, "stash", "closing"),
+                new Anchored(DefaultTasks.HOMESTEAD, "larder", "stock_meat"),
+                new Anchored(DefaultTasks.HOMESTEAD, "bedtime", "yard_watch"),
+                new Anchored(DefaultTasks.NIGHT_WATCH, "look", "pause"),
+                new Anchored(DefaultTasks.STUFF_BACK, "recover", "nothing"),
+                new Anchored(DefaultTasks.LIT_PORTAL, "kit_gate", "earn_kit"),
+                new Anchored(DefaultTasks.LIT_PORTAL, "diamond_count", "branch_two"),
+                new Anchored(DefaultTasks.LIT_PORTAL, "portal_build", "portal_retry"),
+                new Anchored(DefaultTasks.ENDER_DRAGON, "e_scan", "e_branch_one"),
+                new Anchored(DefaultTasks.NETHERITE, "debris_count", "strip_two"),
+                new Anchored(DefaultTasks.FIND_VILLAGE, "on_foot", "none"))) {
             TaskGraph task = task(pair.job());
             TaskNode gate = task.nodeById(pair.gate());
             TaskNode detour = task.nodeById(pair.detour());
@@ -197,13 +228,11 @@ class DefaultTasksTest {
      */
     @Test
     void everyLongReturnCableIsRoutedAroundTheCards() {
-        // Named so the check below cannot pass by there being nothing to route: job 4's day loop
-        // and its three returns out of the yard watch are the reason this exists.
-        assertTrue(task(NIGHTFALL_JOB).cableAnchors.size() >= 4,
-                "the nightfall job's long returns should all be routed");
-        assertTrue(task(HOMESTEAD_JOB).cableAnchors.size() >= 1,
-                "the homestead's boundary cables reach back across the shift");
-
+        // Named so the check below cannot pass by there being nothing to route: every chore loops
+        // back to the top of its shift, and those are the cables this exists for.
+        for (String name : SHIFTS) {
+            assertTrue(task(name).cableAnchors.size() >= 3, name + "'s loop should be routed");
+        }
         for (TaskGraph task : DefaultTasks.create()) {
             for (TaskNode source : task.nodes) {
                 for (String kind : List.of("success", "failure", "while")) {
@@ -294,235 +323,218 @@ class DefaultTasksTest {
     void everyJobHasARealPowerSource() {
         for (TaskGraph task : DefaultTasks.create()) {
             TaskNode start = TaskWiring.explicitStart(task);
-            assertTrue(start != null || TaskWiring.hasAlwaysNode(task),
-                    task.name + " has neither START nor a clock source");
-            if (start != null) {
-                assertNotNull(start.onSuccess, task.name + " has an unconnected START");
-            }
+            assertNotNull(start, task.name + " has no START");
+            assertNotNull(start.onSuccess, task.name + " has an unconnected START");
         }
     }
 
-    /** The first rung: chop, sweep, craft the axe those logs paid for, chop again. */
+    /**
+     * An Always, Pulse, Observer or Button card keeps a run alive after its last card has
+     * finished. A job the player is told will end has none, so it does end - and the finish alert
+     * actually sounds.
+     */
     @Test
-    void theLogsJobIsAStraightLineWithOneRetryWire() {
-        TaskGraph logs = task(LOGS_JOB);
-        assertEquals(8, logs.nodes.size());
-        assertEquals("chop_12", TaskWiring.explicitStart(logs).onSuccess);
-        assertEquals("12", logs.nodeById("chop_12").params.get("limit"));
-        assertEquals("logs_loot", logs.nodeById("chop_12").onSuccess);
-        assertEquals("wooden_axe", logs.nodeById("logs_loot").onSuccess);
-        assertEquals("Axe", logs.nodeById("wooden_axe").params.get("tool"));
-        assertEquals("Wooden", logs.nodeById("wooden_axe").params.get("material"));
-        assertEquals(List.of("tree_search -> chop_12"), backwardWires(logs),
+    void theJobsThatSayTheyFinishOwnNothingThatKeepsARunAlive() {
+        for (String name : FINISHING) {
+            TaskGraph task = task(name);
+            for (TaskNode node : task.nodes) {
+                assertFalse(node.isClockNode() || node.isObserverNode() || node.isButtonNode(),
+                        name + ": " + node.id + " would keep the run alive after its End");
+            }
+            assertTrue(TaskSafety.hasMonitor(task), name + " works unguarded");
+            TaskNode guard = task.nodeById("guard");
+            assertEquals("self_preservation", guard.commandId);
+            assertEquals(0, guard.repeat, name + ": a companion's repeat box is not a lifetime");
+            assertTrue(task.nodes.stream().anyMatch(node -> "guard".equals(node.onWhile)),
+                    name + ": the guard should ride the While pins of the risky cards");
+        }
+    }
+
+    /**
+     * The guard is its own circuit on the long jobs, wired to nothing in the main lane.
+     *
+     * <p>An Always source holding one Self Preservation card, rather than a While pin ticked on
+     * every card that might get hurt. Ten protected cards used to mean ten cables converging on
+     * one node, and it only ever covered the cards somebody remembered to tick.</p>
+     */
+    @Test
+    void theLongJobsHoldTheirGuardOnItsOwnAlwaysSource() {
+        for (String name : List.of(DefaultTasks.LUMBER_CAMP, DefaultTasks.STONE_QUARRY,
+                DefaultTasks.HOMESTEAD, DefaultTasks.LIT_PORTAL, DefaultTasks.ENDER_DRAGON,
+                DefaultTasks.NETHERITE)) {
+            TaskGraph task = task(name);
+            assertTrue(TaskSafety.hasMonitor(task), name + " works unguarded");
+
+            TaskNode guard = task.nodeById("guard");
+            assertEquals("self_preservation", guard.commandId);
+            assertEquals(0, guard.repeat, name + ": a companion's repeat box is not a lifetime");
+            assertNull(guard.onSuccess, name + ": the guard is not a step in the lane");
+            assertNull(guard.onFailure);
+
+            TaskNode clock = task.nodeById("safety_clock");
+            assertNotNull(clock, name + " has no Always source for its guard");
+            assertTrue(clock.isAlwaysNode());
+            assertEquals(Set.of("guard"), clock.alwaysTargets,
+                    name + ": the safety clock should hold the guard and nothing else");
+            assertTrue(TaskSafety.isMonitorNode(task, guard));
+            assertTrue(task.nodes.stream().noneMatch(node -> "guard".equals(node.onWhile)),
+                    name + ": the guard is still tangled into While pins");
+            assertTrue(TaskWiring.isMonitorOnly(task, guard),
+                    name + ": the guard should stay out of sequential fall-through");
+        }
+    }
+
+    /**
+     * A shift ends two ways, and both reach the same two cards: the Countdown on its own Always
+     * card when the hours are up, and a deposit that fails because the chest will take no more.
+     */
+    @Test
+    void everyShiftEndsItselfAndLeavesTheWorld() {
+        for (String name : SHIFTS) {
+            TaskGraph task = task(name);
+            TaskNode clock = task.nodeById("shift_clock");
+            assertTrue(clock.isAlwaysNode());
+            assertEquals(Set.of("shift"), clock.alwaysTargets);
+
+            TaskNode shift = task.nodeById("shift");
+            assertEquals("countdown", shift.commandId);
+            assertEquals("Hours", shift.params.get("unit"));
+            assertEquals("closing", shift.onSuccess);
+
+            assertEquals("notify", task.nodeById("closing").commandId);
+            TaskNode leave = task.nodeById("closing").onSuccess == null ? null
+                    : task.nodeById(task.nodeById("closing").onSuccess);
+            assertNotNull(leave);
+            assertEquals("stop_game", leave.commandId);
+            assertEquals("Return to main menu", leave.params.get("ending"),
+                    name + ": saving and leaving is the one ending that works on a server too");
+        }
+        for (String name : List.of(DefaultTasks.LUMBER_CAMP, DefaultTasks.STONE_QUARRY)) {
+            TaskNode stash = task(name).nodeById("stash");
+            assertEquals("deposit", stash.commandId);
+            assertEquals("false", stash.params.get("optional"),
+                    name + ": an optional deposit would carry on past a full chest");
+            assertEquals("closing", stash.onFailure, name + ": a full chest ends the shift");
+        }
+        assertEquals("2", task(DefaultTasks.LUMBER_CAMP).nodeById("shift").params.get("amount"));
+        assertEquals("3", task(DefaultTasks.STONE_QUARRY).nodeById("shift").params.get("amount"));
+    }
+
+    /** The request that shaped the lumber camp: the trees go back where they came from. */
+    @Test
+    void theLumberCampReplantsWhereItChopped() {
+        TaskGraph camp = task(DefaultTasks.LUMBER_CAMP);
+        assertEquals("chop", camp.nodeById("chop").commandId);
+        assertEquals("loot", camp.nodeById("chop").onSuccess);
+        assertEquals("replant", camp.nodeById("loot").onSuccess,
+                "the saplings are swept up before they are planted");
+        TaskNode replant = camp.nodeById("replant");
+        assertEquals("replant", replant.commandId);
+        assertEquals("full", replant.onSuccess);
+        assertEquals("full", replant.onFailure,
+                "no sapling yet is not a reason to stop the shift; the next trip brings some");
+        assertEquals("fence", replant.onWhile, "planting stays inside the camp too");
+
+        TaskNode stash = camp.nodeById("stash");
+        assertEquals("Logs", stash.params.get("filter"),
+                "only logs go in the chest, so the saplings stay in the pack for replanting");
+
+        TaskGraph grove = task(DefaultTasks.CHERRY_TIMBER);
+        assertEquals("replant", grove.nodeById("loot").onSuccess);
+        assertEquals("replant", grove.nodeById("replant").commandId);
+    }
+
+    /** The first rung: by hand, the axe those logs paid for, then again with it. */
+    @Test
+    void theChopDemoChopsMakesAnAxeAndChopsAgain() {
+        TaskGraph chop = task(DefaultTasks.CHOP_WOOD);
+        assertEquals("hello", TaskWiring.explicitStart(chop).onSuccess);
+        assertEquals("notify", chop.nodeById("hello").commandId);
+        assertEquals("6", chop.nodeById("chop_hands").params.get("limit"));
+        assertEquals("look_for_trees", chop.nodeById("chop_hands").onFailure);
+        assertEquals("chop_hands", chop.nodeById("look_for_trees").onSuccess);
+        assertEquals("Axe", chop.nodeById("make_axe").params.get("tool"));
+        assertEquals("Wooden", chop.nodeById("make_axe").params.get("material"));
+        assertEquals("chop_axe", chop.nodeById("make_axe").onFailure,
+                "no axe is not the end of the demo; it chops on without one");
+        assertEquals("6", chop.nodeById("chop_axe").params.get("limit"));
+        assertEquals(List.of("look_for_trees -> chop_hands"), backwardWires(chop),
                 "only the treeless-clearing search should send the first job backwards");
     }
 
     /** The second rung: the pickaxe exists before the stone card, and twenty is counted. */
     @Test
-    void theStoneJobCountsItsTwentyCobbleBeforeSpendingIt() {
-        TaskGraph stone = task(STONE_JOB);
-
-        TaskNode woodenPick = stone.nodeById("wooden_pick");
-        assertEquals("Pickaxe", woodenPick.params.get("tool"));
-        assertEquals("Wooden", woodenPick.params.get("material"));
-
-        TaskNode quarry = stone.nodeById("stone_20");
-        assertEquals("20", quarry.params.get("limit"));
-        assertEquals("minecraft:stone", quarry.params.get("targets"));
+    void theStoneDemoCountsItsTwentyCobbleBeforeSpendingIt() {
+        TaskGraph stone = task(DefaultTasks.STONE_TOOLS);
+        assertEquals("Pickaxe", stone.nodeById("wooden_pick").params.get("tool"));
+        assertEquals("Wooden", stone.nodeById("wooden_pick").params.get("material"));
+        assertEquals("20", stone.nodeById("stone").params.get("limit"));
 
         TaskNode count = stone.nodeById("stone_count");
         assertEquals("minecraft:cobblestone", count.params.get("item"));
         assertEquals("At least", count.params.get("comparison"));
         assertEquals("20", count.params.get("count"));
         assertEquals("stone_pick", count.onSuccess);
-        assertEquals("stone_top_up", count.onFailure,
-                "coming up short should take the top-up detour, not spend what isn't there");
-
+        assertEquals("top_up", count.onFailure);
         for (String id : List.of("stone_pick", "stone_axe", "stone_sword")) {
-            assertEquals("Stone", stone.nodeById(id).params.get("material"),
-                    id + " should spend the twenty cobble the job just counted");
+            assertEquals("Stone", stone.nodeById(id).params.get("material"));
         }
     }
 
     /**
-     * The third rung: the one that never goes underground.
+     * A card in a flow lane has to be able to finish, or everything wired after it is decoration.
      *
-     * <p>Two monitors, and the point is that they are on different cards. A While pin holds one
-     * companion, so a job that wants a boundary around its field work and a guard on its fighting
-     * has to say which card gets which - and a set where every middle job was a mining run would
-     * never have shown that.</p>
+     * <p>Fish with auto recast on is the trap: it is a perfectly good card that deliberately never
+     * reports Success. The fishing demo counts ten catches with the repeat box instead.</p>
      */
     @Test
-    void theHomesteadJobWorksByDaylightUnderTwoDifferentMonitors() {
-        TaskGraph home = task(HOMESTEAD_JOB);
-
-        TaskNode dayGate = home.nodeById("day_gate");
-        assertEquals("check_time", dayGate.commandId);
-        assertEquals("Day", dayGate.params.get("phase"));
-        assertEquals("field", dayGate.onSuccess);
-        assertEquals("yard_watch", dayGate.onFailure,
-                "after dark the shift is a watch, not a harvest");
-        assertEquals("day_gate", TaskWiring.explicitStart(home).onSuccess);
-
-        assertEquals("stay_near", home.nodeById("fence").commandId);
-        assertEquals("Where the run started", home.nodeById("fence").params.get("anchor"));
-        for (String id : List.of("field", "stock_meat", "wood_run")) {
-            assertEquals("fence", home.nodeById(id).onWhile,
-                    id + " should be held inside the property");
-            assertTrue(home.nodeById(id).whileVisible);
+    void noCardInAFlowLaneIsOneThatNeverFinishes() {
+        for (TaskGraph task : DefaultTasks.create()) {
+            for (TaskNode node : task.nodes) {
+                if (!"fish".equals(node.commandId)) {
+                    continue;
+                }
+                assertEquals("false", node.params.get("auto_recast"),
+                        task.name + ": " + node.id + " fishes forever");
+                assertNotNull(node.onSuccess);
+            }
         }
-        assertNull(home.nodeById("drive_off").onWhile,
-                "chasing a mob past the fence is the one thing that may leave the property");
-        assertTrue(TaskSafety.hasMonitor(home));
-
-        // Looking before arming means the sword is only made on a night that needs one.
-        assertEquals("arm_gate", home.nodeById("yard_watch").onSuccess);
-        assertEquals("supper_gate", home.nodeById("yard_watch").onFailure);
-        assertEquals("forge_sword", home.nodeById("arm_gate").onFailure);
+        TaskNode fish = task(DefaultTasks.GO_FISHING).nodeById("fish");
+        assertEquals(10, fish.repeat, "ten catches is what the demo promises");
+        assertEquals("select_item", task(DefaultTasks.GO_FISHING).nodeById("rod").commandId,
+                "Fish only reads the hand, so the rod is put there first");
     }
 
-    /** The fourth rung: three loops, and the clock closes every one of them. */
+    /** Smelt asked for more than is carried gives up; one at a time empties the pack instead. */
     @Test
-    void theNightfallJobClosesEveryLoopWithTheClock() {
-        TaskGraph night = task(NIGHTFALL_JOB);
-
-        // Fish until Day stops being true.
-        assertEquals("Day", night.nodeById("day_gate").params.get("phase"));
-        assertEquals("day_gate", night.nodeById("stash_catch").onSuccess);
-        assertEquals("bedtime_gate", night.nodeById("day_gate").onFailure);
-
-        // Chores and a yard watch until a bed would actually accept.
-        TaskNode bedtime = night.nodeById("bedtime_gate");
-        assertEquals("check_time", bedtime.commandId);
-        assertEquals("Dark enough to sleep", bedtime.params.get("phase"));
-        assertEquals("bed_gate", bedtime.onSuccess);
-        assertEquals("chore_wood", bedtime.onFailure);
-        assertEquals("bedtime_gate", night.nodeById("yard_watch").onFailure);
-
-        // A night that did not pass sends the job back to the watch instead of to bed again.
-        assertEquals("morning_gate", night.nodeById("turn_in").onSuccess);
-        assertEquals("Day", night.nodeById("morning_gate").params.get("phase"));
-        assertEquals("morning_stash", night.nodeById("morning_gate").onSuccess);
-        assertEquals("yard_watch", night.nodeById("morning_gate").onFailure);
-
-        // Fish reads the main hand and no card crafts a rod, so the gate is load-bearing.
-        TaskNode rod = night.nodeById("rod_gate");
-        assertEquals("select_item", rod.commandId);
-        assertEquals("minecraft:fishing_rod", rod.params.get("item"));
-        assertEquals("Main hand", rod.params.get("hand"));
-        assertEquals("cast", rod.onSuccess);
-        assertEquals("shore_hunt", rod.onFailure);
-
-        assertEquals("fence", night.nodeById("cast").onWhile,
-                "a lake worth fishing can be a long way from the property");
-        assertEquals("fence", night.nodeById("shore_hunt").onWhile);
-    }
-
-    /** The fifth rung: one descent, with one ore choice feeding every mining card in it. */
-    @Test
-    void thePortalJobIsOneDescentWithBoundedLoops() {
-        TaskGraph portal = task(PORTAL_JOB);
-
-        // The iron quota loop, with both ways out of it bounded.
-        assertEquals("iron_dig", portal.nodeById("iron_quota").onFailure);
-        assertEquals("iron_mine", portal.nodeById("iron_dig").onSuccess);
-        assertEquals("iron_roam", portal.nodeById("iron_mine").onFailure);
-        assertEquals("iron_mine", portal.nodeById("iron_roam").onSuccess);
-        assertEquals("coal_run", portal.nodeById("iron_dig").onFailure,
-                "a stripmine that cannot even start should hand the job forward");
-        assertEquals("iron_smelt", portal.nodeById("iron_roam").onFailure,
-                "an exhausted search should smelt what it has instead of circling underground");
-
-        // One Find decides what "ore" means for the rest of the descent.
-        TaskNode scan = portal.nodeById("diamond_scan");
-        assertTrue(scan.exposedOutputs.contains("targets"));
-        assertEquals("#minecraft:diamond_ores", scan.params.get("targets"));
-        for (String id : List.of("branch_one", "diamond_mine", "diamond_roam", "branch_two",
-                "mine_again")) {
-            TaskNode target = portal.nodeById(id);
-            String input = target.commandId.equals("stripmine") ? "target" : "targets";
-            TaskDataLink link = target.inputLinks.get(input);
-            assertNotNull(link, id + " does not receive the shared ore choice");
-            assertEquals("diamond_scan", link.sourceNodeId);
-            assertEquals("targets", link.sourcePort);
+    void theSmelteryEmptiesThePackOneItemAtATime() {
+        TaskGraph smeltery = task(DefaultTasks.SMELTERY);
+        for (String id : List.of("iron", "gold", "copper")) {
+            TaskNode smelt = smeltery.nodeById(id);
+            assertEquals("smelt", smelt.commandId);
+            assertEquals("1", smelt.params.get("count"));
+            assertTrue(smelt.repeat > 1, id + " should repeat until the pack is empty");
+            assertEquals(smelt.onSuccess, smelt.onFailure,
+                    id + ": running out is the end of that metal, not of the job");
         }
-        assertTrue(Integer.parseInt(portal.nodeById("branch_two").params.get("branches"))
-                        > Integer.parseInt(portal.nodeById("branch_one").params.get("branches")),
-                "the second pass should dig harder than the first, not the same");
-
-        // Endermen are a night job, so the hunt asks the clock instead of roaming at noon.
-        assertEquals("night_gate", portal.nodeById("pearl_gate").onFailure);
-        assertEquals("Night", portal.nodeById("night_gate").params.get("phase"));
-        assertEquals("pearl_hunt", portal.nodeById("night_gate").onSuccess);
-        assertEquals("haul_stash", portal.nodeById("night_gate").onFailure);
-        assertEquals("12", portal.nodeById("pearl_hunt").params.get("count"),
-                "twelve pearls is what an End portal frame wants");
-
-        assertEquals("minecraft:obsidian", portal.nodeById("obsidian_count").params.get("item"));
-        assertEquals("10", portal.nodeById("obsidian_count").params.get("count"),
-                "ten is the corner-saving frame's exact bill of materials");
-        assertEquals("lighter_gate", portal.nodeById("obsidian_count").onSuccess);
-
-        assertEquals("minecraft:flint_and_steel", portal.nodeById("lighter_gate").params.get("item"));
-        assertEquals("minecraft:fire_charge", portal.nodeById("charge_gate").params.get("item"));
-        assertEquals("portal_build", portal.nodeById("lighter_gate").onSuccess);
-        assertEquals("portal_build", portal.nodeById("charge_gate").onSuccess);
-        assertEquals("pearl_gate", portal.nodeById("charge_gate").onFailure,
-                "no way to light the frame should skip the build, not fail the job");
-        assertEquals("portal_retry", portal.nodeById("portal_build").onFailure);
-
-        // Select from Inventory used as a condition rather than as an action.
-        TaskNode wear = portal.nodeById("pick_wear");
-        assertEquals("select_item", wear.commandId);
-        assertEquals("25", wear.params.get("min_durability"));
-        assertEquals("spare_pick", wear.onFailure);
     }
 
-    /** The top rung: the whole ladder in one graph, plus everything that runs beside it. */
+    /** One night, from dark to sunrise, and a post to come back to after every fight. */
     @Test
-    void theDragonJobIsTheWholeLadderUnderEverySupportCircuit() {
-        TaskGraph dragon = task(DRAGON_JOB);
-        assertTrue(dragon.nodes.size() >= 60,
-                "the closing job earns its place by covering the whole game, not by being tidy");
-
-        // Every band hands the run to the next one and never asks for it back.
-        assertEquals("a_chop", TaskWiring.explicitStart(dragon).onSuccess);
-        assertEquals("b_stone_mine", dragon.nodeById("a_top_loot").onSuccess);
-        assertEquals("c_food_gate", dragon.nodeById("b_coal_loot").onSuccess);
-        assertEquals("d_iron_gate", dragon.nodeById("c_eat_again").onSuccess);
-        assertEquals("e_deep_gate", dragon.nodeById("d_iron_sword").onSuccess);
-        assertEquals("f_preflight", dragon.nodeById("e_obsidian_loot").onSuccess);
-
-        // Killing the dragon is a milestone, not the last card.
-        assertEquals("completegame", dragon.nodeById("f_launch").commandId);
-        assertEquals("f_win_loot", dragon.nodeById("f_launch").onSuccess);
-        assertEquals("f_win_loot", dragon.nodeById("f_launch").onFailure);
-        assertEquals("mission_end", dragon.nodeById("f_win_stash").onSuccess);
-
-        // Both gates that can skip a whole band actually skip forward.
-        assertEquals("e_deep_gate", dragon.nodeById("d_iron_gate").onSuccess);
-        assertEquals("e_diamond_pick", dragon.nodeById("e_deep_gate").onSuccess);
-
-        assertEquals(2, dragon.nodes.stream().filter(TaskNode::isPulseSourceNode).count(),
-                "the field meal and the broom are separate clocks running at separate rates");
-        assertTrue(dragon.nodes.stream().anyMatch(TaskNode::isObserverNode));
-        assertTrue(dragon.nodes.stream().anyMatch(TaskNode::isButtonNode));
-        assertTrue(dragon.nodes.stream().anyMatch(TaskNode::isCounterNode));
-        assertTrue(dragon.nodes.stream().anyMatch(TaskNode::isTimerNode));
-        assertTrue(dragon.nodes.stream().anyMatch(TaskNode::isSignalRelayNode));
-        assertTrue(dragon.nodes.stream().anyMatch(TaskNode::isEndNode));
-        assertTrue(TaskSafety.hasMonitor(dragon));
-
-        assertEquals("mission_end", dragon.nodeById("mission_watch").observedNodeId);
-        assertEquals("2", dragon.nodeById("closeout_counter").params.get("count"),
-                "End lights once and goes dark, so the debrief waits for both edges");
-        assertEquals(3, dragon.nodeById("closeout_hub").signalOutputCount);
-        assertEquals(2, dragon.nodeById("panic_hub").signalOutputCount);
+    void theNightWatchWaitsForDarkAndStopsAtSunrise() {
+        TaskGraph watch = task(DefaultTasks.NIGHT_WATCH);
+        assertEquals("Night", watch.nodeById("dark").params.get("phase"));
+        assertEquals("wait_dark", watch.nodeById("dark").onFailure);
+        assertEquals("dark", watch.nodeById("wait_dark").onSuccess);
+        assertEquals("Day", watch.nodeById("dawn").params.get("phase"));
+        assertEquals("stash", watch.nodeById("dawn").onSuccess, "sunrise ends the watch");
+        assertEquals("waypoint", watch.nodeById("return").commandId);
+        assertEquals("hungry", watch.nodeById("return").onSuccess);
     }
 
     /** A rung that arrives unequipped runs the rung below it, so the name has to be a real job. */
     @Test
-    void everyRunTaskCardNamesAnotherSeededJob() {
+    void everyRunTaskCardNamesAnEarlierSeededJob() {
         List<String> names = DefaultTasks.create().stream().map(task -> task.name).toList();
         long handOffs = 0;
         for (TaskGraph task : DefaultTasks.create()) {
@@ -534,137 +546,120 @@ class DefaultTasksTest {
                 assertTrue(names.contains(called),
                         task.name + ": " + node.id + " runs '" + called + "', which is not a job");
                 assertTrue(names.indexOf(called) < names.indexOf(task.name),
-                        task.name + ": " + node.id + " should hand work down the ladder, not up");
+                        task.name + ": " + node.id + " should hand work down the shelf, not up");
                 handOffs++;
                 assertNotNull(node.onFailure,
                         task.name + ": " + node.id + " needs a Fail wire, because Run Task is the "
                                 + "one card whose target the player can rename out from under it");
             }
         }
-        assertEquals(1, handOffs, "the descent is the one job that falls back a rung");
+        assertEquals(1, handOffs, "the portal run is the one job that falls back on another");
+        assertEquals(DefaultTasks.STONE_TOOLS,
+                task(DefaultTasks.LIT_PORTAL).nodeById("earn_kit").params.get("name"));
     }
 
-    /**
-     * The guard is its own circuit, wired to nothing in the main lane.
-     *
-     * <p>An Always source holding one Self Preservation card, rather than a While pin ticked on
-     * every card that might get hurt. Ten protected cards used to mean ten cables converging on one
-     * node, and it only ever covered the cards somebody remembered to tick - a new leg added later
-     * was silently unprotected. Always is held on for the whole run.</p>
-     */
+    /** Stay Near is a companion that deliberately covers only some cards. */
     @Test
-    void theSafetyGuardHangsOffItsOwnAlwaysSourceAndNotOffWhilePins() {
-        assertFalse(TaskSafety.hasMonitor(task(LOGS_JOB)),
-                "a job that only fells trees in daylight does not need a guard");
-        assertFalse(TaskSafety.hasMonitor(task(STONE_JOB)));
-
-        for (String name : List.of(HOMESTEAD_JOB, NIGHTFALL_JOB, PORTAL_JOB, DRAGON_JOB)) {
-            TaskGraph task = task(name);
-            assertTrue(TaskSafety.hasMonitor(task), name + " works unguarded");
-
-            TaskNode guard = task.nodeById("guard");
-            assertEquals("self_preservation", guard.commandId);
-            assertEquals(0, guard.repeat,
-                    name + ": a companion's repeat box is not a lifetime");
-            assertNull(guard.onSuccess, name + ": the guard is not a step in the lane");
-            assertNull(guard.onFailure);
-
-            TaskNode clock = task.nodeById("safety_clock");
-            assertNotNull(clock, name + " has no Always source for its guard");
-            assertTrue(clock.isAlwaysNode());
-            assertEquals(Set.of("guard"), clock.alwaysTargets,
-                    name + ": the safety clock should hold the guard and nothing else");
-            assertTrue(TaskSafety.isMonitorNode(task, guard),
-                    name + ": the guard should read as a live-beside-the-work monitor");
-
-            // Nothing in the lane wires to it, which is the whole point.
-            assertTrue(task.nodes.stream().noneMatch(node -> "guard".equals(node.onWhile)),
-                    name + ": the guard is still tangled into While pins");
-            assertTrue(TaskWiring.isMonitorOnly(task, guard),
-                    name + ": the guard should stay out of sequential fall-through");
-        }
-    }
-
-    /** Stay Near is the counter-example: a companion that deliberately covers only some cards. */
-    @Test
-    void theBoundaryCompanionStaysOnThePinsItIsMeantFor() {
-        for (String name : List.of(HOMESTEAD_JOB, NIGHTFALL_JOB)) {
+    void theBoundaryStaysOnThePinsItIsMeantFor() {
+        for (String name : SHIFTS) {
             TaskGraph task = task(name);
             TaskNode fence = task.nodeById("fence");
             assertEquals("stay_near", fence.commandId);
             assertEquals(0, fence.repeat);
-
             List<String> fenced = task.nodes.stream()
                     .filter(node -> "fence".equals(node.onWhile))
                     .map(node -> node.id)
                     .toList();
             assertFalse(fenced.isEmpty(), name + ": the fence covers nothing");
-            assertTrue(fenced.size() < task.nodes.size() - 1,
+            assertTrue(fenced.size() < task.nodes.size() / 3,
                     name + ": a boundary that covers everything should have been an Always source");
         }
+        assertNull(task(DefaultTasks.HOMESTEAD).nodeById("drive_off").onWhile,
+                "chasing a mob past the fence is the one thing that may leave the property");
     }
 
-    /**
-     * The set earns its length by being different jobs, not one job with the ore name swapped.
-     *
-     * <p>The failure this guards against is the one the set already had once: three consecutive
-     * middle jobs that were all "provision a pickaxe, find an ore, dig until the quota, smelt".
-     * Counting distinct commands per job is a crude measure, but a job that is a re-skin of its
-     * neighbour cannot pass it.</p>
-     */
+    /** The portal run: one descent, with one ore choice feeding every mining card in it. */
     @Test
-    void theMiddleJobsAreDifferentWorkAndNotOneJobReskinned() {
-        Set<String> homestead = commandsOf(task(HOMESTEAD_JOB));
-        Set<String> nightfall = commandsOf(task(NIGHTFALL_JOB));
-        Set<String> descent = commandsOf(task(PORTAL_JOB));
+    void thePortalRunIsOneDescentWithBoundedLoops() {
+        TaskGraph portal = task(DefaultTasks.LIT_PORTAL);
+        assertEquals("iron_dig", portal.nodeById("iron_quota").onFailure);
+        assertEquals("coal_run", portal.nodeById("iron_dig").onFailure);
+        assertEquals("iron_smelt", portal.nodeById("iron_roam").onFailure);
 
-        assertTrue(homestead.contains("harvest") && homestead.contains("stay_near"),
-                "the homestead should be the job that farms and holds a boundary");
-        assertTrue(nightfall.contains("fish") && nightfall.contains("sleep"),
-                "the nightfall job should be the one that fishes and goes to bed");
-        assertTrue(descent.contains("stripmine") && descent.contains("smelt"),
-                "the descent should be the job that digs and smelts");
-
-        assertFalse(homestead.contains("stripmine") || homestead.contains("mine"),
-                "the homestead should not have become another mining run");
-        assertFalse(nightfall.contains("stripmine") || nightfall.contains("mine"),
-                "the nightfall job should not have become another mining run");
-        assertFalse(descent.contains("fish") || descent.contains("harvest"),
-                "the descent should not have absorbed the surface jobs");
-
-        // Check Time is what made two of these jobs possible, so all three should reach for it.
-        for (String name : List.of(HOMESTEAD_JOB, NIGHTFALL_JOB, PORTAL_JOB)) {
-            assertTrue(commandsOf(task(name)).contains("check_time"),
-                    name + " never asks the clock anything");
+        TaskNode scan = portal.nodeById("diamond_scan");
+        assertTrue(scan.exposedOutputs.contains("targets"));
+        for (String id : List.of("branch_one", "diamond_mine", "diamond_roam", "branch_two",
+                "mine_again")) {
+            TaskNode target = portal.nodeById(id);
+            String input = target.commandId.equals("stripmine") ? "target" : "targets";
+            TaskDataLink link = target.inputLinks.get(input);
+            assertNotNull(link, id + " does not receive the shared ore choice");
+            assertEquals("diamond_scan", link.sourceNodeId);
         }
+        assertEquals("Night", portal.nodeById("night_gate").params.get("phase"));
+        assertEquals("10", portal.nodeById("obsidian_count").params.get("count"));
+        assertEquals("pearl_gate", portal.nodeById("charge_gate").onFailure,
+                "no way to light the frame should skip the build, not fail the job");
+        assertEquals("Pause the game", portal.nodeById("rest").params.get("ending"));
     }
 
-    /**
-     * A card in a flow lane has to be able to finish, or everything wired after it is decoration.
-     *
-     * <p>Fish with auto recast on is the trap: it is a perfectly good card that deliberately never
-     * reports Success, because "fish until something stops me" is what it is for. Wired into a lane
-     * it silently swallows the run - the day loop in job 4 would never turn, and job 6 would fish
-     * instead of fighting the dragon. Every other seeded gathering card is bounded by a count.</p>
-     */
+    /** The whole game: every band hands forward, and everything below the lane runs beside it. */
     @Test
-    void noCardInAFlowLaneIsOneThatNeverFinishes() {
-        for (TaskGraph task : DefaultTasks.create()) {
-            for (TaskNode node : task.nodes) {
-                if (!"fish".equals(node.commandId)) {
-                    continue;
-                }
-                assertEquals("false", node.params.get("auto_recast"),
-                        task.name + ": " + node.id + " fishes forever, so its Success wire and "
-                                + "everything after it can never run");
-                assertNotNull(node.onSuccess,
-                        task.name + ": " + node.id + " has nowhere to go once it catches something");
-            }
-        }
+    void theDragonRunIsTheWholeGameUnderEverySupportCircuit() {
+        TaskGraph dragon = task(DefaultTasks.ENDER_DRAGON);
+        assertEquals("a_chop", TaskWiring.explicitStart(dragon).onSuccess);
+        assertEquals("b_stone_mine", dragon.nodeById("a_top_loot").onSuccess);
+        assertEquals("c_food_gate", dragon.nodeById("b_coal_loot").onSuccess);
+        assertEquals("d_iron_gate", dragon.nodeById("c_eat_again").onSuccess);
+        assertEquals("e_deep_gate", dragon.nodeById("d_iron_sword").onSuccess);
+        assertEquals("f_preflight", dragon.nodeById("e_obsidian_loot").onSuccess);
+        assertEquals("completegame", dragon.nodeById("f_launch").commandId);
+
+        assertEquals(2, dragon.nodes.stream().filter(TaskNode::isPulseSourceNode).count());
+        assertTrue(dragon.nodes.stream().anyMatch(TaskNode::isObserverNode));
+        assertTrue(dragon.nodes.stream().anyMatch(TaskNode::isButtonNode));
+        assertTrue(dragon.nodes.stream().anyMatch(TaskNode::isCounterNode));
+        assertTrue(dragon.nodes.stream().anyMatch(TaskNode::isTimerNode));
+        assertTrue(dragon.nodes.stream().anyMatch(TaskNode::isSignalRelayNode));
+        assertEquals("mission_end", dragon.nodeById("mission_watch").observedNodeId);
+        assertEquals("2", dragon.nodeById("closeout_counter").params.get("count"));
     }
 
-    private static Set<String> commandsOf(TaskGraph task) {
-        return task.nodes.stream().map(node -> node.commandId).collect(Collectors.toSet());
+    /** Into the Nether and back through the same frame, with every missing piece answered. */
+    @Test
+    void theNetheriteRunCrossesOverAndComesBack() {
+        TaskGraph run = task(DefaultTasks.NETHERITE);
+        assertEquals("check_dimension", run.nodeById("where").commandId);
+        assertEquals("Nether", run.nodeById("where").params.get("dimension"));
+        assertEquals("use_portal", run.nodeById("cross").commandId);
+        assertEquals("obsidian_check", run.nodeById("cross").onFailure,
+                "no portal in sight: build one from the obsidian carried");
+        assertEquals("use_portal", run.nodeById("enter").commandId);
+        assertEquals("save_waypoint", run.nodeById("n_mark").commandId);
+        assertEquals("waypoint", run.nodeById("to_portal").commandId);
+        assertEquals(run.nodeById("n_mark").params.get("name"),
+                run.nodeById("to_portal").params.get("name"),
+                "the way home is the waypoint saved on arrival");
+        assertEquals("use_portal", run.nodeById("exit").commandId);
+        assertEquals("minecraft:ancient_debris", run.nodeById("strip_one").params.get("target"));
+        assertEquals("15", run.nodeById("strip_one").params.get("y_level"));
+        assertEquals("upgrade_netherite", run.nodeById("upgrade").commandId);
+        assertEquals("rest", run.nodeById("short").onSuccess,
+                "anything missing ends at the pause, so the player can see how far it got");
+    }
+
+    /** Without the compass mod the village search still does something a player would. */
+    @Test
+    void theVillageSearchFallsBackToWalking() {
+        TaskGraph village = task(DefaultTasks.FIND_VILLAGE);
+        List<String> kinds = List.of("plains", "taiga", "savanna", "desert", "snowy");
+        for (int i = 0; i < kinds.size(); i++) {
+            TaskNode card = village.nodeById(kinds.get(i));
+            assertEquals("find_structure", card.commandId);
+            assertEquals("mark", card.onSuccess);
+            assertEquals(i + 1 < kinds.size() ? kinds.get(i + 1) : "on_foot", card.onFailure);
+        }
+        assertEquals("explore", village.nodeById("on_foot").commandId);
     }
 
     @Test
@@ -672,10 +667,30 @@ class DefaultTasksTest {
         TaskGraph first = DefaultTasks.create().getFirst();
         first.name = "edited";
         first.nodes.clear();
+        first.notes.clear();
 
         TaskGraph fresh = DefaultTasks.create().getFirst();
-        assertEquals(LOGS_JOB, fresh.name);
+        assertEquals(DefaultTasks.CHOP_WOOD, fresh.name);
         assertFalse(fresh.nodes.isEmpty());
+        assertFalse(fresh.notes.isEmpty());
+    }
+
+    private static Set<String> commandsOf(TaskGraph task) {
+        return task.nodes.stream().map(node -> node.commandId).collect(Collectors.toSet());
+    }
+
+    @Test
+    void theShelfUsesTheNewCards() {
+        assertTrue(commandsOf(task(DefaultTasks.LUMBER_CAMP)).contains("replant"));
+        assertTrue(commandsOf(task(DefaultTasks.NETHERITE)).contains("use_portal"));
+        assertTrue(commandsOf(task(DefaultTasks.STUFF_BACK)).contains("recover_death"));
+        assertTrue(commandsOf(task(DefaultTasks.CHERRY_TIMBER)).contains("find_biome"));
+    }
+
+    /** A While companion is not a step: it has neither wire, and that is correct. */
+    private static boolean isCompanion(TaskGraph task, TaskNode node) {
+        return task.nodes.stream().anyMatch(other -> node.id.equals(other.onWhile)
+                || other.alwaysTargets.contains(node.id));
     }
 
     /** Flow edges that point at a node earlier in the list: the job's deliberate retries. */
@@ -686,6 +701,7 @@ class DefaultTasksTest {
                         .filter(java.util.Objects::nonNull)
                         .filter(target -> order.indexOf(target) <= order.indexOf(node.id))
                         .map(target -> node.id + " -> " + target))
+                .distinct()
                 .toList();
     }
 

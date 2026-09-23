@@ -22,6 +22,7 @@ public final class TaskSafety {
             Map.entry("air_compare", "At most"),
             Map.entry("air_value", "120"),
             Map.entry("protect_lava", "true"),
+            Map.entry("protect_fire", "true"),
             Map.entry("protect_fall", "true"),
             Map.entry("fall_threshold", "10"),
             Map.entry("clutch_water", "true"),

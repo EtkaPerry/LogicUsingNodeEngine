@@ -20,6 +20,7 @@ import com.etka.lune.bot.util.BoatHelper;
 import com.etka.lune.bot.util.BucketHelper;
 import com.etka.lune.bot.util.FireballDeflect;
 import com.etka.lune.bot.util.InventoryHelper;
+import com.etka.lune.bot.util.Vision;
 import com.etka.lune.mods.WornItems;
 import com.etka.lune.bot.path.WaterEscape;
 import net.minecraft.core.BlockPos;
@@ -29,6 +30,7 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
@@ -42,7 +44,6 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ClipContext;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
@@ -235,7 +236,29 @@ public final class SelfPreservationTask implements WhileMonitor {
      */
     private static final int MAX_DEFLECT_SWINGS = 3;
 
-    private enum Threat { NONE, AIR, LAVA, FALL, FIREBALL, MONSTER, HEALTH }
+    /**
+     * Ticks to get a water bucket out and poured at the feet before the pour is written off. The
+     * swing down takes a tick or two at clutch speed, so most of this is room for a crouch to arrive
+     * and for a landing when whatever lit the bot also knocked it into the air.
+     */
+    private static final int MAX_POUR_TICKS = 20;
+    /**
+     * Ticks the poured water gets to put the fire out before it is taken back up anyway. The server
+     * clears the fire on its next tick with the body in the water, and a flame at the feet is washed
+     * away on the water's first flow, five ticks later; the rest is room for the round trip to a
+     * server that is not on this machine, since the client only learns the fire is out when told.
+     */
+    private static final int POUR_SETTLE_TICKS = 20;
+    /** How far to look for water to run into: a couple of seconds of sprinting, not a trek. */
+    private static final int FIRE_WATER_RADIUS = 12;
+    private static final int FIRE_WATER_BELOW = 4;
+    private static final int FIRE_WATER_ABOVE = 2;
+    /** Ticks a search for water in sight is kept. The question is asked every tick; water stays put. */
+    private static final int WATER_SCAN_INTERVAL = 10;
+    /** Ticks one fire may spend running for water. Fire from lava lasts fifteen seconds; this is five. */
+    private static final int MAX_WATER_RUN_TICKS = 100;
+
+    private enum Threat { NONE, AIR, LAVA, FALL, FIREBALL, FIRE, MONSTER, HEALTH }
 
     private final boolean protectAir;
     private final String airComparison;
@@ -249,6 +272,7 @@ public final class SelfPreservationTask implements WhileMonitor {
     private final int healthThreshold;
     private final boolean protectFall;
     private final int fallThreshold;
+    private final boolean protectFire;
     /** Which of the answers below are switched on; see {@link SafetyOptions}. */
     private final SafetyOptions options;
 
@@ -363,6 +387,29 @@ public final class SelfPreservationTask implements WhileMonitor {
     private int cushionRecoverTicks;
     private final BlockBreaker cushionBreaker = new BlockBreaker();
 
+    /** Where the water poured on a fire went, so it can be picked back up; null when none is out. */
+    private BlockPos fireWater;
+    private int pourTicks;
+    /** Ticks spent waiting in the water, poured or run to, for the fire to go out. */
+    private int settleTicks;
+    /**
+     * What this fire has already been tried with. Kept across releases on purpose and forgotten only
+     * once the fire is out: a monitor that gave up on unreachable water, handed the controls back and
+     * took them again the next tick would run at the same water for as long as the fire lasted.
+     */
+    private boolean pourSpent;
+    private boolean runSpent;
+    /**
+     * The water being run to, and the route there. The route is kept out of {@link #recovery} so
+     * that no other danger's branch can pick it up as its own escape and walk the bot into a pond.
+     */
+    private BlockPos runWater;
+    private Task waterRoute;
+    private int runTicks;
+    /** The last search for water in sight, and when it ran. */
+    private BlockPos waterSeen;
+    private int lastWaterScanTick = Integer.MIN_VALUE;
+
     /** Keeps the twelve-argument form working for anything that only configures the thresholds. */
     public SelfPreservationTask(boolean protectAir, String airComparison, int airThreshold,
                                 boolean protectLava, boolean protectMonsters,
@@ -371,7 +418,7 @@ public final class SelfPreservationTask implements WhileMonitor {
                                 int healthThreshold, boolean protectFall, int fallThreshold) {
         this(protectAir, airComparison, airThreshold, protectLava, protectMonsters,
                 monsterComparison, monsterDistance, protectHealth, healthComparison,
-                healthThreshold, protectFall, fallThreshold, SafetyOptions.all());
+                healthThreshold, protectFall, fallThreshold, true, SafetyOptions.all());
     }
 
     public SelfPreservationTask(boolean protectAir, String airComparison, int airThreshold,
@@ -379,7 +426,7 @@ public final class SelfPreservationTask implements WhileMonitor {
                                 String monsterComparison, int monsterDistance,
                                 boolean protectHealth, String healthComparison,
                                 int healthThreshold, boolean protectFall, int fallThreshold,
-                                SafetyOptions options) {
+                                boolean protectFire, SafetyOptions options) {
         this.options = options == null ? SafetyOptions.all() : options;
         this.protectAir = protectAir;
         this.airComparison = airComparison;
@@ -393,6 +440,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         this.healthThreshold = healthThreshold;
         this.protectFall = protectFall;
         this.fallThreshold = fallThreshold;
+        this.protectFire = protectFire;
     }
 
     @Override
@@ -431,6 +479,8 @@ public final class SelfPreservationTask implements WhileMonitor {
             threat = Threat.NONE;
             hostile = null;
             forgetFireball();
+            stopWaterRoute(ctx);
+            forgetFire();
             status.set("lune.status.self_preservation.player_dead");
             return false;
         }
@@ -441,6 +491,12 @@ public final class SelfPreservationTask implements WhileMonitor {
             safeTicks = 0;
             confirmingSafe = false;
             return true;
+        }
+        if (ctx.player.isInLava()) {
+            // Lava lights a fresh fire every tick, fifteen seconds long. Whatever failed on the one
+            // before is no reason not to try the bucket on this one.
+            stopWaterRoute(ctx);
+            forgetFire();
         }
         if (protectLava && ctx.player.isInLava()) {
             threat = Threat.LAVA;
@@ -465,6 +521,16 @@ public final class SelfPreservationTask implements WhileMonitor {
         // evidence, the same way a hit from an unseen skeleton is.
         if (protectMonsters && options.answerFireballs() && trackFireball(ctx)) {
             threat = Threat.FIREBALL;
+            safeTicks = 0;
+            confirmingSafe = false;
+            return true;
+        }
+
+        // Burning is a heart a second for as long as it lasts - fifteen of them on the way out of
+        // lava - and water ends it on the spot. It goes ahead of the mob check because the answer
+        // is short: a pour at the feet is a few ticks, and the run it falls back on is kept short.
+        if (protectFire && fireNeedsAnswer(ctx)) {
+            threat = Threat.FIRE;
             safeTicks = 0;
             confirmingSafe = false;
             return true;
@@ -550,8 +616,9 @@ public final class SelfPreservationTask implements WhileMonitor {
         // A resolved fireball has nothing left to hide behind, which is the whole reason the confirm
         // window exists - a freshly walled-off zombie is out of the raycast for a few ticks and
         // coming round the wall. A Ghast fires every sixty ticks, so spending thirty of them standing
-        // still after each shot would hand the job half its time for no safety at all.
-        if (threat != Threat.NONE && threat != Threat.FIREBALL
+        // still after each shot would hand the job half its time for no safety at all. A fire that
+        // has gone out is the same: there is nothing it could be hiding behind.
+        if (threat != Threat.NONE && threat != Threat.FIREBALL && threat != Threat.FIRE
                 && safeTicks++ < SAFE_CONFIRM_TICKS) {
             confirmingSafe = true;
             return true;
@@ -619,6 +686,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             case LAVA -> escapeLava(ctx);
             case FALL -> fallClutch(ctx);
             case FIREBALL -> answerFireball(ctx);
+            case FIRE -> putOutFire(ctx);
             case MONSTER -> escapeMonster(ctx);
             case HEALTH -> recoverHealth(ctx);
             case NONE -> TaskStatus.SUCCESS;
@@ -636,6 +704,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             case LAVA -> "danger_lava";
             case FALL -> "danger_fall";
             case FIREBALL -> "danger_fireball";
+            case FIRE -> "danger_fire";
             case MONSTER -> "danger_monster";
             case HEALTH -> "danger_health";
             case NONE -> null;
@@ -686,6 +755,15 @@ public final class SelfPreservationTask implements WhileMonitor {
             phase = "threat=fall;depth=" + SelfPreservationPolicy.fallBucket(ctx.player.fallDistance)
                     + ";water=" + water + ";cushion=" + (cushion != null)
                     + ";boat=" + boat + ";boat-time=" + boatTime;
+        } else if (episodeThreat == Threat.FIRE) {
+            // Not a choice for the learner: the bucket where water stays and the run where it does
+            // not is the rule, and it is the rule because it is right. The method is still worth a
+            // row of its own, since a pour and a sprint take very different times to do the job.
+            FirePolicy.Method method = fireWater != null ? FirePolicy.Method.POUR
+                    : runWater != null ? FirePolicy.Method.RUN : fireMethod(ctx);
+            actions = List.of(SelfPreservationPolicy.DIRECT);
+            phase = "threat=fire;method=" + method.name().toLowerCase(Locale.ROOT)
+                    + ";health=" + SelfPreservationPolicy.healthBucket(ctx.player.getHealth());
         } else {
             actions = List.of(SelfPreservationPolicy.DIRECT);
             phase = "threat=" + episodeThreat.name().toLowerCase(Locale.ROOT)
@@ -969,6 +1047,363 @@ public final class SelfPreservationTask implements WhileMonitor {
         return fireballDodgeLeft
                 ? new Vec3(-heading.z, 0.0, heading.x)
                 : new Vec3(heading.z, 0.0, -heading.x);
+    }
+
+    /**
+     * Burning and able to do something about it, or holding water from a fire that is still to be
+     * picked back up.
+     *
+     * <p>A fire nobody can put out is not a reason to take the controls. With no bucket that will
+     * pour and no water in sight there is nothing to do but let it burn out, and seizing the keys for
+     * that would only take them off the job for as long as it burns.
+     */
+    private boolean fireNeedsAnswer(BotContext ctx) {
+        if (fireWater != null) {
+            // Out or not, the pour is not finished until the water is back in the bucket.
+            return true;
+        }
+        if (!burning(ctx)) {
+            // Out, however it went out. The next fire gets a fresh bucket and a fresh run.
+            stopWaterRoute(ctx);
+            forgetFire();
+            return false;
+        }
+        if (ctx.player.isInWaterOrRain()) {
+            // Already going out. Only worth holding still for when this is the water it ran to, so
+            // the job does not walk straight back out before the server has put the fire out.
+            return runWater != null;
+        }
+        return fireMethod(ctx) != FirePolicy.Method.NONE;
+    }
+
+    /**
+     * On fire in a way worth answering.
+     *
+     * <p>Not in lava, which relights it every tick and is the lava branch's to get out of. Fire
+     * Resistance makes it harmless and a creative or spectating player takes no damage from it. A
+     * rider is left alone too: a pour lands under the mount, and a run means leaving the saddle.
+     */
+    private static boolean burning(BotContext ctx) {
+        Player player = ctx.player;
+        return player.isOnFire()
+                && !player.isInLava()
+                && !player.hasEffect(MobEffects.FIRE_RESISTANCE)
+                && !player.isCreative() && !player.isSpectator()
+                && !player.isPassenger();
+    }
+
+    /** How this fire gets put out, given what has already been tried on it. */
+    private FirePolicy.Method fireMethod(BotContext ctx) {
+        boolean canPour = !pourSpent && hasWaterBucket(ctx.player)
+                && !BucketHelper.waterEvaporates(ctx, ctx.player.blockPosition());
+        // Looked for only once the bucket is out of the question: the search is the costly half.
+        boolean canRun = !canPour && !runSpent && (runWater != null || waterInSight(ctx) != null);
+        return FirePolicy.choose(canPour, canRun);
+    }
+
+    /**
+     * Puts a burning player out: a bucket poured at the feet wherever the water stays, a run into
+     * water in sight where it boils away or there is no bucket, and the bucket filled again after.
+     */
+    private TaskStatus putOutFire(BotContext ctx) {
+        stopRecovery(ctx);
+        if (fireWater != null) {
+            return settlePour(ctx);
+        }
+        if (!burning(ctx)) {
+            stopWaterRoute(ctx);
+            status.set("lune.status.self_preservation.fire_out");
+            return TaskStatus.SUCCESS;
+        }
+        if (ctx.player.isInWaterOrRain()) {
+            stopWaterRoute(ctx);
+            ctx.input.reset();
+            if (++settleTicks > POUR_SETTLE_TICKS) {
+                // In the water and still flagged: whatever is keeping it lit, standing here is not
+                // going to change it. Dropping the target is what stops this being claimed again.
+                runWater = null;
+                return TaskStatus.SUCCESS;
+            }
+            status.set("lune.status.self_preservation.waiting_fire_go_out");
+            return TaskStatus.RUNNING;
+        }
+        return switch (fireMethod(ctx)) {
+            case POUR -> pourOnFire(ctx);
+            case RUN -> runToWater(ctx);
+            case NONE -> letFireBurnOut(ctx);
+        };
+    }
+
+    /**
+     * Pours the water bucket where the body will be standing in it.
+     *
+     * <p>Aimed at the block holding the player up, and poured only once the bucket's own ray says
+     * the water will touch the body - the same test-before-spending the fall clutch makes, for the
+     * same reason: where a bucket empties is decided by the head, not by any block chosen for it.
+     */
+    private TaskStatus pourOnFire(BotContext ctx) {
+        ctx.input.reset();
+        if (++pourTicks > MAX_POUR_TICKS) {
+            pourSpent = true;
+            ctx.debug.decide("could not get water onto the fire in " + MAX_POUR_TICKS + " ticks");
+            status.set("lune.status.self_preservation.aiming_water_at_feet");
+            return TaskStatus.RUNNING;
+        }
+        if (InventoryHelper.equip(ctx, stack -> stack.is(Items.WATER_BUCKET)) < 0) {
+            pourSpent = true;
+            status.set("lune.status.self_preservation.no_water_bucket");
+            return TaskStatus.RUNNING;
+        }
+        if (!ctx.player.getItemInHand(InteractionHand.MAIN_HAND).is(Items.WATER_BUCKET)) {
+            status.set("lune.status.self_preservation.equipping_water_bucket");
+            return TaskStatus.RUNNING;
+        }
+
+        ctx.look.urgent();
+        ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
+        ctx.look.lookAt(ctx.player, pourAim(ctx));
+        if (!ctx.player.onGround()) {
+            // Whatever lit the bot may also have knocked it into the air, and water poured now
+            // lands under a body that is not there yet. The head is already down for the landing.
+            status.set("lune.status.self_preservation.waiting_land");
+            return TaskStatus.RUNNING;
+        }
+
+        AABB body = ctx.player.getBoundingBox();
+        BlockHitResult aim = BucketHelper.aimRay(ctx);
+        if (aim.getType() == HitResult.Type.BLOCK) {
+            // Leaves or a full slab underfoot take the water inside themselves, below the feet,
+            // unless the pour is made crouching - then it sits on top, where the body is. A bottom
+            // slab or a stair holds it where the body already is, so there it stays standing.
+            BlockPos clicked = aim.getBlockPos();
+            ctx.input.sneak = BucketHelper.soaksUpWater(ctx, clicked)
+                    && !FirePolicy.reachesBody(body, clicked)
+                    && FirePolicy.reachesBody(body, clicked.relative(aim.getDirection()));
+        }
+        BlockPos wouldLand = BucketHelper.placementTarget(ctx);
+        if (wouldLand == null || !FirePolicy.reachesBody(body, wouldLand)) {
+            status.set(ctx.input.sneak && !ctx.player.isShiftKeyDown()
+                    ? "lune.status.self_preservation.crouching_pour_top"
+                    : "lune.status.self_preservation.aiming_water_at_feet");
+            return TaskStatus.RUNNING;
+        }
+
+        BucketHelper.use(ctx);
+        if (ctx.player.getItemInHand(InteractionHand.MAIN_HAND).is(Items.BUCKET)) {
+            fireWater = wouldLand;
+            settleTicks = 0;
+            ctx.debug.decide("on fire - poured water at " + wouldLand.toShortString());
+            status.set("lune.status.self_preservation.water_placed");
+        } else {
+            status.set("lune.status.self_preservation.placing_water");
+        }
+        return TaskStatus.RUNNING;
+    }
+
+    /**
+     * Where to look to pour onto the block holding the body up: the middle of its top, just under
+     * the feet. That is straight down for a player standing square on a block, and the right place
+     * for one straddling a step, where the column under the eyes is not the one holding them up and
+     * water poured down it lands too low to reach them.
+     */
+    private static Vec3 pourAim(BotContext ctx) {
+        BlockPos floor = ctx.player.getOnPos();
+        return new Vec3(floor.getX() + 0.5, ctx.player.getY() - 0.05, floor.getZ() + 0.5);
+    }
+
+    /**
+     * Holds still in the poured water until the fire is out, then takes the water back.
+     *
+     * <p>Waits on the fire flag, not on standing in water. The fire only goes out once the server has
+     * had a tick with the body in the water, and a scoop sent sooner can get there first and take the
+     * water away before it has done anything. A flame at the feet is waited out as well: the pour
+     * lands on top of it and washes it away on the first flow, and scooping before then leaves the bot
+     * standing in the fire that lit it.
+     */
+    private TaskStatus settlePour(BotContext ctx) {
+        ctx.input.reset();
+        if ((ctx.player.isOnFire() || touchingFlame(ctx)) && ++settleTicks <= POUR_SETTLE_TICKS) {
+            // Eyes on the water meanwhile, so the scoop is ready the tick the fire goes out.
+            ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
+            ctx.look.lookAt(ctx.player, Vec3.atCenterOf(fireWater));
+            status.set("lune.status.self_preservation.waiting_fire_go_out");
+            return TaskStatus.RUNNING;
+        }
+        TaskStatus pickup = pickUpWater(ctx, fireWater);
+        if (pickup == TaskStatus.RUNNING) {
+            return TaskStatus.RUNNING;
+        }
+        fireWater = null;
+        if (ctx.player.isOnFire()) {
+            // The water went down and the fire stayed lit, so it never reached. A second pour would
+            // miss the same way; whatever comes next is not the bucket.
+            pourSpent = true;
+            ctx.debug.decide("poured water did not put the fire out");
+            return TaskStatus.RUNNING;
+        }
+        return pickup;
+    }
+
+    /** Whether any of the body is inside a fire block, which lights it again every tick. */
+    private static boolean touchingFlame(BotContext ctx) {
+        AABB box = ctx.player.getBoundingBox();
+        for (BlockPos pos : BlockPos.betweenClosed(
+                Mth.floor(box.minX), Mth.floor(box.minY), Mth.floor(box.minZ),
+                Mth.floor(box.maxX), Mth.floor(box.maxY), Mth.floor(box.maxZ))) {
+            if (ctx.level.getBlockState(pos).is(BlockTags.FIRE)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Sprints into water the bot can see.
+     *
+     * <p>Where poured water boils away, or with no bucket, the water has to be gone to. The run is
+     * short and bounded - water already in sight, a few seconds to reach it - because a fire lasts
+     * eight seconds from a flame and fifteen from lava, and a long detour costs more than it saves.
+     */
+    private TaskStatus runToWater(BotContext ctx) {
+        if (++runTicks > MAX_WATER_RUN_TICKS) {
+            runSpent = true;
+            ctx.debug.decide("on fire - no water reached in " + MAX_WATER_RUN_TICKS + " ticks");
+            return letFireBurnOut(ctx);
+        }
+        if (waterRoute == null) {
+            BlockPos water = runWater != null && standableWater(ctx, runWater)
+                    ? runWater : waterInSight(ctx);
+            if (water == null) {
+                runSpent = true;
+                ctx.debug.decide("on fire - no water in sight");
+                return letFireBurnOut(ctx);
+            }
+            runWater = water;
+            settleTicks = 0;
+            // A local sprint to water in view: no digging and no pillaring on the way, the same as
+            // walking up to a tree, because a route that needs either is not a short run.
+            waterRoute = new GotoTask(new Goals.Block(water), true, false, true, false);
+            waterRoute.start(ctx);
+            ctx.debug.decide("on fire - running into the water at " + water.toShortString());
+        }
+        TaskStatus route = waterRoute.tick(ctx);
+        if (waterRoute.statusLine().isBlank()) {
+            status.set("lune.status.self_preservation.running_into_water");
+        } else {
+            status.set("lune.status.detail",
+                    Lang.get("lune.status.self_preservation.running_into_water"),
+                    waterRoute.statusLine());
+        }
+        if (route == TaskStatus.RUNNING) {
+            return TaskStatus.RUNNING;
+        }
+        stopWaterRoute(ctx);
+        if (route == TaskStatus.FAILED) {
+            runSpent = true;
+            ctx.debug.decide("on fire - no route to the water at " + runWater.toShortString());
+            return letFireBurnOut(ctx);
+        }
+        // Arrived. Standing in it, the next tick waits for the fire to go out; still dry means the
+        // water drained from under the goal, and the next tick looks again.
+        runWater = null;
+        return TaskStatus.RUNNING;
+    }
+
+    /**
+     * Hands the controls back with the fire still lit, rather than failing the card. A fire that
+     * cannot be put out burns out by itself, and the job is worth more than standing still while it
+     * does. The caller has already written the reason to the journal.
+     */
+    private TaskStatus letFireBurnOut(BotContext ctx) {
+        stopWaterRoute(ctx);
+        status.set("lune.status.self_preservation.letting_fire_burn_out");
+        return TaskStatus.SUCCESS;
+    }
+
+    /**
+     * The nearest water the bot could see by turning its head, within {@link #FIRE_WATER_RADIUS}.
+     *
+     * <p>Sight rather than the map, by the rule everything else the bot acts on follows: a pond
+     * behind a hill is not somewhere a person on fire knows to run to. Searched ring by ring so the
+     * first ring holding any is the nearest, and kept for a few ticks, because the question is asked
+     * every tick and each answer costs a sight ray per candidate.
+     */
+    private BlockPos waterInSight(BotContext ctx) {
+        int age = ctx.player.tickCount - lastWaterScanTick;
+        if (lastWaterScanTick != Integer.MIN_VALUE && age >= 0 && age < WATER_SCAN_INTERVAL
+                && (waterSeen == null || standableWater(ctx, waterSeen))) {
+            return waterSeen;
+        }
+        lastWaterScanTick = ctx.player.tickCount;
+        com.etka.lune.bot.LuneProfiler.push("water scan");
+        try {
+            waterSeen = findWaterInSight(ctx);
+        } finally {
+            com.etka.lune.bot.LuneProfiler.pop();
+        }
+        return waterSeen;
+    }
+
+    private static BlockPos findWaterInSight(BotContext ctx) {
+        BlockPos feet = ctx.player.blockPosition();
+        Vec3 body = ctx.player.position();
+        for (int radius = 0; radius <= FIRE_WATER_RADIUS; radius++) {
+            List<BlockPos> ring = new ArrayList<>();
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != radius) {
+                        continue;
+                    }
+                    for (int dy = -FIRE_WATER_BELOW; dy <= FIRE_WATER_ABOVE; dy++) {
+                        BlockPos candidate = feet.offset(dx, dy, dz);
+                        if (standableWater(ctx, candidate)) {
+                            ring.add(candidate);
+                        }
+                    }
+                }
+            }
+            // Sorted before the sight rays rather than after, so the usual case costs one ray.
+            ring.sort(Comparator.comparingDouble(pos -> pos.distToCenterSqr(body)));
+            for (BlockPos candidate : ring) {
+                if (Vision.isReachable(ctx, candidate)) {
+                    return candidate;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Water the body can stand or float in, with no lava touching it. */
+    private static boolean standableWater(BotContext ctx, BlockPos pos) {
+        return ctx.level.hasChunkAt(pos)
+                && MovementHelper.isWater(ctx.level, pos)
+                && MovementHelper.canStandAt(ctx.level, pos, true)
+                && !MovementHelper.nearLava(ctx.level, pos);
+    }
+
+    private void stopWaterRoute(BotContext ctx) {
+        if (waterRoute != null) {
+            waterRoute.stop(ctx);
+            waterRoute = null;
+        }
+    }
+
+    /** What is only true of this attempt at the fire. */
+    private void forgetFireAttempt() {
+        fireWater = null;
+        pourTicks = 0;
+        settleTicks = 0;
+        runWater = null;
+        runTicks = 0;
+    }
+
+    /** Everything about the fire, once it is out or the bot is gone. */
+    private void forgetFire() {
+        forgetFireAttempt();
+        pourSpent = false;
+        runSpent = false;
+        waterSeen = null;
+        lastWaterScanTick = Integer.MIN_VALUE;
     }
 
     private TaskStatus escapeMonster(BotContext ctx) {
@@ -2359,7 +2794,7 @@ public final class SelfPreservationTask implements WhileMonitor {
      */
     private boolean canWaterClutch(BotContext ctx) {
         return options.waterClutch() && hasWaterBucket(ctx.player)
-                && !ctx.level.dimension().equals(Level.NETHER);
+                && !BucketHelper.waterEvaporates(ctx, ctx.player.blockPosition());
     }
 
     private boolean canBoatClutch(BotContext ctx) {
@@ -3118,8 +3553,14 @@ public final class SelfPreservationTask implements WhileMonitor {
         if (clutchWater == null || !bucketPlaced) {
             return TaskStatus.SUCCESS;
         }
+        return pickUpWater(ctx, clutchWater);
+    }
 
-        BlockPos waterPos = clutchWater;
+    /**
+     * Fills an empty bucket from water this monitor poured, whichever danger it was poured for.
+     * Gives up rather than chasing it: a bucket is worth a few ticks, not a walk.
+     */
+    private TaskStatus pickUpWater(BotContext ctx, BlockPos waterPos) {
         if (!ctx.level.getBlockState(waterPos).getFluidState().is(FluidTags.WATER)) {
             status.set("lune.status.self_preservation.water_gone");
             return TaskStatus.SUCCESS;
@@ -3264,6 +3705,9 @@ public final class SelfPreservationTask implements WhileMonitor {
         threat = Threat.NONE;
         hostile = null;
         forgetFireball();
+        // Only the attempt: what this fire was already tried with is kept until it goes out.
+        stopWaterRoute(ctx);
+        forgetFireAttempt();
         escapeAttempts = 0;
         monsterEscapes = 0;
         trackedHostileId = -1;
@@ -3319,6 +3763,7 @@ public final class SelfPreservationTask implements WhileMonitor {
     @Override
     public void onStop(BotContext ctx) {
         onControlReleased(ctx);
+        forgetFire();
     }
 
     /**

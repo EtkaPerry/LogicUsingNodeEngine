@@ -14,7 +14,7 @@
 
 **Automate Minecraft visually. Connect logic cards like circuits, hit Run, and let your bot handle the grind.**
 
-Lune is a powerful, 100% client-side automation and companion mod. Instead of writing complex scripts, typing console commands, or wrestling with confusing configs, Lune gives you an interactive in-game visual canvas. Drag task cards onto the screen, wire them together with intuitive Success, Failure, and Parallel connections, and watch your character autonomously navigate, fell entire forests, mine deepslate quarries, tend farms, manage inventories, or defend against mobs. A long multi-stage progression route is included too, but it is an experiment rather than a finished speedrun — see the note on tasks 5 and 6.
+Lune is a powerful, 100% client-side automation and companion mod. Instead of writing complex scripts, typing console commands, or wrestling with confusing configs, Lune gives you an interactive in-game visual canvas. Drag task cards onto the screen, wire them together with intuitive Success, Failure, and Parallel connections, and watch your character autonomously navigate, fell entire forests, mine deepslate quarries, tend farms, manage inventories, or defend against mobs. A long multi-stage progression route is included too, but it is an experiment rather than a finished speedrun — see the note on tasks 11 to 13.
 
 Designed from the ground up for fairness, safety, and immersion: Lune plays like a real player—using realistic line-of-sight raycasts, humanized camera easing, and intelligent biome scouting rather than omniscient wall-hacks.
 
@@ -45,6 +45,7 @@ Inside the Task Editor, Lune acts as your intelligent advisor. She watches your 
 - **Find Anything (`Ctrl+F`)**: Search the canvas by card name, command id, or anything you typed into a parameter — "diamond" finds the mine card looking for it. Matches light up, everything else dims, and `Enter` walks you from one to the next. Notes and groups are searched too.
 - **Sticky Notes (`N`)**: Drop a coloured note anywhere on the board to record *why* a branch is wired the way it is. Notes travel with the task through save, export and import, so the reasoning arrives with the graph instead of staying in your head.
 - **Card Groups (`Ctrl+G`)**: Draw a named, coloured frame around a handful of cards. Drag its title bar to move the whole section, and collapse it to a single bar when you are working elsewhere — wires that leave the group still connect to it, so a closed group reads as one card with a lot going on inside.
+- **Trace a Cable (middle-click)**: When the wiring gets busy, middle-click a cable to make it shine. It glows, with sparks running from the card it leaves to the card it reaches, both of those cards are ringed, every other cable fades back, and the minimap draws it too. Middle-drag to follow it across the canvas; middle-click it again, click empty canvas, or press `Esc` to let it go.
 - **Breakpoints & Step-Through (`F9`)**: Put a breakpoint on a card and the run stops the moment the signal arrives there, before the card does anything. **Step** runs that card and stops at the next one; **Continue** carries on to the next breakpoint. The bot stands still while held rather than drifting on with a walk key down.
 - **Copy, Paste, Duplicate (`Ctrl+C` / `Ctrl+V` / `Ctrl+D`)**: Lift a chunk of one task and drop it into another with every wire *between* those cards intact. Press `F` to zoom to what is selected, `Home` to fit the whole task.
 
@@ -69,6 +70,15 @@ Inside the Task Editor, Lune acts as your intelligent advisor. She watches your 
 ### Interactive In-Game Training Course
 - Includes **10 hands-on puzzle challenges** directly within the control panel.
 - Learn node mechanics step-by-step: understand power sources, signal flow, loop termination, and life-saving safety circuits.
+- Open it from **Menu** at the right end of the panel's tab bar: Lune's corner shows the whole course, what each step is about, and a Continue button for the one that is next.
+
+### Games While Lune Works
+- **Redstone Wires**: turn tiles of redstone dust until the block of redstone lights every lamp on the board. It is drawn in the game's own textures and colours, so a resource pack's redstone is the redstone you play with.
+- Every board is new. The block of redstone can stand anywhere, some boards are bushy with lamps and some wind through with only a few, and a board you have been dealt is never dealt again, not even turned round or mirrored. Every one has an answer, because each starts as a finished circuit that is then scrambled.
+- Four board sizes from 5×5 to 13×11, each with its own best time and a count of how many you have solved. Left-click turns a tile, right-click turns it back, and Shift-click locks one you are sure of.
+- The clock only runs while the board is on screen, so looking away to check on the bot never costs you time. Open it from **Menu**, then **Games**.
+- **Recipe Riddle**: an item on the left, the game's own crafting table on the right, and twenty stacks below: the recipe's ingredients hidden among decoys. Craft it. Any crafting recipe can come up, a mod's as well as the game's; on a server, the ones your recipe book has unlocked. It handles like any inventory in the game: left-click takes a stack, right-click half, holding the button while you drag across the grid lays one in every square you pass, and Shift-click moves a stack into the grid or a square back out.
+- The result square shows whatever your grid would make, so a wrong answer still tells you what it is. Stuck? Place one item, show the shape, or clear half the decoys, and the last square is always yours. Solved riddles are counted, and the ones solved without a hint are counted apart.
 
 ### Accessibility & Modern Comfort
 - **Color-Blind Friendly**: One-click toggle for the Okabe-Ito high-contrast color palette, making Success and Failure connections effortless to distinguish.
@@ -87,7 +97,7 @@ Inside the Task Editor, Lune acts as your intelligent advisor. She watches your 
 1. **Install**: Drop the Lune jar for your loader (**NeoForge**, **Forge**, or **Fabric + Fabric API**) into your `mods` folder.
 2. **Open the Panel**: Load into your world and press **`X`**.
 3. **Safety First**: On the first launch, review and accept the three quick safety checkboxes (acknowledging server rules, fair use, and safety backups).
-4. **Run a Starter Task**: In the **Main** tab, choose a pre-loaded task (like *Chop 12 Logs*) and press **Run**. Watch the bot get to work!
+4. **Run a Starter Task**: In the **Main** tab, choose a pre-loaded task (start with *1. Chop Wood*) and press **Start**. Open it on the **Task** tab to read the notes that explain every card.
 5. **Create Your Own**: Switch to the **Task** tab, drag cards onto the canvas, wire your pins, and create custom automated workflows.
 
 ---
@@ -108,18 +118,41 @@ All keys can be rebound in the standard Minecraft **Controls** screen under the 
 
 ## Pre-Loaded Starter Tasks
 
-Lune ships with 6 tasks demonstrating what the node engine can do. The first four do what they say; tasks 5 and 6 are long demonstration graphs — read the note under the table before running them.
+Lune ships with 15 tasks on a shelf that runs from a two-minute demo to what the engine can be asked to do. The last two need a compass mod and are listed only while it is installed, so a pack without them shows tasks 1 to 13. Every one of them explains itself: open it on the **Task** tab and sticky notes above each section say what the cards under them do, in your language, while framed groups name the sections. Each task reads left to right along one lane, however long it gets.
 
-| Task | Complexity | What It Does |
+**Demos** take a few minutes from an empty pack and finish on their own.
+
+| Task | Cards | What It Does |
 | :--- | :---: | :--- |
-| **1. Chop 12 Logs** | 8 Cards | Punches trees by hand, crafts a wooden axe, and harvests wood 33% faster. |
-| **2. Wood, Pickaxe, 20 Stone** | 17 Cards | The essential survival kickstart: wooden pickaxe &rarr; stone quarrying &rarr; full stone tool set. |
-| **3. Homestead: Farm and Guard** | 22 Cards | Tends crops during daylight and patrols farm perimeters with a **Stay Near** boundary after dusk. |
-| **4. Fish Till Dusk, Then Sleep** | 27 Cards | Automated casting and reeling loop governed by the day/night clock, returning to bed at twilight. |
-| **5. Stone Tools to a Lit Portal** | 53 Cards | *Demonstration graph.* Wires iron mining &rarr; smelting &rarr; diamond hunting &rarr; obsidian quarrying &rarr; building and lighting a Nether Portal. Does not finish — see below. |
-| **6. New World to Ender Dragon** | 79 Cards | *Demonstration graph.* The longest route we have wired, from the first oak tree through to the End. Does not finish — see below. |
+| **1. Chop Wood** | 12 | Punches six logs by hand, makes a wooden axe from them, and chops six more with it. Start here. |
+| **2. Stone Tools from Scratch** | 16 | Logs, a wooden pickaxe and twenty stone, then a stone pickaxe, axe and sword. |
+| **3. Go Fishing** | 10 | Ten catches at the water you are standing by. Needs a fishing rod. |
+| **4. Dig a Tunnel** | 10 | Makes a stone pickaxe if needed, digs 32 blocks the way you face, and walks back out. |
 
-> **About tasks 5 and 6.** These two ship to show the *shape* of a long route — how many cards it takes and how the stages wire together — not as results we can promise. The `Complete Game` card behind them was written to see how the engine copes with a long multi-stage mission, and that is still what it is for. In our own testing the bot has not reached the Nether portal stage, so every stage past it (fortress, blazes, Ender pearls, the End) is implemented but unproven. Run them as experiments and expect them to stop early.
+**Chores** run for hours unattended and stop by themselves. Stand beside a chest before pressing Start.
+
+| Task | Cards | What It Does |
+| :--- | :---: | :--- |
+| **5. Lumber Camp** | 27 | Fells trees, plants a sapling where each one stood, and stores the logs in the chest. Ends after two hours or when the chest is full, then saves and returns to the main menu. |
+| **6. Stone Quarry** | 25 | Digs stone and carries the cobblestone to the chest for three hours, or until the chest is full. |
+| **7. Homestead, Every Day** | 34 | Harvests and replants by day, keeps a stock of meat, cuts wood, and sleeps or guards the yard at night, for three hours. |
+| **8. Smeltery** | 17 | Smelts every raw iron, gold and copper carried, making a furnace and chopping fuel when needed. |
+| **9. Night Watch** | 18 | Guards one spot from dark to sunrise, going back to its post after every fight. |
+
+**Expeditions** show what the engine can be asked to do.
+
+| Task | Cards | What It Does |
+| :--- | :---: | :--- |
+| **10. Get My Stuff Back** | 11 | Walks back to your last death, picks up the drops, puts the armor back on, and comes home. |
+| **11. Stone Tools to a Lit Portal** | 56 | *Demonstration graph.* Iron &rarr; diamonds &rarr; obsidian &rarr; a lit Nether portal and ender pearls. See below. |
+| **12. New World to Ender Dragon** | 79 | *Demonstration graph.* The whole game, from the first tree to the End. See below. |
+| **13. Netherite from the Nether** | 46 | Crosses into the Nether, mines ancient debris, comes home and upgrades a diamond pickaxe. Needs the upgrade template from a bastion. See below. |
+| **14. Find a Village** | 13 | Asks the Explorer's Compass for each kind of village in turn, and explores on foot when no compass is carried. Listed only with Explorer's Compass installed. |
+| **15. Cherry Grove Timber** | 16 | Finds a cherry grove with Nature's Compass, cuts and replants it, and brings the logs home. Listed only with Nature's Compass installed. |
+
+> **About tasks 11 to 13.** These ship to show the *shape* of a long route — how many cards it takes and how the stages wire together — not as results we can promise. In our own testing the bot has not reached the Nether portal stage of task 12, so every stage past it (fortress, blazes, Ender pearls, the End) is implemented but unproven, and task 13 depends on the same crossing. Run them as experiments and expect them to stop early; tasks 11 and 13 pause the world when they stop, so you can see how far they got.
+
+> **Upgrading from an earlier version?** Your existing tasks are never touched. Press **Restore default tasks** on the Config tab to add the new shelf beside them.
 
 ---
 
@@ -129,14 +162,14 @@ Every card defines a distinct capability that can be combined with others:
 
 | Category | Available Cards & Nodes |
 | :--- | :--- |
-| **Gathering** | `Mine` (ores/blocks), `Chop Wood` (trees), `Harvest` (crops), `Loot` (ground items), `Fish`, `Hunt Sheep` (wool/mutton) |
-| **Movement** | `Walk`, `Run`, `Step` (micro-adjustment), `Go to Waypoint`, `Save Waypoint`, `Boat`, `Explore`, `Find Biome` (Nature's Compass), `Find Structure` (Explorer's Compass) |
+| **Gathering** | `Mine` (ores/blocks), `Chop Wood` (trees), `Replant Trees` (a sapling back where each felled tree stood), `Harvest` (crops), `Loot` (ground items), `Fish`, `Hunt Sheep` (wool/mutton) |
+| **Movement** | `Walk`, `Run`, `Step` (micro-adjustment), `Go to Waypoint`, `Save Waypoint`, `Boat`, `Explore`, `Find Biome` (Nature's Compass), `Find Structure` (Explorer's Compass), `Use Nether Portal` (walk into a lit portal and cross over) |
 | **Mining & Building** | `Place Block`, `Bridge` (chasm traversal), `Tunnel` (clearing corridors), `Stripmine` (shaft and branches, mining the ore it opens &mdash; ancient debris in the Nether included), `Build Nether Portal` |
-| **Items & Crafting** | `Get Tools` (smart autonomous material gatherer & crafter), `Craft` (recipe & 3x3 grid), `Smelt` (furnaces, ancient debris included), `Upgrade to Netherite` (smithing table; the template and the ingot have to be in the bag), `Deposit` (chests), `Deposit to Backpack` and `Take from Backpack` (Sophisticated Backpacks, Traveler's Backpack), `Select Item`, `Equip` (wear the best armor carried, or one chosen piece &mdash; accessory slots included where a mod adds them), `Recover Death Drop` (walk back to a death and sweep up the drops) |
+| **Items & Crafting** | `Get Tools` (smart autonomous material gatherer & crafter), `Craft` (recipe & 3x3 grid), `Smelt` (furnaces, ancient debris included), `Upgrade to Netherite` (smithing table; the template and the ingot have to be in the bag), `Deposit` (chests; a full chest fails the card, so a task can end or go elsewhere), `Deposit to Backpack` and `Take from Backpack` (Sophisticated Backpacks, Traveler's Backpack), `Select Item`, `Equip` (wear the best armor carried, or one chosen piece &mdash; accessory slots included where a mod adds them), `Recover Death Drop` (walk back to a death and sweep up the drops) |
 | **Combat** | `Kill` (targeted mob), `Hunt Creepers`, `Hunt Skeletons`, `Hunt Endermen`, `Hunt Blazes` |
 | **Survival & Safety** | `Eat` (hunger management), `Sleep` (beds), `Self Preservation` (companion combat & hazard avoidance), `Stay Near` (leash radius) |
 | **Logic & Flow** | `START`, `End`, `Always` (continuous power), `Pulse` (metronome clock), `While` (condition monitor), `Check Item Count`, `Check Player` (health, hunger, air, XP level, tool durability, free slots, light level, nearest player), `Check Distance`, `Check Time` (day/night phase), `Check Clock` (until 20:00, on the game or system clock), `Check Weather` (clear, raining, thundering), `Check Dimension` (Overworld, Nether, End), `Timer` (pulse delay in game ticks), `Countdown` (20 minutes, 5 hours, 2 days &mdash; real time), `Counter`, `Signal Relay`, `Observer`, `Button`, `Run Task`, `Notify` (any sound in the game, plus an on-screen line) |
-| **Grand Missions** | `Complete Game` (experimental multi-stage progression route &mdash; see the note on tasks 5 and 6) |
+| **Grand Missions** | `Complete Game` (experimental multi-stage progression route &mdash; see the note on tasks 11 to 13) |
 
 ---
 

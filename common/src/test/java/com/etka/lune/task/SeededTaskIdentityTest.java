@@ -37,19 +37,46 @@ class SeededTaskIdentityTest {
     void everySeededJobCarriesAnIdAndTheyAreAllDifferent() {
         List<TaskGraph> tasks = DefaultTasks.create();
         List<String> ids = tasks.stream().map(task -> task.seededId).toList();
-        assertEquals(List.of("logs", "stone", "homestead", "nightfall", "portal", "dragon"), ids);
+        assertEquals(List.of("chop_wood", "stone_tools", "go_fishing", "dig_tunnel", "lumber_camp",
+                "stone_quarry", "homestead_day", "smeltery", "night_watch", "stuff_back",
+                "lit_portal", "ender_dragon", "netherite", "find_village", "cherry_timber"), ids);
     }
 
     @Test
     void theNameStaysEnglishWhileTheTitleFollowsTheLanguage() {
-        TaskGraph logs = DefaultTasks.create().get(0);
-        assertEquals("1. Chop 12 Logs", logs.name);
-        assertEquals("1. Chop 12 Logs", logs.displayName());
+        TaskGraph chop = DefaultTasks.create().get(0);
+        assertEquals("1. Chop Wood", chop.name);
+        assertEquals("1. Chop Wood", chop.displayName());
 
         Lang.select("tr_tr");
-        assertEquals("1. 12 Kütük Kes", logs.displayName());
+        assertEquals("1. Odun Kes", chop.displayName());
         // The half that is written to disk and compared against must not have moved.
-        assertEquals("1. Chop 12 Logs", logs.name);
+        assertEquals("1. Chop Wood", chop.name);
+    }
+
+    /**
+     * The ladder this shelf replaced is no longer seeded, but players who ran it still have it.
+     * Its jobs keep their ids and their translated titles, and none of them is mistaken for a new
+     * job - so a restore brings the whole new shelf in beside them.
+     */
+    @Test
+    void theRetiredLadderKeepsItsTitlesAndDoesNotHideTheNewShelf() {
+        List<TaskGraph> saved = new ArrayList<>();
+        for (String name : List.of("1. Chop 12 Logs", "2. Wood, Pickaxe, 20 Stone",
+                "3. Homestead: Farm and Guard", "4. Fish Till Dusk, Then Sleep",
+                "5. Stone Tools to a Lit Portal", "6. New World to Ender Dragon")) {
+            TaskGraph old = new TaskGraph(name);
+            TaskStore.adoptSeededId(old);
+            assertNotNull(old.seededId, name + " should still be recognised as a starter job");
+            saved.add(old);
+        }
+        Lang.select("tr_tr");
+        assertEquals("1. 12 Kütük Kes", saved.get(0).displayName());
+
+        for (TaskGraph fresh : DefaultTasks.create()) {
+            assertFalse(TaskStore.alreadyPresent(saved, fresh),
+                    fresh.name + " would be withheld from a player who still has the old ladder");
+        }
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.etka.lune.task;
 
 import com.etka.lune.Constants;
+import com.etka.lune.bot.command.CommandRegistry;
 import com.etka.lune.platform.Services;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -17,6 +18,7 @@ import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -68,6 +70,20 @@ public final class TaskStore {
         return tasks.stream().map(task -> task.name).toList();
     }
 
+    /**
+     * The tasks a player picks from: every one of them, except a starter job waiting on a mod this
+     * game does not have. See {@link TaskGraph#isListed}. The hidden ones stay in the file, and
+     * {@link #all()} still returns them, so nothing that looks a task up by name is affected.
+     */
+    public List<TaskGraph> listed() {
+        return tasks.stream().filter(task -> task.isListed(CommandRegistry::isAvailable)).toList();
+    }
+
+    /** The names of {@link #listed()}, for pickers that offer a task to run. */
+    public List<String> listedNames() {
+        return listed().stream().map(task -> task.name).toList();
+    }
+
     public Optional<TaskGraph> byName(String name) {
         return tasks.stream().filter(task -> task.name.equalsIgnoreCase(name)).findFirst();
     }
@@ -108,6 +124,13 @@ public final class TaskStore {
         }
     }
 
+    /** Removes several tasks and writes the file once, rather than once for each of them. */
+    public void removeAll(Collection<TaskGraph> doomed) {
+        if (doomed != null && tasks.removeAll(doomed)) {
+            save();
+        }
+    }
+
     /**
      * Takes ownership of a graph built in code, replacing any task already using its name.
      *
@@ -136,20 +159,28 @@ public final class TaskStore {
      * still that job; a save written before ids existed is recognised by the name it shipped
      * under, which {@link #normalize} has already turned back into an id by this point.</p>
      *
-     * @return the number of built-in tasks restored
+     * <p>A job waiting on a mod that is not installed is restored as well, and listed once the mod
+     * is there. It is not counted, because the number is shown to the player as how many jobs
+     * came back, and one they cannot see did not come back as far as they can tell.</p>
+     *
+     * @return the number of built-in tasks restored that the player can see
      */
     public int restoreMissingDefaults() {
         int restored = 0;
+        int shown = 0;
         for (TaskGraph defaultTask : DefaultTasks.create()) {
             if (!alreadyPresent(tasks, defaultTask)) {
                 tasks.add(defaultTask);
                 restored++;
+                if (defaultTask.isListed(CommandRegistry::isAvailable)) {
+                    shown++;
+                }
             }
         }
         if (restored > 0) {
             save();
         }
-        return restored;
+        return shown;
     }
 
     /**

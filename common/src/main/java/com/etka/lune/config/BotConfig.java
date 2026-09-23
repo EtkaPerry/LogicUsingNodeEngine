@@ -181,8 +181,28 @@ public final class BotConfig {
     // --- Editor state -------------------------------------------------------
     /** Last task opened in the editor; harmless when the task was later deleted. */
     public String lastOpenedTask = "";
+    /**
+     * Where the canvas was last looking in each task, by task name.
+     *
+     * <p>The canvas is one widget for every task, so without this a task opened wherever the one
+     * before it had been left - usually a stretch of empty grid. By name for the same reason as
+     * {@link #lastOpenedTask}: the name is a task's identity on disk. The editor moves an entry
+     * when its task is renamed and drops it when the task is deleted.</p>
+     */
+    public Map<String, TaskView> taskViews = new LinkedHashMap<>();
     /** Training lesson ids the player has cleared; see {@code com.etka.lune.training}. */
     public Set<String> trainingCompleted = new LinkedHashSet<>();
+    /** Redstone Wires: the fastest clear per board size id, in milliseconds; see {@code com.etka.lune.games}. */
+    public Map<String, Long> wiresBest = new LinkedHashMap<>();
+    /** Redstone Wires: how many boards of each size id have been cleared. */
+    public Map<String, Integer> wiresCleared = new LinkedHashMap<>();
+    /** Redstone Wires: every board dealt per size id, packed, so none is ever dealt twice. */
+    public Map<String, String> wiresDealt = new LinkedHashMap<>();
+    /** Recipe Riddle: riddles solved, and how many of them without a hint; see {@code com.etka.lune.games}. */
+    public int riddlesSolved = 0;
+    public int riddlesSolvedClean = 0;
+    /** Recipe Riddle: every recipe asked, packed, so none is asked twice until all have been. */
+    public String riddlesDealt = "";
 
     // --- Lune assistant -----------------------------------------------------
     /** Hide the assistant and compact in-world status without losing her position or preferences. */

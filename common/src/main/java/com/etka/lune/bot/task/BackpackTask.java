@@ -4,6 +4,7 @@ import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
+import com.etka.lune.bot.util.InventoryHelper;
 import com.etka.lune.compat.Screens;
 import com.etka.lune.mods.BackpackHook;
 import com.etka.lune.mods.Backpacks;
@@ -115,9 +116,7 @@ abstract class BackpackTask implements Task {
 
     /** Whether the stack in a slot is the one that was there last time - the sign a click did nothing. */
     protected static boolean unchanged(ItemStack before, ItemStack now) {
-        return before != null && !before.isEmpty() && !now.isEmpty()
-                && before.getCount() == now.getCount()
-                && ItemStack.isSameItemSameComponents(before, now);
+        return InventoryHelper.unchanged(before, now);
     }
 
     protected TaskStatus unavailable(String key, Object... args) {

@@ -37,11 +37,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DefaultTasksParameterTest {
 
     /**
-     * Choices whose options come from what the player has saved, not from a fixed list. A task
-     * that names a job or a waypoint is deliberately allowed to name one that does not exist yet,
-     * and reaching for the stores that hold them would drag config files into a unit test.
+     * Choices whose options come from what the player has saved or from the world they are in,
+     * not from a fixed list. A task that names a job or a waypoint is deliberately allowed to name
+     * one that does not exist yet, and reaching for the stores that hold them would drag config
+     * files into a unit test. Biomes and structures are the world's own registries, and there is
+     * no world in a unit test to ask.
      */
-    private static final Set<String> PLAYER_SUPPLIED = Set.of("task", "waypoint", "check_distance");
+    private static final Set<String> PLAYER_SUPPLIED = Set.of("task", "waypoint", "check_distance",
+            "find_biome", "find_structure");
+
+    /**
+     * Cards whose task names its item while it is being built, which needs the item components a
+     * unit test does not have. Their parameters are still checked by every other test here; only
+     * the build is left to the game.
+     */
+    private static final Set<String> BUILT_IN_GAME_ONLY = Set.of("craft");
 
     @BeforeAll
     static void bootstrapRegistries() {
@@ -152,12 +162,27 @@ class DefaultTasksParameterTest {
         });
     }
 
+    /**
+     * The jobs built on a mod's card, read off the real gate rather than a copy of it: a starter
+     * job that uses one is listed only while that mod is installed, and a new mod card that some
+     * other job starts using would hide that job too.
+     */
+    @Test
+    void onlyTheCompassJobsAreBuiltOnAModsCard() {
+        List<String> gated = DefaultTasks.create().stream()
+                .filter(task -> !task.isListed(id -> !CommandRegistry.modCards().contains(id)))
+                .map(task -> task.name)
+                .toList();
+        assertEquals(List.of(DefaultTasks.FIND_VILLAGE, DefaultTasks.CHERRY_TIMBER), gated);
+    }
+
     /** Every card builds the work it names, rather than the placeholder a bad parameter produces. */
     @Test
     void everySeededCardBuildsRealWork() {
         forEachCommandNode((task, node) -> {
             CommandDef def = CommandRegistry.byId(node.commandId);
-            if (def == null || PLAYER_SUPPLIED.contains(node.commandId)) {
+            if (def == null || PLAYER_SUPPLIED.contains(node.commandId)
+                    || BUILT_IN_GAME_ONLY.contains(node.commandId)) {
                 return;
             }
             assertFalse(def.buildWith(node.params) instanceof FailTask,

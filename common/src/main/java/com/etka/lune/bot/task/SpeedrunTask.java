@@ -28,7 +28,6 @@ import com.etka.lune.bot.util.Vision;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.Direction;
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
@@ -1339,7 +1338,7 @@ public final class SpeedrunTask implements Task {
                         new KillOptions(false, true, false, KillOptions.EndermanSafety.AUTO,
                                 KillOptions.WeaponPreference.SWORD, false), unreachableEndermen);
             }
-            case NETHER_EXIT -> new PortalTravelTask(Level.OVERWORLD, netherPortal, 256);
+            case NETHER_EXIT -> new UsePortalTask(Level.OVERWORLD, netherPortal, 256);
             case BLAZE_POWDER -> {
                 if (InventoryHelper.has(ctx.player, Items.BLAZE_POWDER, 14)) {
                     phase = Phase.EYES;
@@ -2550,9 +2549,7 @@ public final class SpeedrunTask implements Task {
     }
 
     private static BlockPos findPortal(BotContext ctx, BlockPos centre, int radius) {
-        return BlockScanner.findNearest(ctx.level, centre, Set.of(Blocks.NETHER_PORTAL), radius,
-                ctx.level.getMinY(), ctx.level.getMaxY(), Set.of(),
-                (pos, state) -> ctx.omniscientMining() || Vision.isVisible(ctx, pos));
+        return UsePortalTask.findPortal(ctx, centre, radius);
     }
 
     /**
@@ -4256,87 +4253,6 @@ public final class SpeedrunTask implements Task {
     }
 
     /** Walks into a portal and completes when the requested dimension is active. */
-    private static final class PortalTravelTask implements Task {
-        private static final int TIMEOUT = 900;
-
-        private final ResourceKey<Level> dimension;
-        private final BlockPos anchor;
-        private final int searchRadius;
-        private BlockPos portal;
-        private GotoTask approach;
-        private int ticks;
-        private final StatusText status = new StatusText();
-
-        PortalTravelTask(ResourceKey<Level> dimension, BlockPos anchor, int searchRadius) {
-            this.dimension = dimension;
-            this.anchor = anchor;
-            this.searchRadius = searchRadius;
-        }
-
-        @Override
-        public String name() { return Lang.get("lune.task.nested.use_nether_portal"); }
-
-        @Override
-        public String learningId() { return Task.learningName("Use Nether Portal"); }
-
-        @Override
-        public StatusText statusLine() {
-        return status;
-    }
-
-        @Override
-        public TaskStatus onTick(BotContext ctx) {
-            if (ctx.level.dimension() == dimension) {
-                status.set("lune.status.speedrun.arrived_target_dimension");
-                return TaskStatus.SUCCESS;
-            }
-
-            if (portal == null || !ctx.level.getBlockState(portal).is(Blocks.NETHER_PORTAL)) {
-                portal = anchor != null && ctx.level.getBlockState(anchor).is(Blocks.NETHER_PORTAL)
-                        ? anchor : findPortal(ctx, ctx.player.blockPosition(), searchRadius);
-                if (portal == null) {
-                    status.set("lune.status.speedrun.no_nether_portal_loaded_area");
-                    return TaskStatus.FAILED;
-                }
-            }
-
-            if (approach == null) {
-                approach = new GotoTask(new Goals.Near(portal, 2), true, false);
-                approach.start(ctx);
-            }
-            TaskStatus walk = approach.tick(ctx);
-            if (walk == TaskStatus.RUNNING) {
-                status.set("lune.status.speedrun.walking_portal");
-                return TaskStatus.RUNNING;
-            }
-            if (walk == TaskStatus.FAILED) {
-                status.set("lune.status.speedrun.could_not_reach_portal");
-                return TaskStatus.FAILED;
-            }
-            approach.stop(ctx);
-            approach = null;
-
-            ctx.look.lookAt(ctx.player, Vec3.atCenterOf(portal));
-            ctx.input.forward = true;
-            ctx.input.sprint = true;
-            if (++ticks > TIMEOUT) {
-                status.set("lune.status.speedrun.portal_did_not_change_dimension");
-                return TaskStatus.FAILED;
-            }
-            status.set("lune.status.speedrun.entering_portal");
-            return TaskStatus.RUNNING;
-        }
-
-        @Override
-        public void onStop(BotContext ctx) {
-            if (approach != null) {
-                approach.stop(ctx);
-                approach = null;
-            }
-            ctx.input.reset();
-        }
-    }
-
     /**
      * Casts a ten-obsidian portal from visible source fluids with two buckets. This is intentionally
      * conservative: if the water or lava source cannot be seen and reached, the task stops instead

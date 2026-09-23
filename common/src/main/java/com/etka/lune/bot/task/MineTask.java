@@ -11,7 +11,9 @@ import com.etka.lune.bot.learning.LearningContext;
 import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.learning.LearningStore;
 import com.etka.lune.bot.learning.SkillOutcome;
+import com.etka.lune.bot.catalog.Saplings;
 import com.etka.lune.bot.memory.BlockMemory;
+import com.etka.lune.bot.memory.StumpLedger;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.knowledge.OreKnowledge;
 import com.etka.lune.bot.path.Goal;
@@ -661,6 +663,9 @@ public final class MineTask implements Task {
                 treeLookY = Math.max(treeLookY, finished.getY() + 1);
                 treeViewPending = true;
             }
+            if (breaking && !openedBlocker && !openedPassage && finishCurrentTree) {
+                noteStump(ctx, finished);
+            }
             if (!openedPassage) {
                 // The same two-high opening is useful when the first visible wall block was a
                 // non-target blocker on the way to an ore. Its drop still remains uncounted below.
@@ -983,6 +988,20 @@ public final class MineTask implements Task {
             toolTask = null;
         }
         return TaskStatus.RUNNING;
+    }
+
+    /**
+     * Writes down where a tree stood, when the log just taken was the foot of its trunk.
+     *
+     * <p>A note and nothing more - see {@link StumpLedger}. Felling a tree is this card's job and
+     * planting one is not: the Replant Trees card reads the note and does that, and a task without
+     * it leaves the clearing bare exactly as before. Only a log standing on ground a sapling could
+     * root in is written down, which is the lowest log of a trunk and never a branch.</p>
+     */
+    private void noteStump(BotContext ctx, BlockPos log) {
+        if (treeType != null && Saplings.canRoot(ctx.level.getBlockState(log.below()))) {
+            StumpLedger.get().note(ctx.level, log, treeType);
+        }
     }
 
     /** Runs a short pickup sweep. Returns RUNNING while still collecting. */

@@ -1,17 +1,26 @@
 package com.etka.lune.task;
 
+import com.etka.lune.util.Lang;
+import com.etka.lune.util.LuneLanguages;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Sticky notes and card groups: the two marks on the canvas that never run. */
 class TaskAnnotationTest {
+
+    @AfterEach
+    void restoreLanguage() {
+        Lang.select(LuneLanguages.GAME_DEFAULT);
+    }
 
     private static TaskNode card(TaskGraph task, int x, int y) {
         TaskNode node = new TaskNode("mine");
@@ -183,6 +192,63 @@ class TaskAnnotationTest {
         assertTrue(task.notes.isEmpty());
         assertTrue(task.nodes.get(0).breakpoint);
         assertSame(kept, task.nodes.get(0), "a running task must keep its live node objects");
+    }
+
+    /**
+     * A starter job's note is drawn in the player's language, and stops being a starter note the
+     * moment they edit it - keeping the words they were looking at, not the English underneath.
+     */
+    @Test
+    void aStarterNoteFollowsTheLanguageUntilThePlayerEditsIt() {
+        TaskNote note = starterNote();
+        Lang.select("tr_tr");
+        String turkish = note.displayText();
+        assertNotEquals(note.text, turkish, "the note should be drawn in Turkish");
+
+        note.adopt();
+
+        assertNull(note.seededId);
+        assertEquals(turkish, note.text, "editing starts from the words on screen");
+        Lang.select("en_us");
+        assertEquals(turkish, note.displayText(), "once edited it is theirs in every language");
+    }
+
+    @Test
+    void aNoteThePlayerWroteIsDrawnAsWritten() {
+        TaskNote note = new TaskNote(0, 0);
+        note.text = "kendi notum";
+        Lang.select("en_us");
+        assertEquals("kendi notum", note.displayText());
+        note.adopt();
+        assertEquals("kendi notum", note.text, "adopting a note that is already theirs changes nothing");
+    }
+
+    @Test
+    void aCopiedStarterNoteIsStillTranslated() {
+        TaskNote copy = starterNote().copy();
+        Lang.select("tr_tr");
+        assertNotEquals(copy.text, copy.displayText());
+    }
+
+    @Test
+    void aStarterFrameTitleFollowsTheLanguageUntilRenamed() {
+        TaskGroup frame = new TaskGroup("Safety");
+        frame.seededId = "safety";
+        Lang.select("tr_tr");
+        String turkish = frame.displayTitle();
+        assertNotEquals("Safety", turkish);
+        assertEquals(turkish, frame.copy().displayTitle());
+
+        frame.adopt();
+
+        assertNull(frame.seededId);
+        assertEquals(turkish, frame.title);
+    }
+
+    private static TaskNote starterNote() {
+        TaskNote note = DefaultTasks.create().getFirst().notes.getFirst().copy();
+        assertEquals("chop_wood.intro", note.seededId);
+        return note;
     }
 
     @Test

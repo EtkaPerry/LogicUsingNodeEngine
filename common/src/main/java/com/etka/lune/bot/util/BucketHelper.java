@@ -4,6 +4,7 @@ import com.etka.lune.bot.BotContext;
 import com.etka.lune.compat.Hands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ClipContext;
@@ -80,6 +81,18 @@ public final class BucketHelper {
         BlockState state = ctx.level.getBlockState(pos);
         return state.getBlock() instanceof LiquidBlockContainer container
                 && container.canPlaceLiquid(ctx.player, ctx.level, pos, state, Fluids.WATER);
+    }
+
+    /**
+     * Whether water emptied at {@code pos} boils away instead of staying, which is the one place a
+     * water bucket does nothing at all.
+     *
+     * <p>Asked of the world the way {@code BucketItem} asks it, through the
+     * {@code water_evaporates} attribute, rather than by naming the Nether: that is the only vanilla
+     * dimension with it set, and a modded one that sets it is just as dry.
+     */
+    public static boolean waterEvaporates(BotContext ctx, BlockPos pos) {
+        return ctx.level.environmentAttributes().getValue(EnvironmentAttributes.WATER_EVAPORATES, pos);
     }
 
     /** The source block an empty bucket would draw from this tick, or {@code null}. */

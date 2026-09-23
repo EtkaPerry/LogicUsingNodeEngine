@@ -10,13 +10,18 @@ import com.etka.lune.client.gui.tab.WaypointsTab;
 import com.etka.lune.client.gui.mascot.MascotAdvisor;
 import com.etka.lune.client.gui.mascot.MascotWidget;
 import com.etka.lune.client.gui.widget.BlockPicker;
+import com.etka.lune.client.gui.widget.GamesSection;
+import com.etka.lune.client.gui.widget.LuneMenu;
 import com.etka.lune.client.gui.widget.NamePrompt;
 import com.etka.lune.client.gui.widget.RecipePicker;
 import com.etka.lune.client.gui.widget.SoundPicker;
 import com.etka.lune.client.gui.widget.InventoryPicker;
-import com.etka.lune.client.gui.widget.TrainingScreen;
+import com.etka.lune.client.gui.widget.TrainingSection;
+import com.etka.lune.training.TrainingLesson;
+import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.Window;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.components.tabs.TabManager;
 import net.minecraft.client.gui.components.tabs.TabNavigationBar;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
@@ -25,9 +30,16 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
+import java.util.List;
+
 /**
  * Lune's control panel: a vanilla tab bar across the top, and one full-width content area below
  * it that the active {@link LuneTab} owns.
+ * <p>
+ * The {@link LuneMenu} button shares the bar with the tabs, at its right end, and opens Lune's
+ * corner over the tab below. Whatever is not a tab's own work - the training course now, games to
+ * play while Lune works later - has a page there, so the tab bar stays five tabs long and no tab
+ * carries a button that is not about it.
  * <p>
  * The panel draws itself at its own GUI scale (see {@link UiScale}) rather than the game's, so a
  * large game scale cannot squeeze the layout into a space it does not fit. That means
@@ -65,7 +77,9 @@ public class LuneScreen extends ScaledScreen {
     private final RecipePicker recipePicker = new RecipePicker();
     private final SoundPicker soundPicker = new SoundPicker(0, 0, 10, 10);
     private final NamePrompt namePrompt = new NamePrompt();
-    private final TrainingScreen trainingScreen = new TrainingScreen();
+    private final LuneMenu menu = new LuneMenu();
+    private final TrainingSection trainingSection = new TrainingSection(this::openLesson);
+    private final GamesSection gamesSection = new GamesSection();
     private final MascotWidget mascot = new MascotWidget();
 
     private TabNavigationBar navBar;
@@ -76,6 +90,13 @@ public class LuneScreen extends ScaledScreen {
      * remember to consult.
      */
     private static final int POINTER_AWAY = -10_000;
+    /** Clear space kept either side of the menu button: from the screen edge, and from the last tab. */
+    private static final int MENU_MARGIN = 6;
+    /** The narrowest the tab strip is squeezed to make room for the button, on a very small screen. */
+    private static final int MIN_TAB_BAR = 200;
+
+    /** The widget a middle or right press landed on; it is owed the drag and release after it. */
+    private GuiEventListener otherButtonTarget;
 
     public LuneScreen() {
         super(Component.literal(Lang.get("lune.gui.lune.title")));
@@ -94,6 +115,8 @@ public class LuneScreen extends ScaledScreen {
         addWidget(mascot);
         navBar = addRenderableWidget(NavBars.build(tabManager, this.width,
                 mainTab, tasksTab, waypointsTab, configTab, aboutTab));
+        // Registered, though it draws itself, so Tab reaches it after the tabs like any button.
+        addWidget(menu);
         mainTab.setTaskEditorOpener(this::openTaskEditor);
         navBar.selectTab(0, false);
         addRenderableWidget(blockPicker);
@@ -101,13 +124,14 @@ public class LuneScreen extends ScaledScreen {
         addRenderableWidget(recipePicker);
         addRenderableWidget(soundPicker);
         addRenderableWidget(namePrompt);
-        addRenderableWidget(trainingScreen);
         tasksTab.setBlockPicker(blockPicker);
         tasksTab.setInventoryPicker(inventoryPicker);
         tasksTab.setRecipePicker(recipePicker);
         tasksTab.setSoundPicker(soundPicker);
         tasksTab.setNamePrompt(namePrompt);
-        tasksTab.setTrainingScreen(trainingScreen);
+        tasksTab.setCourseMapOpener(() -> menu.open(trainingSection));
+        // The pages of Lune's corner, in the order the side menu lists them.
+        menu.setSections(List.of(trainingSection, gamesSection));
         repositionElements();
     }
 
@@ -116,17 +140,53 @@ public class LuneScreen extends ScaledScreen {
         tasksTab.openTask(task, focusName);
     }
 
+    /**
+     * A lesson chosen in Lune's corner. The corner opens over any tab, and a lesson is always
+     * solved in the task editor, so choosing one closes the corner and goes to the Tasks tab.
+     */
+    private void openLesson(TrainingLesson lesson) {
+        menu.close();
+        navBar.selectTab(1, false);
+        tasksTab.openLesson(lesson);
+    }
+
     @Override
     protected void repositionElements() {
         applyMenuScale();
         if (navBar == null) {
             return;
         }
-        NavBars.resize(navBar, this.width);
+        layoutTabBar();
         int top = navBar.getRectangle().bottom();
         ScreenRectangle contentArea = new ScreenRectangle(0, top, this.width, this.height - top);
         tabManager.setTabArea(contentArea);
         mascot.setScreenArea(contentArea);
+    }
+
+    /**
+     * Fits the tabs and the menu button onto one row.
+     *
+     * <p>Vanilla centres the tabs in at most 400 pixels, and every screen the panel is laid out for
+     * is far wider, so the button normally sits in the empty end of the bar with its word beside
+     * it and the tabs never move. Only a very small screen runs short: the word goes first, and if
+     * the glyph alone still does not fit, the strip the tabs are centred in is narrowed until it
+     * does. Tabs a few pixels off centre are a better trade than a button drawn over the last
+     * one.</p>
+     */
+    private void layoutTabBar() {
+        int barWidth = this.width;
+        NavBars.resize(navBar, barWidth);
+        boolean compact = this.width - navBar.getRectangle().right()
+                < menu.buttonWidth(false) + MENU_MARGIN * 2;
+        if (compact) {
+            int room = menu.buttonWidth(true) + MENU_MARGIN * 2;
+            while (barWidth > MIN_TAB_BAR && this.width - navBar.getRectangle().right() < room) {
+                barWidth -= 2;
+                NavBars.resize(navBar, barWidth);
+            }
+        }
+        menu.place(this.width - MENU_MARGIN, navBar.getRectangle().bottom(), compact,
+                this.width, this.height);
     }
 
     @Override
@@ -142,10 +202,15 @@ public class LuneScreen extends ScaledScreen {
         // A popup owns the pointer. Everything under it is drawn as though the mouse were nowhere,
         // because hover is recomputed from the coordinates every frame: hand the panel behind the
         // real ones and its rows light up under the popup, and its tooltips draw on top of it.
-        boolean covered = popupOpen();
+        // Lune's corner is the one popup that leaves the tab bar alone, so the tabs still light up
+        // under the pointer while it is open: pressing one is how the player leaves it.
+        boolean covered = popupOpen()
+                && !(menu.isOpen() && menuMouseY < navBar.getRectangle().bottom());
         int behindX = covered ? POINTER_AWAY : menuMouseX;
         int behindY = covered ? POINTER_AWAY : menuMouseY;
         super.scaledRender(extractor, behindX, behindY, partialTick);
+        // Part of the bar, so it is drawn with it and lit only when nothing covers the panel.
+        menu.renderButton(extractor, behindX, behindY);
         if (tabManager.getCurrentTab() instanceof LuneTab tab) {
             tab.extractTabRenderState(extractor, behindX, behindY, partialTick);
         }
@@ -165,12 +230,9 @@ public class LuneScreen extends ScaledScreen {
         if (namePrompt.isOpen()) {
             namePrompt.render(extractor, menuMouseX, menuMouseY, partialTick);
         }
-        // Last, so the course map covers the tab and the mascot rather than sharing the screen
-        // with them. It never coexists with a picker: opening one closes the panel it was opened
-        // from.
-        if (trainingScreen.isOpen()) {
-            trainingScreen.render(extractor, menuMouseX, menuMouseY, partialTick);
-        }
+        // Last, so the corner covers the tab and the mascot rather than sharing the screen with
+        // them. It never coexists with a picker: it only opens when nothing else is up.
+        menu.renderCorner(extractor, menuMouseX, menuMouseY);
     }
 
     @Override
@@ -211,7 +273,7 @@ public class LuneScreen extends ScaledScreen {
     /** True while one of the modal popups is up and owns the pointer. */
     private boolean popupOpen() {
         return blockPicker.isOpen() || inventoryPicker.isOpen() || recipePicker.isOpen()
-                || soundPicker.isOpen() || namePrompt.isOpen() || trainingScreen.isOpen();
+                || soundPicker.isOpen() || namePrompt.isOpen() || menu.isOpen();
     }
 
     /** Settings and tasks are edited live; persisting on close avoids writing every tick. */
@@ -229,8 +291,9 @@ public class LuneScreen extends ScaledScreen {
      */
     @Override
     protected boolean scaledMouseClicked(MouseButtonEvent menuEvent, boolean doubleClick) {
-        if (trainingScreen.isOpen()) {
-            trainingScreen.handleScreenMouseClick(menuEvent.x(), menuEvent.y(), menuEvent.button());
+        // A click in the tab bar closes the corner and comes back unhandled, and carries on to
+        // the tab it landed on.
+        if (menu.isOpen() && menu.handleClick(menuEvent.x(), menuEvent.y(), menuEvent.button())) {
             return true;
         }
         if (blockPicker.isOpen()) {
@@ -259,24 +322,68 @@ public class LuneScreen extends ScaledScreen {
             }
             return true;
         }
+        // Only reached with nothing open, so the button cannot open the menu over a picker.
+        if (menu.handleClick(menuEvent.x(), menuEvent.y(), menuEvent.button())) {
+            return true;
+        }
+        if (menuEvent.button() != InputConstants.MOUSE_BUTTON_LEFT) {
+            otherButtonTarget = getChildAt(menuEvent.x(), menuEvent.y()).orElse(null);
+        }
         return super.scaledMouseClicked(menuEvent, doubleClick);
     }
 
     @Override
     protected boolean scaledMouseReleased(MouseButtonEvent menuEvent) {
+        // The corner hears every release, so a drag it started ends there; the rest carries on
+        // as before, which with the corner open finds nothing pressed below it.
+        if (menu.isOpen()) {
+            menu.handleRelease(menuEvent.x(), menuEvent.y(), menuEvent.button());
+        }
+        GuiEventListener pressedOn = null;
+        if (menuEvent.button() != InputConstants.MOUSE_BUTTON_LEFT) {
+            pressedOn = otherButtonTarget;
+            otherButtonTarget = null;
+        }
         // The recipe grid is filled by dragging, so it needs the other half of the click.
         if (recipePicker.isOpen()) {
             recipePicker.handleScreenMouseRelease(menuEvent.x(), menuEvent.y(), menuEvent.button());
             return true;
         }
+        if (pressedOn != null && pressedOn.mouseReleased(menuEvent)) {
+            return true;
+        }
         return super.scaledMouseReleased(menuEvent);
+    }
+
+    /**
+     * Hands a middle or right drag to the widget that button was pressed on.
+     *
+     * <p>Vanilla only carries a left press on into a drag and a release; every other button is
+     * forgotten the moment it lands. That is why a middle-button pan on the task canvas started
+     * and never moved. Nothing else on the panel drags with those buttons, and a widget that does
+     * not want the drag says so by returning false, which is what vanilla answered anyway.</p>
+     */
+    @Override
+    protected boolean scaledMouseDragged(MouseButtonEvent menuEvent, double dragX, double dragY) {
+        // Open, the corner owns the pointer below the bar, drags with every button included.
+        if (menu.isOpen()) {
+            menu.handleDrag(menuEvent.x(), menuEvent.y(), menuEvent.button());
+            return true;
+        }
+        if (menuEvent.button() != InputConstants.MOUSE_BUTTON_LEFT) {
+            return otherButtonTarget != null
+                    && otherButtonTarget.mouseDragged(menuEvent, dragX, dragY);
+        }
+        return super.scaledMouseDragged(menuEvent, dragX, dragY);
     }
 
     @Override
     protected boolean scaledMouseScrolled(double menuMouseX, double menuMouseY, double deltaX,
                                           double deltaY) {
-        if (trainingScreen.isOpen()) {
-            return trainingScreen.mouseScrolled(menuMouseX, menuMouseY, deltaX, deltaY);
+        if (menu.isOpen()) {
+            // The page scrolls if it has anything to scroll; the canvas under it never does.
+            menu.handleScroll(menuMouseX, menuMouseY, deltaY != 0 ? deltaY : deltaX);
+            return true;
         }
         if (blockPicker.isOpen()) {
             return blockPicker.mouseScrolled(menuMouseX, menuMouseY, deltaX, deltaY);
@@ -292,6 +399,10 @@ public class LuneScreen extends ScaledScreen {
 
     @Override
     public boolean charTyped(CharacterEvent event) {
+        if (menu.isOpen()) {
+            // A name box left focused behind the corner would otherwise take the typing.
+            return true;
+        }
         if (namePrompt.isOpen()) {
             namePrompt.handleScreenCharTyped(event.codepoint());
             return true;
@@ -313,8 +424,9 @@ public class LuneScreen extends ScaledScreen {
 
     @Override
     public boolean keyPressed(KeyEvent event) {
-        if (trainingScreen.isOpen()) {
-            trainingScreen.handleScreenKeyPressed(event.key(), 0, event.modifiers());
+        if (menu.isOpen()) {
+            // Escape closes the corner, not the panel under it.
+            menu.handleKey(event.key());
             return true;
         }
         if (namePrompt.isOpen()) {

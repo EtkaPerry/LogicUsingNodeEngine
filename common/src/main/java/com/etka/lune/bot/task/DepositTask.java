@@ -8,6 +8,7 @@ import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.util.BlockPlacer;
 import com.etka.lune.bot.util.BlockScanner;
+import com.etka.lune.bot.util.InventoryHelper;
 import com.etka.lune.bot.util.ItemFilters;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -55,6 +56,10 @@ public final class DepositTask implements Task {
     private boolean tightened;
     /** Why the last container was written off, for when there is no other one left to try. */
     private String refusal = "lune.status.deposit.cannot_open_container";
+    /** Player slots whose stack the open container had no room for. */
+    private final Set<Integer> noRoom = new HashSet<>();
+    private int lastSlot = -1;
+    private ItemStack lastStack = ItemStack.EMPTY;
     private final StatusText status = new StatusText();
 
     public DepositTask(String filter, int radius) {
@@ -143,9 +148,20 @@ public final class DepositTask implements Task {
                 continue;
             }
             ItemStack stack = slot.getItem();
-            if (stack.isEmpty() || !matcher.test(stack)) {
+            if (stack.isEmpty() || !matcher.test(stack) || noRoom.contains(slot.index)) {
                 continue;
             }
+            // A full chest takes nothing, and the stack it refused is still the first match on
+            // the next tick - so without this the card clicked the same stack into the same full
+            // chest for the rest of the run, and a lumber shift that filled its chest at midnight
+            // stood there clicking until morning. A stack the last click did not move is left
+            // where it is, the way the backpack cards already leave one.
+            if (slot.index == lastSlot && InventoryHelper.unchanged(lastStack, stack)) {
+                noRoom.add(slot.index);
+                continue;
+            }
+            lastSlot = slot.index;
+            lastStack = stack.copy();
             // Read what is being moved before moving it. QUICK_MOVE empties the slot in the same
             // call, and `stack` is the slot's own ItemStack rather than a copy - so asking it
             // afterwards describes the hole it left: every measured deposit reported
@@ -159,6 +175,11 @@ public final class DepositTask implements Task {
         }
 
         closeMenu(ctx);
+        if (!noRoom.isEmpty()) {
+            // Everything that fitted went in; the rest is still in the pack. The graph decides
+            // what a full chest means - another chest, a trip home, or the end of the shift.
+            return unavailable("lune.status.deposit.container_full");
+        }
         status.set("lune.status.deposit.deposited", filter);
         return TaskStatus.SUCCESS;
     }

@@ -39,6 +39,8 @@ import com.etka.lune.bot.task.KillOptions;
 import com.etka.lune.bot.task.LootTask;
 import com.etka.lune.bot.task.NotifyTask;
 import com.etka.lune.bot.task.RecoverDeathTask;
+import com.etka.lune.bot.task.ReplantTask;
+import com.etka.lune.bot.task.UsePortalTask;
 import com.etka.lune.bot.task.StripmineTask;
 import com.etka.lune.bot.task.TunnelTask;
 import com.etka.lune.bot.task.GotoTask;
@@ -264,8 +266,10 @@ public final class CommandRegistry {
             Map.entry("explore", "Movement"),
             Map.entry("find_biome", "Movement"),
             Map.entry("find_structure", "Movement"),
+            Map.entry("use_portal", "Movement"),
             Map.entry("mine", "Gathering"),
             Map.entry("chop", "Gathering"),
+            Map.entry("replant", "Gathering"),
             Map.entry("find", "Gathering"),
             Map.entry("harvest", "Gathering"),
             Map.entry("dragon_egg", "Gathering"),
@@ -359,6 +363,12 @@ public final class CommandRegistry {
                 new Param.Ints("limit", 8, 0, 512)
         ), def -> new MineTask(new java.util.HashSet<>(BlockCatalog.logs()), def.intValue("radius"),
                 -64, 320, def.intValue("limit"), false, false, true)));
+
+        // The other half of Chop Wood, kept as its own card: felling writes down where each tree
+        // stood, and planting it back is a separate job the task has to ask for.
+        register(new CommandDef("replant", List.of(
+                new Param.Ints("radius", 32, 1, 128)
+        ), def -> new ReplantTask(def.intValue("radius"))));
 
         register(new CommandDef("explore", List.of(
                 new Param.BlockSet("targets", BlockCatalog.all(),
@@ -735,6 +745,10 @@ public final class CommandRegistry {
             return new PlaceBlockTask(blocks, where, spot);
         }));
 
+        register(new CommandDef("use_portal", List.of(
+                new Param.Ints("radius", 32, 4, 128)
+        ), def -> UsePortalTask.card(def.intValue("radius"))));
+
         register(new CommandDef("portal", List.of(
                 new Param.Choice("frame_mode", BuildPortalTask.modeChoices(), BuildPortalTask.FrameMode.RESOURCE_SAVING.label()),
                 new Param.BlockSet("corner_materials", List.of(Blocks.DIRT, Blocks.COBBLESTONE),
@@ -798,7 +812,7 @@ public final class CommandRegistry {
         register(new CommandDef("task", List.of(
                 // Listed and stored by the name the task is saved under, so the card still finds it
                 // after a language change; shown by whatever that task's title reads as today.
-                new Param.Choice("name", () -> TaskStore.get().names(), "", TaskStore::displayNameOf)
+                new Param.Choice("name", () -> TaskStore.get().listedNames(), "", TaskStore::displayNameOf)
         ), def -> {
             String name = def.choiceValue("name");
             return TaskStore.get().byName(name)
@@ -918,6 +932,7 @@ public final class CommandRegistry {
                 new Param.Choice("air_compare", List.of("At most", "Less than", "At least", "Greater than"), "At most"),
                 new Param.Ints("air_value", 120, 0, 300),
                 new Param.Bool("protect_lava", true),
+                new Param.Bool("protect_fire", true),
                 new Param.Bool("protect_fall", true),
                 new Param.Ints("fall_threshold", 10, 2, 512),
                 new Param.Bool("clutch_water", true),
@@ -938,6 +953,7 @@ public final class CommandRegistry {
                 def.boolValue("protect_health"), def.choiceValue("health_compare"),
                 def.intValue("health_value"),
                 def.boolValue("protect_fall"), def.intValue("fall_threshold"),
+                def.boolValue("protect_fire"),
                 new SafetyOptions(
                         def.boolValue("clutch_water"),
                         def.boolValue("clutch_boat"),

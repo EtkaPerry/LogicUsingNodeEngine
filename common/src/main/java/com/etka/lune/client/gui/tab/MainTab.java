@@ -128,7 +128,7 @@ public class MainTab extends LuneTab {
 
         // Saved tasks stay available while a run is active. The current run and queue are visible
         // in Recent Activity and Current Working Node instead of replacing this useful list.
-        launchList.setItems(TaskStore.get().all());
+        launchList.setItems(TaskStore.get().listed());
         launchList.visible = true;
         launchList.active = true;
         statisticsPanel.setLineHeight(BotConfig.get().dashboardLineHeight);
@@ -637,6 +637,7 @@ public class MainTab extends LuneTab {
         statLine(lines, Lang.get("lune.gui.main.from_monsters"), number(statistics.counter("danger_monster")),
                 Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.from_lava"), number(statistics.counter("danger_lava")), Accessibility.dim());
+        statLine(lines, Lang.get("lune.gui.main.from_fire"), number(statistics.counter("danger_fire")), Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.from_drowning"), number(statistics.counter("danger_drowning")),
                 Accessibility.dim());
         statLine(lines, Lang.get("lune.gui.main.from_falls"), number(statistics.counter("danger_fall")), Accessibility.dim());

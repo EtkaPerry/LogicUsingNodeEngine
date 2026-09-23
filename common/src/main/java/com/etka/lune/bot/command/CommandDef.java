@@ -91,6 +91,8 @@ public final class CommandDef {
             case "stay_near" -> stayNearDescription(repeat);
             case "self_preservation" -> selfPreservationDescription(repeat);
             case "chop" -> actionDescription(Lang.get("lune.card.fell_trees_within_blocks_stopping_after", intValue("radius"), limitDescription(intValue("limit"), "logs")));
+            case "replant" -> actionDescription(Lang.get("lune.card.replant_felled_trees_within", intValue("radius")));
+            case "use_portal" -> actionDescription(Lang.get("lune.card.step_into_lit_portal_within", intValue("radius")));
             case "mine" -> actionDescription(Lang.get("lune.card.mine_matching_blocks_within_blocks", intValue("radius"), intValue("y_min"), intValue("y_max"), limitDescription(intValue("limit"), "blocks")));
             case "portal" -> actionDescription(Lang.get("lune.card.build_light_nether_portal_using_frame", Param.Choice.optionLabel(choiceValue("frame_mode"))));
             case "harvest" -> actionDescription(Lang.get("lune.card.harvest_mature_crops_within_blocks", intValue("radius"), limitDescription(intValue("limit"), "crops"), (boolValue("collect") ? Lang.get("lune.card.collecting_drops") : ""), (boolValue("replant") ? Lang.get("lune.card.replanting_matching_seeds") : "")));
@@ -363,6 +365,10 @@ public final class CommandDef {
         }
         if (boolValue("protect_lava")) {
             text.append(hasProtection ? ", " : " ").append(Lang.get("lune.card.lava"));
+            hasProtection = true;
+        }
+        if (boolValue("protect_fire")) {
+            text.append(hasProtection ? ", " : " ").append(Lang.get("lune.card.fire"));
             hasProtection = true;
         }
         if (boolValue("protect_fall")) {

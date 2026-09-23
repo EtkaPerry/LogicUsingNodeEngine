@@ -43,6 +43,19 @@ public final class InventoryHelper {
         return item == null ? "" : new ItemStack(item).getHoverName().getString();
     }
 
+    /**
+     * Whether a stack is exactly what it was before a click: the same item, components and count.
+     *
+     * <p>A shift-click the other side has no room for changes nothing, and asking again changes
+     * nothing again. This is how every card that moves stacks into a container - a chest, a barrel,
+     * a backpack - tells "no room" from "not yet".</p>
+     */
+    public static boolean unchanged(ItemStack before, ItemStack now) {
+        return before != null && !before.isEmpty() && now != null && !now.isEmpty()
+                && before.getCount() == now.getCount()
+                && ItemStack.isSameItemSameComponents(before, now);
+    }
+
     public static int count(Player player, Item item) {
         int total = 0;
         Inventory inventory = player.getInventory();

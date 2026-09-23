@@ -1,5 +1,7 @@
 package com.etka.lune.task;
 
+import com.etka.lune.util.Lang;
+
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -38,6 +40,16 @@ public final class TaskGroup {
 
     public String title = "";
 
+    /**
+     * Which starter-job frame this is, or null for one the player drew.
+     *
+     * <p>Named by what the frame holds - {@code wood}, {@code safety} - rather than by which job
+     * it is in, because the same few titles recur across the starter jobs and one line each is
+     * enough. The title is drawn from {@code lune.task.group.} plus this id, with {@link #title} as
+     * the English fallback, until the player renames it.</p>
+     */
+    public String seededId;
+
     /** Card ids inside this frame, in the order they were added. */
     public Set<String> members = new LinkedHashSet<>();
 
@@ -68,6 +80,7 @@ public final class TaskGroup {
 
     public TaskGroup copy() {
         TaskGroup copy = new TaskGroup(title);
+        copy.seededId = seededId;
         copy.members.addAll(members);
         copy.x = x;
         copy.y = y;
@@ -76,6 +89,21 @@ public final class TaskGroup {
         copy.colour = colour;
         copy.collapsed = collapsed;
         return copy;
+    }
+
+    /** The title to draw: a starter frame's in the player's language, anything else as written. */
+    public String displayTitle() {
+        String own = title == null ? "" : title;
+        return seededId == null || seededId.isBlank() ? own
+                : Lang.getOr("lune.task.group." + seededId, own);
+    }
+
+    /** Makes a starter frame's title the player's own as they start renaming it. */
+    public void adopt() {
+        if (seededId != null) {
+            title = displayTitle();
+            seededId = null;
+        }
     }
 
     public boolean holds(TaskNode node) {

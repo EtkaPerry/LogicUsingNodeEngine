@@ -183,6 +183,7 @@ public final class StatusKeys {
                 "lune.status.self_preservation.waiting_health_regeneration");
 
         put(INVENTORY_FULL,
+                "lune.status.deposit.container_full",
                 "lune.status.loot.inventory_full_collected");
 
         put(MISSING_MATERIALS,
@@ -205,6 +206,7 @@ public final class StatusKeys {
                 "lune.status.self_preservation.no_food_no_recovery_going_back_work",
                 "lune.status.self_preservation.no_water_bucket",
                 "lune.status.self_preservation.no_water_bucket_hotbar",
+                "lune.status.replant.no_sapling",
                 "lune.status.sleep.bed_no_longer_inventory",
                 "lune.status.sleep.wool_colours_do_not_match_no_usable",
                 "lune.status.smelt.no_fuel",
@@ -269,7 +271,6 @@ public final class StatusKeys {
                 "lune.status.speedrun.could_not_reach",
                 "lune.status.speedrun.could_not_reach_2",
                 "lune.status.speedrun.could_not_reach_open_ground_food_search",
-                "lune.status.speedrun.could_not_reach_portal",
                 "lune.status.speedrun.could_not_reach_visible_chest",
                 "lune.status.speedrun.could_not_reach_visible_shipwreck",
                 "lune.status.speedrun.could_not_reach_visible_village_doorway",
@@ -278,7 +279,8 @@ public final class StatusKeys {
                 "lune.status.staircase_prospect.could_not_reach_stable_ground",
                 "lune.status.staircase_prospect.no_stable_ground",
                 "lune.status.staircase_prospect.stairs_blocked_by",
-                "lune.status.surface_recovery.no_nearby_walkable_surface");
+                "lune.status.surface_recovery.no_nearby_walkable_surface",
+                "lune.status.use_portal.could_not_reach");
 
         put(SEARCH,
                 "lune.status.crafting_table_access.cant_place_trying_another_spot",

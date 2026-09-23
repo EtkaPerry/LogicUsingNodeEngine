@@ -7,6 +7,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -121,20 +122,46 @@ public final class CropHelper {
         if (seed == Items.AIR) {
             return false;
         }
-        if (InventoryHelper.equip(ctx, stack -> stack.is(seed)) < 0) {
-            return false;
-        }
+        Planting result = plantOn(ctx, cropPos, seed);
+        return result == Planting.PLANTED
+                || result == Planting.CLICKED && !ctx.level.getBlockState(cropPos).isAir();
+    }
 
-        BlockPos soil = soilFor(cropPos);
+    /** How one planting click went. */
+    public enum Planting {
+        /** Something now grows where it was planted. */
+        PLANTED,
+        /** Clicked, and the world has not shown the result yet; ask again next tick. */
+        CLICKED,
+        /** Still turning to face the ground. */
+        AIMING,
+        /** Nothing of that kind is carried. */
+        NO_ITEM
+    }
+
+    /**
+     * Equips {@code item} and right-clicks the top of the ground under {@code spot}, the way a
+     * player plants anything: a seed in farmland, a sapling in the grass where a tree stood.
+     *
+     * <p>Shared by Harvest and Replant Trees, because planting is the same gesture whatever goes in
+     * the ground. It deliberately does not share Place Block's collision guard - nothing that grows
+     * from a seed or a sapling has a hitbox to stand inside, so standing over the spot is no reason
+     * to wait.</p>
+     */
+    public static Planting plantOn(BotContext ctx, BlockPos spot, Item item) {
+        if (InventoryHelper.equip(ctx, stack -> stack.is(item)) < 0) {
+            return Planting.NO_ITEM;
+        }
+        BlockPos soil = soilFor(spot);
         Vec3 hit = Vec3.atCenterOf(soil).add(0, 0.5, 0);
         ctx.look.lookAt(ctx.player, hit);
         if (!ctx.look.isLookingAt(ctx.player, hit, 15.0F)) {
-            return false;
+            return Planting.AIMING;
         }
-
         ctx.gameMode.useItemOn(ctx.player, InteractionHand.MAIN_HAND,
                 new BlockHitResult(hit, Direction.UP, soil, false));
         Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
-        return !ctx.level.getBlockState(cropPos).isAir();
+        return item instanceof BlockItem planted && ctx.level.getBlockState(spot).is(planted.getBlock())
+                ? Planting.PLANTED : Planting.CLICKED;
     }
 }

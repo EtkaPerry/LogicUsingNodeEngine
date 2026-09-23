@@ -15,6 +15,7 @@ import com.etka.lune.bot.task.TaskRunner;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.UiScale;
 import com.etka.lune.config.BotConfig;
+import com.etka.lune.config.TaskView;
 import com.etka.lune.task.TaskCableAnchor;
 import com.etka.lune.task.TaskCablePath;
 import com.etka.lune.task.TaskCanvas;
@@ -140,6 +141,33 @@ public final class BlueprintPanel extends AbstractWidget {
     private boolean cableMoved;
     private boolean moved;
     private boolean panning;
+    /**
+     * True from a middle-button press on the canvas until that button comes up. Separate from
+     * {@link #panning}, which belongs to a left drag on empty canvas: a middle press used to set
+     * that flag and nothing cleared it, so the next left drag - wherever it started - panned once.
+     */
+    private boolean middlePanning;
+    /**
+     * The cable a middle click picked out, by its {@link TaskCableAnchor} key, or null. It is drawn
+     * last and shining, with every other cable faded behind it, until the same cable or empty
+     * canvas is middle-clicked again or Esc is pressed. On a busy canvas this is how a player
+     * follows one line to wherever it goes.
+     */
+    private String tracedCable;
+    /** Where the traced cable was drawn this frame; rebuilt by every wire pass. */
+    private TracedWire tracedWire;
+    /** What the middle press under way landed on, so a click can be told from the start of a pan. */
+    private String middlePressCable;
+    private boolean middlePressWasTraced;
+    private double middlePressX;
+    private double middlePressY;
+    private boolean middleMoved;
+    /**
+     * Movement smaller than a pixel, carried to the next drag event rather than rounded away.
+     * Rounding each event on its own meant a slow drag moved the view by nothing at all.
+     */
+    private double panCarryX;
+    private double panCarryY;
     private boolean minimapDragging;
     private boolean selecting;
     private boolean selectionAdditive;
@@ -234,6 +262,10 @@ public final class BlueprintPanel extends AbstractWidget {
 
     public void setTask(TaskGraph task) {
         if (this.task != task) stopTrainingPulse();
+        if (this.task != task) {
+            // A key names a cable in the task it came from; in another task it names nothing.
+            clearTrace();
+        }
         this.task = task;
         dragged = null;
         wireSource = null;
@@ -246,6 +278,7 @@ public final class BlueprintPanel extends AbstractWidget {
         draggedCablePointIndex = -1;
         cableMoved = false;
         panning = false;
+        middlePanning = false;
         minimapDragging = false;
         selecting = false;
         selectedNote = null;
@@ -279,6 +312,32 @@ public final class BlueprintPanel extends AbstractWidget {
         if (changed) {
             onChanged.run();
         }
+    }
+
+    /** The task on the canvas, or null when none is open. */
+    public TaskGraph getTask() {
+        return task;
+    }
+
+    /** Where the camera is right now, to be handed back to {@link #showView} later. */
+    public TaskView view() {
+        return new TaskView(panX, panY, zoom);
+    }
+
+    /**
+     * Puts the camera where a remembered view left it, or home - as Ctrl+0 does - when there is
+     * no view to go back to.
+     */
+    public void showView(TaskView view) {
+        if (view == null) {
+            resetView();
+            return;
+        }
+        panX = view.panX;
+        panY = view.panY;
+        // The view comes out of a file a player can edit, and a zoom that is not a number would
+        // take every card on the canvas with it.
+        zoom = Math.clamp(Float.isFinite(view.zoom) ? view.zoom : 1.0f, MIN_ZOOM, MAX_ZOOM);
     }
 
     public TaskNode getSelected() {
@@ -522,6 +581,7 @@ public final class BlueprintPanel extends AbstractWidget {
         int canvasMouseY = canvasY(mouseY);
 
         automaticCableRoutes.clear();
+        tracedWire = null;
         // Frames and notes are the paper the graph is drawn on, so they go down first and
         // everything that carries a signal is drawn over them.
         fitGroups();
@@ -544,7 +604,7 @@ public final class BlueprintPanel extends AbstractWidget {
                                                     ? 0 : source.alwaysTargetInputPorts.getOrDefault(target.id, 0)),
                                     pinWhile,
                                     liveWire(source, TaskPower.ALWAYS, 0, target),
-                                    anchorFor(TaskCableAnchor.key("always", source.id, target.id)));
+                                    TaskCableAnchor.key("always", source.id, target.id));
                         }
                     }
                 }
@@ -556,7 +616,7 @@ public final class BlueprintPanel extends AbstractWidget {
                         targetInputY(successTarget, successTarget.isPulseNode()
                                 ? source.successInputPort : -1), pinSuccess,
                         liveWire(source, TaskPower.SUCCESS, 0, successTarget),
-                        anchorFor(TaskCableAnchor.key("success", source.id, successTarget.id)));
+                        TaskCableAnchor.key("success", source.id, successTarget.id));
             }
             TaskNode failureTarget = task.nodeById(source.onFailure);
             if (failureTarget != null) {
@@ -565,7 +625,7 @@ public final class BlueprintPanel extends AbstractWidget {
                         targetInputY(failureTarget, failureTarget.isPulseNode()
                                 ? source.failureInputPort : -1), pinFailure,
                         liveWire(source, TaskPower.FAILURE, 0, failureTarget),
-                        anchorFor(TaskCableAnchor.key("failure", source.id, failureTarget.id)));
+                        TaskCableAnchor.key("failure", source.id, failureTarget.id));
             }
             if (!source.isClockNode() && source.whileVisible) {
                 TaskNode whileTarget = task.nodeById(source.onWhile);
@@ -575,7 +635,7 @@ public final class BlueprintPanel extends AbstractWidget {
                             targetInputY(whileTarget, whileTarget.isPulseNode()
                                     ? source.whileInputPort : -1), pinWhile,
                             liveWire(source, TaskPower.WHILE, 0, whileTarget),
-                            anchorFor(TaskCableAnchor.key("while", source.id, whileTarget.id)));
+                            TaskCableAnchor.key("while", source.id, whileTarget.id));
                 }
             }
             if (source.isPulseNode() && source.signalLinks != null) {
@@ -589,9 +649,9 @@ public final class BlueprintPanel extends AbstractWidget {
                                 signalOutputY(source, link.outputPort), target,
                                 inputX(target), targetInputY(target, link.targetPort), pinSignal,
                                 liveWire(source, TaskPower.SIGNAL, link.outputPort, target),
-                                anchorFor(TaskCableAnchor.key("signal", source.id,
+                                TaskCableAnchor.key("signal", source.id,
                                         String.valueOf(link.outputPort), target.id,
-                                        String.valueOf(link.targetPort))));
+                                        String.valueOf(link.targetPort)));
                     }
                 }
             }
@@ -602,7 +662,7 @@ public final class BlueprintPanel extends AbstractWidget {
                             nodeY(watched) + HEADER_H / 2, source,
                             inputX(source), signalInputY(source, 0), pinObserve,
                             power.isLive(watched),
-                            anchorFor(TaskCableAnchor.key("observe", watched.id, source.id)));
+                            TaskCableAnchor.key("observe", watched.id, source.id));
                 }
             }
             if (source.inputLinks != null) {
@@ -616,11 +676,19 @@ public final class BlueprintPanel extends AbstractWidget {
                         drawNodeWire(extractor, dataSource, outputX(dataSource),
                                 dataOutputY(dataSource, sourcePort), source,
                                 inputX(source), dataInputY(source, targetPort), pinData, false,
-                                anchorFor(TaskCableAnchor.key("data", dataSource.id, link.sourcePort,
-                                        source.id, entry.getKey())));
+                                TaskCableAnchor.key("data", dataSource.id, link.sourcePort,
+                                        source.id, entry.getKey()));
                     }
                 }
             }
+        }
+
+        // The traced cable last of all the cables, so nothing is drawn across it. A trace whose
+        // cable was not drawn this frame - cut, or folded away inside a closed frame - is over.
+        if (tracedWire != null) {
+            drawTracedWire(extractor);
+        } else if (tracedCable != null) {
+            tracedCable = null;
         }
 
         if (wireSource != null) {
@@ -634,6 +702,7 @@ public final class BlueprintPanel extends AbstractWidget {
                 drawNode(extractor, node, canvasMouseX, canvasMouseY);
             }
         }
+        drawTracedEnds(extractor);
         if (trainingPreview != null) {
             for (TaskNode node : task.nodes) {
                 String note = trainingPreview.notes().get(node.id);
@@ -680,9 +749,11 @@ public final class BlueprintPanel extends AbstractWidget {
         }
 
         extractor.textRenderer().accept(getX() + 7, getY() + getHeight() - 11,
-                Component.literal(Lang.get(draggedCableKey == null ? "lune.gui.blueprint.cable_idle_hint"
-                : draggedCablePointIndex >= 0 ? "lune.gui.blueprint.cable_move_hint"
-                : "lune.gui.blueprint.cable_add_hint"))
+                Component.literal(Lang.get(draggedCableKey != null
+                        ? draggedCablePointIndex >= 0 ? "lune.gui.blueprint.cable_move_hint"
+                                : "lune.gui.blueprint.cable_add_hint"
+                        : tracedCable != null ? "lune.gui.blueprint.cable_trace_hint"
+                        : "lune.gui.blueprint.cable_idle_hint"))
                         .withColor(LuneScreen.TEXT_DIM));
         extractor.textRenderer().accept(getX() + getWidth() - 45, getY() + 7,
                 Component.literal(Math.round(zoom * 100) + "%").withColor(LuneScreen.TEXT_DIM));
@@ -775,8 +846,8 @@ public final class BlueprintPanel extends AbstractWidget {
             }
             extractor.fill(group.x, headerTop, group.right(), group.y, paper.body());
             extractor.fill(group.x, headerTop, group.x + 3, group.y, paper.border());
-            String title = group.title == null || group.title.isBlank()
-                    ? Lang.get("lune.gui.blueprint.group_untitled") : group.title;
+            String title = group.displayTitle().isBlank()
+                    ? Lang.get("lune.gui.blueprint.group_untitled") : group.displayTitle();
             if (editingGroup == group) {
                 title = titleBuffer + "_";
             }
@@ -844,7 +915,7 @@ public final class BlueprintPanel extends AbstractWidget {
             // The coloured spine doubles as the drag handle, so a note with text right up to the
             // edge still has somewhere to be picked up by.
             extractor.fill(note.x + 1, note.y + 1, note.x + 4, note.bottom() - 1, paper.border());
-            String body = editingNote == note ? note.text + "_" : note.text;
+            String body = editingNote == note ? note.text + "_" : note.displayText();
             if (body.isEmpty()) {
                 body = Lang.get("lune.gui.blueprint.note_empty");
             }
@@ -855,7 +926,7 @@ public final class BlueprintPanel extends AbstractWidget {
                     break;
                 }
                 text.accept(note.x + NOTE_TEXT_INSET + 2, line,
-                        Component.literal(wrapped).withColor(note.text.isEmpty() && editingNote != note
+                        Component.literal(wrapped).withColor(note.displayText().isEmpty() && editingNote != note
                                 ? LuneScreen.TEXT_DIM : paper.text()));
                 line += 9;
             }
@@ -908,7 +979,8 @@ public final class BlueprintPanel extends AbstractWidget {
      */
     private void drawNodeWire(GuiGraphicsExtractor extractor, TaskNode from, int fromX, int fromY,
                               TaskNode to, int toX, int toY, int colour, boolean live,
-                              TaskCableRoute route) {
+                              String key) {
+        TaskCableRoute route = anchorFor(key);
         TaskGroup fromHidden = collapsedHolder(from);
         TaskGroup toHidden = collapsedHolder(to);
         if (fromHidden != null && fromHidden == toHidden) {
@@ -927,7 +999,184 @@ public final class BlueprintPanel extends AbstractWidget {
             toY = toHidden.y - TaskGroup.HEADER_HEIGHT / 2;
             route = null;
         }
-        drawWire(extractor, fromX, fromY, toX, toY, colour, live, route);
+        if (tracedCable != null && tracedCable.equals(key)) {
+            // Held back and drawn after every other cable, shining. Its own sparks stand in for
+            // the live one, so the spark armed for it is spent here rather than on the next wire.
+            tracedWire = new TracedWire(from, to, fromX, fromY, toX, toY, colour, route);
+            previewSpark = -1;
+            return;
+        }
+        drawWire(extractor, fromX, fromY, toX, toY, colour, live, route, tracedCable != null);
+    }
+
+    // --- tracing one cable ---------------------------------------------------------------------
+
+    /** How far a middle press may wander and still be a click rather than the start of a pan. */
+    private static final int CLICK_SLOP = 3;
+    /** The dark edge every cable is drawn over, so crossing cables stay apart. */
+    private static final int WIRE_OUTLINE = 0xFF10151E;
+    /** What faded cables and the glow are mixed toward: the dark of the canvas behind them. */
+    private static final int CANVAS_SHADE = 0xFF15151C;
+    /** One spark for every this many canvas pixels of a traced cable. */
+    private static final double SPARK_SPACING = 90.0;
+    /** How fast a traced cable's sparks run, in canvas pixels a second, whatever its length. */
+    private static final double SPARK_SPEED = 140.0;
+
+    /** A traced cable as it was drawn this frame: its two cards, its ends, colour and route. */
+    private record TracedWire(TaskNode from, TaskNode to, int fromX, int fromY, int toX, int toY,
+                              int colour, TaskCableRoute route) {}
+
+    /** The key of the traced cable, or null. Package-private for the tests. */
+    String tracedCable() {
+        return tracedCable;
+    }
+
+    /**
+     * A middle press on a cable picks that cable out, and still starts a pan like any other middle
+     * press - so a player can pick a cable and drag the view along it to wherever it goes.
+     *
+     * <p>A card sits on top of the cables that run under it, and the minimap on top of the canvas,
+     * so a press on either is only a pan, never the trace of a line nobody can see there.</p>
+     */
+    private void beginMiddlePress(double screenX, double screenY) {
+        middlePressX = screenX;
+        middlePressY = screenY;
+        middleMoved = false;
+        int x = canvasX(screenX);
+        int y = canvasY(screenY);
+        boolean covered = minimapVisible && minimapContains(screenX, screenY)
+                || nodeAt(x, y) != null;
+        CableHit hit = covered ? null : cableAt(x, y);
+        middlePressCable = hit == null ? null : hit.key();
+        middlePressWasTraced = middlePressCable != null && middlePressCable.equals(tracedCable);
+        if (middlePressCable != null && !middlePressWasTraced) {
+            traceCable(middlePressCable);
+        }
+    }
+
+    /**
+     * A middle click - pressed and let go without panning - lets go of the trace when it landed on
+     * empty canvas or on the cable already shining. A pan leaves the trace as it was, which is
+     * what makes following a long cable across the canvas possible.
+     */
+    private void endMiddlePress() {
+        if (!middleMoved && (middlePressCable == null || middlePressWasTraced)) {
+            clearTrace();
+        }
+        middlePressCable = null;
+    }
+
+    private void traceCable(String key) {
+        tracedCable = key;
+        tracedWire = null;
+        TaskNode[] ends = cableEnds(key);
+        if (ends != null) {
+            onMessage.accept(Lang.get("lune.gui.blueprint.cable_traced",
+                    nodeName(ends[0]), nodeName(ends[1])));
+        }
+    }
+
+    private void clearTrace() {
+        tracedCable = null;
+        tracedWire = null;
+    }
+
+    /** The two cards a cable joins, read off its key the way {@link #anchorFor} reads it. */
+    private TaskNode[] cableEnds(String key) {
+        if (task == null || key == null) {
+            return null;
+        }
+        String[] parts = key.split("\\|", -1);
+        if (parts.length != 3 && parts.length != 5) {
+            return null;
+        }
+        TaskNode from = task.nodeById(parts[1]);
+        TaskNode to = task.nodeById(parts[parts.length == 3 ? 2 : 3]);
+        return from == null || to == null ? null : new TaskNode[]{from, to};
+    }
+
+    /**
+     * The traced cable, shining: a glow that breathes, the cable itself a shade brighter than it is
+     * normally drawn, and sparks running from its source to its target so the direction reads at a
+     * glance. Every other cable is faded while this one is traced, so it is the line that stands
+     * out however many cross it.
+     *
+     * <p>Faded cables and the glow are mixed toward the canvas rather than drawn see-through: a
+     * cable is drawn as a chain of short strokes that overlap at every joint, and translucent
+     * strokes would bead wherever two of them meet.</p>
+     */
+    private void drawTracedWire(GuiGraphicsExtractor extractor) {
+        TracedWire wire = tracedWire;
+        if (!wireCouldBeVisible(wire.fromX(), wire.fromY(), wire.toX(), wire.toY(), wire.route())) {
+            return;
+        }
+        TaskCablePath path = TaskCablePath.of(wire.fromX(), wire.fromY(), wire.toX(), wire.toY(),
+                wire.route());
+        int samples = Math.clamp((int) Math.ceil(path.length() * zoom / 6), 12, 256);
+        int thickness = Math.max(2, (int) Math.ceil(1.5 / zoom));
+        long now = System.currentTimeMillis();
+        double breath = 0.5 + 0.5 * Math.sin(now / 240.0);
+        int glow = mix(wire.colour(), CANVAS_SHADE, 0.62 - 0.22 * breath);
+        int core = mix(wire.colour(), 0xFFFFFFFF, 0.35);
+
+        TaskCablePath.Point previous = path.at(0);
+        for (int i = 1; i <= samples; i++) {
+            TaskCablePath.Point point = path.at(i / (double) samples);
+            cableStroke(extractor, previous, point, thickness + 8, glow);
+            previous = point;
+        }
+        previous = path.at(0);
+        for (int i = 1; i <= samples; i++) {
+            TaskCablePath.Point point = path.at(i / (double) samples);
+            cableStroke(extractor, previous, point, thickness + 3, WIRE_OUTLINE);
+            cableStroke(extractor, previous, point, thickness + 1, core);
+            previous = point;
+        }
+
+        // Sparks spaced by distance and moving at one pace, so a long cable does not look slower
+        // than a short one.
+        double length = Math.max(1.0, path.length());
+        int sparks = Math.max(2, (int) (length / SPARK_SPACING));
+        double travelled = (now / 1000.0 * SPARK_SPEED / length) % 1.0;
+        for (int i = 0; i < sparks; i++) {
+            TaskCablePath.Point point = path.at((travelled + i / (double) sparks) % 1.0);
+            int px = (int) Math.round(point.x());
+            int py = (int) Math.round(point.y());
+            extractor.fill(px - 3, py - 3, px + 4, py + 4, core);
+            extractor.fill(px - 1, py - 1, px + 2, py + 2, LIVE_WIRE_SPARK);
+        }
+    }
+
+    /** A ring round each card the traced cable joins, so both of its ends can be found at once. */
+    private void drawTracedEnds(GuiGraphicsExtractor extractor) {
+        TracedWire wire = tracedWire;
+        if (wire == null) {
+            return;
+        }
+        int core = mix(wire.colour(), 0xFFFFFFFF, 0.35);
+        int glow = mix(wire.colour(), CANVAS_SHADE, 0.5);
+        for (TaskNode end : List.of(wire.from(), wire.to())) {
+            if (collapsedHolder(end) != null) {
+                continue;
+            }
+            int x = nodeX(end);
+            int y = nodeY(end);
+            int height = nodeHeight(end);
+            extractor.outline(x - 3, y - 3, NODE_W + 6, height + 6, glow);
+            extractor.outline(x - 2, y - 2, NODE_W + 4, height + 4, core);
+        }
+    }
+
+    /** {@code colour} carried {@code amount} of the way to {@code toward}, channel by channel. */
+    private static int mix(int colour, int toward, double amount) {
+        double t = Math.clamp(amount, 0.0, 1.0);
+        int result = 0xFF000000;
+        for (int shift = 0; shift <= 16; shift += 8) {
+            int from = (colour >> shift) & 0xFF;
+            int to = (toward >> shift) & 0xFF;
+            result |= ((int) Math.round(from + (to - from) * t) & 0xFF) << shift;
+        }
+        return result;
     }
 
     private boolean isFindHit(String id) {
@@ -1518,6 +1767,7 @@ public final class BlueprintPanel extends AbstractWidget {
             default -> { }
         }
         if (doubleClick) {
+            note.adopt();
             editingNote = note;
             return true;
         }
@@ -1558,6 +1808,7 @@ public final class BlueprintPanel extends AbstractWidget {
             default -> { }
         }
         if (doubleClick) {
+            group.adopt();
             editingGroup = group;
             titleBuffer = group.title == null ? "" : group.title;
             return true;
@@ -2719,6 +2970,15 @@ public final class BlueprintPanel extends AbstractWidget {
      */
     private void drawWire(GuiGraphicsExtractor extractor, int x1, int y1, int x2, int y2,
                           int colour, boolean live, TaskCableRoute route) {
+        drawWire(extractor, x1, y1, x2, y2, colour, live, route, false);
+    }
+
+    /**
+     * The same, with {@code faded} set while another cable is traced: every part of this one
+     * - edge, line and spark - is mixed toward the canvas, so the traced cable stands out.
+     */
+    private void drawWire(GuiGraphicsExtractor extractor, int x1, int y1, int x2, int y2,
+                          int colour, boolean live, TaskCableRoute route, boolean faded) {
         double spark = live ? previewSpark : -1;
         previewSpark = -1;
         if (!wireCouldBeVisible(x1, y1, x2, y2, route)) {
@@ -2737,18 +2997,25 @@ public final class BlueprintPanel extends AbstractWidget {
         for (int i = 1; i <= samples; i++) {
             TaskCablePath.Point point = path.at(i / (double) samples);
             // A dark outline separates crossing Success and Fail cables from each other.
-            cableStroke(extractor, previous, point, thickness + 2, 0xFF10151E);
-            cableStroke(extractor, previous, point, thickness, colour);
+            cableStroke(extractor, previous, point, thickness + 2,
+                    faded ? mix(WIRE_OUTLINE, CANVAS_SHADE, FADED) : WIRE_OUTLINE);
+            cableStroke(extractor, previous, point, thickness,
+                    faded ? mix(colour, CANVAS_SHADE, FADED) : colour);
             previous = point;
         }
         if (spark >= 0) {
             TaskCablePath.Point point = path.at(spark);
             int px = (int) Math.round(point.x());
             int py = (int) Math.round(point.y());
-            extractor.fill(px - 3, py - 3, px + 4, py + 4, colour);
-            extractor.fill(px - 1, py - 1, px + 2, py + 2, LIVE_WIRE_SPARK);
+            extractor.fill(px - 3, py - 3, px + 4, py + 4,
+                    faded ? mix(colour, CANVAS_SHADE, FADED) : colour);
+            extractor.fill(px - 1, py - 1, px + 2, py + 2,
+                    faded ? mix(LIVE_WIRE_SPARK, CANVAS_SHADE, FADED) : LIVE_WIRE_SPARK);
         }
     }
+
+    /** How far toward the canvas a cable is faded while another one is traced. */
+    private static final double FADED = 0.65;
 
     /** Rotated rectangles join every sample, including at fractional canvas zoom. */
     private void cableStroke(GuiGraphicsExtractor extractor, TaskCablePath.Point from,
@@ -2870,14 +3137,9 @@ public final class BlueprintPanel extends AbstractWidget {
         pointerX = (int) event.x();
         pointerY = (int) event.y();
 
-        if (event.button() == 2) {
-            closeContextMenu();
-            panning = true;
-            selecting = false;
-            dragged = null;
-            return;
-        }
-        if (event.button() != 0) {
+        // Named, never numbered: 26.3 moved to SDL, which counts the buttons from 1, so the
+        // literal 0 this used to test was no button at all there, and 1 was the left one.
+        if (event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
             return;
         }
 
@@ -3018,25 +3280,35 @@ public final class BlueprintPanel extends AbstractWidget {
         selectionMoved = false;
         selecting = selectionAdditive;
         panning = !selectionAdditive;
+        panCarryX = 0;
+        panCarryY = 0;
     }
 
     /** Right-click opens a node menu, while a wire segment still offers the quick cut action. */
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        if (event.button() == 0 && contextNode != null) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && contextNode != null) {
             boolean handled = handleContextMenuClick(event.x(), event.y());
             setFocused(true);
             return handled;
         }
-        if (event.button() == 2) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_MIDDLE) {
             if (isMouseOver(event.x(), event.y())) {
-                onClick(event, doubleClick);
+                // Anywhere on the canvas, cards included, so a pan can start on top of a card
+                // without picking it up. On a cable the same press also makes it shine.
+                if (task != null) {
+                    closeContextMenu();
+                    middlePanning = true;
+                    panCarryX = 0;
+                    panCarryY = 0;
+                    beginMiddlePress(event.x(), event.y());
+                }
                 setFocused(true);
                 return true;
             }
             return false;
         }
-        if (event.button() == 1) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
             if (isMouseOver(event.x(), event.y())) {
                 if (minimapVisible && minimapContains(event.x(), event.y())) {
                     closeContextMenu();
@@ -3597,9 +3869,60 @@ public final class BlueprintPanel extends AbstractWidget {
             selectionMoved |= Math.abs(pointerX - selectionStartX) > 3
                     || Math.abs(pointerY - selectionStartY) > 3;
         } else if (panning) {
-            panX += (int) Math.round(dragX);
-            panY += (int) Math.round(dragY);
+            panBy(dragX, dragY);
         }
+    }
+
+    /**
+     * Carries a middle-button drag, which vanilla never hands a widget itself.
+     *
+     * <p>A screen passes a drag and a release on to the focused widget for the left button only,
+     * so the middle press that starts a pan used to be the last this canvas heard of it: the view
+     * stayed put while the pointer moved, and the pan was still armed when the next left drag
+     * came along. {@link LuneScreen} now forwards the rest of the gesture to the widget the press
+     * landed on, and this is where it arrives.</p>
+     */
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_MIDDLE) {
+            if (!middlePanning) {
+                return false;
+            }
+            pointerX = (int) event.x();
+            pointerY = (int) event.y();
+            panBy(dragX, dragY);
+            if (Math.abs(event.x() - middlePressX) > CLICK_SLOP
+                    || Math.abs(event.y() - middlePressY) > CLICK_SLOP) {
+                middleMoved = true;
+            }
+            return true;
+        }
+        return super.mouseDragged(event, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        if (event.button() == InputConstants.MOUSE_BUTTON_MIDDLE) {
+            boolean wasPanning = middlePanning;
+            middlePanning = false;
+            if (wasPanning) {
+                endMiddlePress();
+            }
+            return wasPanning;
+        }
+        return super.mouseReleased(event);
+    }
+
+    /** Moves the view with the pointer, keeping the fraction of a pixel no single event made. */
+    private void panBy(double dragX, double dragY) {
+        panCarryX += dragX;
+        panCarryY += dragY;
+        int stepX = (int) panCarryX;
+        int stepY = (int) panCarryY;
+        panX += stepX;
+        panY += stepY;
+        panCarryX -= stepX;
+        panCarryY -= stepY;
     }
 
     /**
@@ -3994,6 +4317,10 @@ public final class BlueprintPanel extends AbstractWidget {
             cancelCableDrag();
             dragged = null;
             panning = false;
+            return true;
+        }
+        if (event.key() == InputConstants.KEY_ESCAPE && tracedCable != null) {
+            clearTrace();
             return true;
         }
         return handleShortcut(event, ctrl);
@@ -4620,6 +4947,13 @@ public final class BlueprintPanel extends AbstractWidget {
                     : isActiveNode(node) ? NODE_ACTIVE : NODE_BORDER;
             extractor.fill(nodeLeft, nodeTop, Math.max(nodeLeft + 3, nodeRight),
                     Math.max(nodeTop + 3, nodeBottom), colour);
+        }
+        // The traced cable over everything on the map, so its far end can be found here even
+        // when it is nowhere on the canvas.
+        TracedWire traced = tracedWire;
+        if (traced != null) {
+            drawMinimapRoute(extractor, bounds, scale, traced.fromX(), traced.fromY(),
+                    traced.toX(), traced.toY(), LIVE_WIRE_SPARK, traced.route());
         }
 
         double viewLeft = -panX / zoom;

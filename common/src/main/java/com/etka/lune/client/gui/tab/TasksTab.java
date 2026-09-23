@@ -19,7 +19,6 @@ import com.etka.lune.client.gui.widget.BlueprintPanel;
 import com.etka.lune.client.gui.widget.ListPanel;
 import com.etka.lune.client.gui.widget.PalettePanel;
 import com.etka.lune.client.gui.widget.ParamPanel;
-import com.etka.lune.client.gui.widget.TrainingScreen;
 import com.etka.lune.client.gui.widget.VerticalSplitter;
 import com.etka.lune.training.TrainingCourse;
 import com.etka.lune.training.TrainingAnswer;
@@ -33,6 +32,7 @@ import com.etka.lune.task.TaskWiring;
 import com.etka.lune.task.TaskNode;
 import com.etka.lune.task.TaskStore;
 import com.etka.lune.config.BotConfig;
+import com.etka.lune.config.TaskView;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
@@ -43,6 +43,7 @@ import net.minecraft.network.chat.Component;
 
 import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -66,10 +67,11 @@ public class TasksTab extends LuneTab {
     /**
      * Height reserved at the foot of the task pane for its button block.
      *
-     * <p>Four rows now: Training sits full-width above New/Delete/Run, where it reads as a heading
-     * over the block rather than a fourth peer squeezed into a row of three.</p>
+     * <p>Three rows: New/Delete/Run, Import/Export, Undo/Redo. Training used to sit full-width
+     * above them and has moved to the menu in the tab bar, which gave the row back to the list -
+     * the course is not something the player does to the task they have open.</p>
      */
-    private static final int BUTTON_ROW = 91;
+    private static final int BUTTON_ROW = 70;
     private static final int BUTTON_GAP = 2;
     /**
      * Offered repeat counts; 0 is the endless one and shows as an infinity sign.
@@ -100,6 +102,14 @@ public class TasksTab extends LuneTab {
     private static final int CONTROL_H = 18;
     private static final int CONTROL_GAP = 4;
     private static final int CONTROL_ROW_H = CONTROL_H + 3;
+    /**
+     * Room a strip button sized to its words keeps around them: six pixels a side.
+     *
+     * <p>Vanilla scrolls a label once it is wider than its button less four, and one that only
+     * just fits reads as squeezed. Any more than this and the lesson strip wraps onto a second
+     * row sooner than it has to.</p>
+     */
+    private static final int LABEL_PAD = 12;
     /** Restores the editor selection when the control screen/tab is opened again this session. */
     private static String lastOpenedTaskName;
 
@@ -112,7 +122,8 @@ public class TasksTab extends LuneTab {
     private RecipePicker recipePicker;
     private SoundPicker soundPicker;
     private NamePrompt namePrompt;
-    private TrainingScreen trainingScreen;
+    /** Opens the course map; the last step's Next hands the player back to it. */
+    private Runnable openCourseMap = () -> {};
     /** The lesson being attempted, or null when the editor is being used for real work. */
     private TrainingLesson activeLesson;
     /** Ticks spent on the current lesson, used to rotate gentle practice dialogue. */
@@ -149,13 +160,16 @@ public class TasksTab extends LuneTab {
     private final Button runButton;
     private final Button undoButton;
     private final Button redoButton;
-    private final Button trainingButton;
+    /** Only there during a lesson; the way in is the menu, and this is the way back out. */
+    private final Button leaveButton;
     private final Button restartButton;
     private final Button outcomeButton;
     private final Button helpButton;
     private final Button nextLessonButton;
 
     private boolean confirmingDelete;
+    /** The tasks "Sure?" was asked about; a different selection has to be asked about again. */
+    private List<TaskGraph> pendingDelete = List.of();
     private final ArrayDeque<HistoryEntry> undoStack = new ArrayDeque<>();
     private final ArrayDeque<HistoryEntry> redoStack = new ArrayDeque<>();
     /** Normal editor history is parked while a scratch lesson is open. */
@@ -209,7 +223,7 @@ public class TasksTab extends LuneTab {
     private int rightPaneWidth = DEFAULT_RIGHT_PANE;
     /** Whether the collapsed task list is currently pulled open. Only consulted when narrow. */
     private boolean listExpanded;
-    /** Rows the control strip wrapped onto last layout; the canvas starts below them. */
+    /** Rows the control strip keeps (see {@link #stripRows}); the canvas starts below them. */
     private int controlRows = 1;
 
     private String message = "";
@@ -218,6 +232,10 @@ public class TasksTab extends LuneTab {
         super(Component.literal(Lang.get("lune.gui.tasks.task")));
 
         taskList = add(new ListPanel<>(0, 0, 10, 10, TaskGraph::describe, this::onTaskSelected));
+        // Several at once, so clearing out a list of tasks is a selection and one confirmation
+        // rather than select, Del and Sure for every one of them.
+        taskList.setMultiSelect(true);
+        taskList.setOnDeleteKey(this::deleteTask);
         blueprintPanel = add(new BlueprintPanel(0, 0, 10, 10, this::onStepSelected,
                 () -> TaskStore.get().save(), value -> message = value, this::removeSteps));
         palettePanel = add(new PalettePanel(0, 0, 10, 10, this::onPaletteSelect, this::onPaletteDrop));
@@ -243,11 +261,8 @@ public class TasksTab extends LuneTab {
         importButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.import")), b -> importTask()).size(44, 18).build());
         exportButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.export")), b -> exportTask()).size(50, 18).build());
         runButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.run")), b -> runTask()).size(124, 18).build());
-        trainingButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.training")), b -> onTrainingButton())
-                .size(104, 18)
-                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
-                        Component.literal(Lang.get("lune.gui.tasks.ten_puzzles_easiest_first_each_one_hands"))))
-                .build());
+        leaveButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.leave_puzzle")), b -> leavePuzzle())
+                .size(104, 18).build());
         restartButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.restart")), b -> restartLesson())
                 .size(96, 18).build());
         outcomeButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.path_success")), b -> {
@@ -322,6 +337,8 @@ public class TasksTab extends LuneTab {
         breakpointButton.visible = false;
         stepButton.visible = false;
         resumeButton.visible = false;
+        // The same for the lesson controls, until a lesson is opened from the course map.
+        syncTrainingControls();
 
         stepParams.setOpenBlockPicker(this::openBlockPicker);
         stepParams.setOpenItemPicker(this::openItemPicker);
@@ -334,6 +351,7 @@ public class TasksTab extends LuneTab {
             lastOpenedTaskName = BotConfig.get().lastOpenedTask;
         }
         refreshTasks();
+        forgetMissingViews();
         restoreTaskSelection();
         recordEdit();
     }
@@ -360,11 +378,8 @@ public class TasksTab extends LuneTab {
         this.namePrompt = prompt;
     }
 
-    public void setTrainingScreen(TrainingScreen screen) {
-        this.trainingScreen = screen;
-        if (screen != null) {
-            screen.setOnStartLesson(this::startLesson);
-        }
+    public void setCourseMapOpener(Runnable opener) {
+        this.openCourseMap = opener == null ? () -> {} : opener;
     }
 
     // --- training ------------------------------------------------------------
@@ -415,18 +430,25 @@ public class TasksTab extends LuneTab {
         int nextIndex = stepNumber(activeLesson);
         leavePuzzle();
         if (nextIndex < TrainingCourse.lessons().size()) startLesson(TrainingCourse.lessons().get(nextIndex));
-        else if (trainingScreen != null) trainingScreen.open();
+        else openCourseMap.run();
     }
 
-    /** Opens the course map, or walks out of the puzzle already open. */
-    private void onTrainingButton() {
-        if (activeLesson != null) {
-            leavePuzzle();
+    /**
+     * A lesson chosen on the course map.
+     *
+     * <p>The map opens from the menu, which is on screen during a lesson too, so a player can pick
+     * another step without leaving the one they are in. That one is left properly first: its
+     * practice copy is thrown away and their own task and history come back, and only then is the
+     * new one handed out - otherwise the first copy would stay behind in their task list.</p>
+     */
+    public void openLesson(TrainingLesson lesson) {
+        if (lesson == null || !TrainingProgress.isUnlocked(lesson)) {
             return;
         }
-        if (trainingScreen != null) {
-            trainingScreen.open();
+        if (activeLesson != null) {
+            leavePuzzle();
         }
+        startLesson(lesson);
     }
 
     /**
@@ -769,32 +791,44 @@ public class TasksTab extends LuneTab {
         recordEdit();
     }
 
+    /**
+     * Deletes every task selected in the list, once the player has said yes.
+     *
+     * <p>The question names the tasks it was asked about. If the selection changes before the
+     * answer, the yes does not carry over to tasks nobody was asked about; the question is asked
+     * again. The whole deletion is one step of undo, however many tasks it took.</p>
+     */
     private void deleteTask() {
-        TaskGraph selected = taskList.getSelected();
-        if (selected == null) {
+        List<TaskGraph> doomed = taskList.getSelection();
+        if (doomed.isEmpty()) {
             return;
         }
-        if (!confirmingDelete) {
+        if (!confirmingDelete || !doomed.equals(pendingDelete)) {
             confirmingDelete = true;
+            pendingDelete = doomed;
             deleteButton.setMessage(Component.literal(Lang.get("lune.gui.tasks.sure")));
-            message = Lang.get("lune.gui.tasks.click_delete_again_confirm");
+            message = doomed.size() == 1 ? Lang.get("lune.gui.tasks.click_delete_again_confirm")
+                    : Lang.get("lune.gui.tasks.click_delete_again_confirm_many", doomed.size());
             return;
         }
         beginEdit();
-        TaskStore.get().remove(selected);
-        if (selected.name.equals(lastOpenedTaskName)) {
+        TaskStore.get().removeAll(doomed);
+        if (doomed.stream().anyMatch(task -> task.name.equals(lastOpenedTaskName))) {
             lastOpenedTaskName = null;
             BotConfig.get().lastOpenedTask = "";
-            BotConfig.get().save();
         }
         refreshTasks();
         setTask(null);
         setSelectedStep(null);
         nameBox.setValue("");
         selectedTaskName = null;
+        forgetViews(doomed);
+        BotConfig.get().save();
         recordEdit();
         resetDeleteConfirmation();
-        message = Lang.get("lune.gui.tasks.deleted") + selected.displayName();
+        message = doomed.size() == 1
+                ? Lang.get("lune.gui.tasks.deleted") + doomed.get(0).displayName()
+                : Lang.get("lune.gui.tasks.deleted_tasks", doomed.size());
     }
 
     private void exportTask() {
@@ -877,6 +911,12 @@ public class TasksTab extends LuneTab {
     private void onRename(String value) {
         TaskGraph selected = taskList.getSelected();
         if (selected != null && !value.isBlank() && !value.equals(selected.displayName())) {
+            // The view goes with the task. Left under the old name it would be lost to this one
+            // and handed to whichever task is given that name next.
+            TaskView view = taskViews().remove(selected.name);
+            if (view != null) {
+                taskViews().put(value, view);
+            }
             selected.name = value;
             // Named by the player now, so it stops following the language. Showing them a title
             // they did not write, over the one they just typed, would be the wrong answer to
@@ -907,6 +947,10 @@ public class TasksTab extends LuneTab {
             // reading a name wants to read the end of it first; typing still starts wherever the
             // player clicks.
             nameBox.moveCursorToStart(false);
+        } else if (task == null) {
+            // Ctrl+clicking the last selected task out of the selection leaves nothing open, and
+            // a name box still reading its name would look like it could rename it.
+            nameBox.setValue("");
         }
     }
 
@@ -924,17 +968,19 @@ public class TasksTab extends LuneTab {
     }
 
     private void refreshTasks() {
-        List<TaskGraph> available = TaskStore.get().all();
-        taskList.setItems(available);
-        knownTaskList = available.stream().map(task -> task.name).toList().toString();
+        taskList.setItems(TaskStore.get().listed());
+        // Every name, hidden ones included: tick() compares this against the whole store to notice
+        // a change, and a list of only the visible names would never match it.
+        knownTaskList = TaskStore.get().names().toString();
     }
 
     private void restoreTaskSelection() {
+        List<TaskGraph> listed = TaskStore.get().listed();
         TaskGraph selected = lastOpenedTaskName == null
                 ? null
-                : TaskStore.get().byName(lastOpenedTaskName).orElse(null);
-        if (selected == null && !TaskStore.get().all().isEmpty()) {
-            selected = TaskStore.get().all().get(0);
+                : TaskStore.get().byName(lastOpenedTaskName).filter(listed::contains).orElse(null);
+        if (selected == null && !listed.isEmpty()) {
+            selected = listed.get(0);
         }
         taskList.setSelected(selected);
         onTaskSelected(selected);
@@ -1276,26 +1322,27 @@ public class TasksTab extends LuneTab {
     /**
      * Shows the debugger's controls when there is something for them to act on.
      *
-     * <p>Breakpoint appears with a card selected, because that is what it acts on. Step and
-     * Continue appear while the selected task is the one running, or while a run is already being
-     * held - the second case matters because a hold survives switching to another task in the
-     * list, and the buttons that release it must survive with it.</p>
+     * <p>Breakpoint appears with a card selected, because that is what it acts on - outside a
+     * lesson, see {@link #cardControls}. Step and Continue appear while the selected task is the
+     * one running, or while a run is already being held - the second case matters because a hold
+     * survives switching to another task in the list, and the buttons that release it must
+     * survive with it.</p>
      */
     private void syncDebugControls() {
-        boolean cardSelected = selectedStep() != null;
+        boolean breakpoint = cardControls(selectedStep()).breakpoint();
         boolean debugging = selectedTaskIsRunning() || TaskDebug.holding()
                 || TaskDebug.waitingToBreak();
-        boolean changed = breakpointButton.visible != cardSelected
+        boolean changed = breakpointButton.visible != breakpoint
                 || stepButton.visible != debugging;
-        breakpointButton.visible = cardSelected;
-        breakpointButton.active = cardSelected;
+        breakpointButton.visible = breakpoint;
+        breakpointButton.active = breakpoint;
         stepButton.visible = debugging;
         resumeButton.visible = debugging;
         stepButton.active = debugging;
         // Continue also cancels a hold that has been asked for but not yet reached, which is the
         // only way back out of an armed Step on a task that has since gone quiet.
         resumeButton.active = TaskDebug.holding() || TaskDebug.waitingToBreak();
-        if (!cardSelected) {
+        if (!breakpoint) {
             breakpointButton.setFocused(false);
         }
         if (!debugging) {
@@ -1303,7 +1350,7 @@ public class TasksTab extends LuneTab {
             resumeButton.setFocused(false);
         }
         findButton.setMessage(Component.literal(Lang.get(blueprintPanel.isFindOpen()
-                ? "lune.gui.tasks.find_open" : "lune.gui.tasks.find")));
+                ? "lune.gui.recipe.close" : "lune.gui.tasks.find")));
         if (changed && area != null && area.width() > 0) {
             layout(area);
         }
@@ -1381,7 +1428,7 @@ public class TasksTab extends LuneTab {
 
     private void syncButtonControls() {
         TaskNode step = selectedStep();
-        boolean visible = step != null && step.isButtonNode();
+        boolean visible = cardControls(step).button();
         boolean changed = buttonPressButton.visible != visible;
         buttonPressButton.visible = visible;
         buttonPressButton.active = visible;
@@ -1395,7 +1442,7 @@ public class TasksTab extends LuneTab {
 
     private void syncAlwaysFrequencyControls() {
         TaskNode step = selectedStep();
-        boolean visible = step != null && step.isClockNode();
+        boolean visible = cardControls(step).clock();
         boolean changed = alwaysFrequencyButton.visible != visible
                 || alwaysSecondsBox.visible != visible;
         alwaysFrequencyButton.visible = visible;
@@ -1429,7 +1476,7 @@ public class TasksTab extends LuneTab {
 
     private void syncRelayPortControls() {
         TaskNode step = selectedStep();
-        boolean visible = step != null && step.isSignalRelayNode();
+        boolean visible = cardControls(step).relay();
         boolean changed = relayInputsButton.visible != visible
                 || relayOutputsButton.visible != visible;
         relayInputsButton.visible = visible;
@@ -1578,6 +1625,21 @@ public class TasksTab extends LuneTab {
                 Component.literal(Lang.get(selectedCount == 0 ? "lune.gui.tasks.delete_tip_none"
                         : selectedCount == 1 ? "lune.gui.tasks.delete_tip_one"
                         : "lune.gui.tasks.delete_tip_many", selectedCount))));
+        // The task pane's Del counts too, for the same reason and more so: what it takes is whole
+        // tasks, as many as are selected in the list.
+        List<TaskGraph> chosenTasks = taskList.getSelection();
+        if (confirmingDelete && !chosenTasks.equals(pendingDelete)) {
+            resetDeleteConfirmation();
+        }
+        if (!confirmingDelete) {
+            deleteButton.setMessage(Component.literal(deleteLabel(chosenTasks.size())));
+        }
+        deleteButton.active = !chosenTasks.isEmpty();
+        deleteButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
+                Component.literal(chosenTasks.size() > 1
+                        ? Lang.get("lune.gui.tasks.delete_tasks_tip_many", chosenTasks.size())
+                        : Lang.get("lune.gui.tasks.delete_whole_task_delete_card_instead"))));
+        rememberView();
 
         syncRunButton();
         syncTrainingControls();
@@ -1595,6 +1657,7 @@ public class TasksTab extends LuneTab {
         syncRelayPortControls();
         syncButtonControls();
         syncDebugControls();
+        syncStripRows();
         tickAnswerReveal();
         checkLesson();
     }
@@ -1640,8 +1703,69 @@ public class TasksTab extends LuneTab {
         blueprintPanel.setSelected(node);
     }
 
+    /**
+     * Puts a task on the canvas, and the canvas back where it was looking the last time that task
+     * was on it.
+     *
+     * <p>The canvas is one widget for every task, so it used to keep whatever view the task before
+     * had left it at, which on a task laid out anywhere else is a screenful of empty grid. Only a
+     * change of task moves the camera: this is also called with the same task after every edit,
+     * and with an equal copy of it after an undo, and neither should move anything.</p>
+     */
     private void setTask(TaskGraph task) {
+        TaskGraph shown = blueprintPanel.getTask();
+        boolean another = task == null || shown == null
+                ? task != shown : !task.name.equals(shown.name);
+        if (another) {
+            rememberView();
+        }
         blueprintPanel.setTask(task);
+        if (another) {
+            blueprintPanel.showView(task == null ? null : taskViews().get(task.name));
+        }
+    }
+
+    /**
+     * Notes where the canvas is looking in the task on it.
+     *
+     * <p>Every tick, and in memory: the file is written by whatever writes it next - choosing a
+     * task, closing the panel. Noting it only on the way out would miss the ways the panel closes
+     * without being asked, when Run closes it or a card needs the screen.</p>
+     *
+     * <p>A training attempt is never noted. It is thrown away when the lesson ends, and a view kept
+     * under its name would be a view of nothing.</p>
+     */
+    private void rememberView() {
+        TaskGraph shown = blueprintPanel.getTask();
+        if (shown == null || TaskStore.isTrainingAttempt(shown)
+                || TaskStore.get().byName(shown.name).orElse(null) != shown) {
+            return;
+        }
+        TaskView now = blueprintPanel.view();
+        if (!now.sameAs(taskViews().get(shown.name))) {
+            taskViews().put(shown.name, now);
+        }
+    }
+
+    private static void forgetViews(List<TaskGraph> tasks) {
+        for (TaskGraph task : tasks) {
+            taskViews().remove(task.name);
+        }
+    }
+
+    /** Drops the views of tasks that are gone - taken by an undo, or by editing the file. */
+    private static void forgetMissingViews() {
+        java.util.Set<String> names = new java.util.HashSet<>(TaskStore.get().names());
+        taskViews().keySet().removeIf(name -> !names.contains(name));
+    }
+
+    /** The remembered views, made safe for a config written before there were any. */
+    private static Map<String, TaskView> taskViews() {
+        BotConfig config = BotConfig.get();
+        if (config.taskViews == null) {
+            config.taskViews = new java.util.LinkedHashMap<>();
+        }
+        return config.taskViews;
     }
 
 
@@ -1745,8 +1869,14 @@ public class TasksTab extends LuneTab {
     private void resetDeleteConfirmation() {
         if (confirmingDelete) {
             confirmingDelete = false;
-            deleteButton.setMessage(Component.literal(Lang.get("lune.gui.tasks.delete_2")));
+            pendingDelete = List.of();
+            deleteButton.setMessage(Component.literal(deleteLabel(taskList.getSelection().size())));
         }
+    }
+
+    private static String deleteLabel(int count) {
+        return count > 1 ? Lang.get("lune.gui.tasks.delete_tasks_many", count)
+                : Lang.get("lune.gui.tasks.del");
     }
 
     /** Called when the panel closes, so edits survive without writing the file every tick. */
@@ -1758,6 +1888,8 @@ public class TasksTab extends LuneTab {
             leavePuzzle();
         }
         TaskStore.get().save();
+        // tick() noted where the canvas was looking; until now only in memory.
+        BotConfig.get().save();
     }
 
     private void resizeLeftPane(int dx) {
@@ -1852,6 +1984,8 @@ public class TasksTab extends LuneTab {
         tasksButton.setMessage(Component.literal(Lang.get(listExpanded ? "lune.gui.tasks.hide_list" : "lune.gui.tasks.title")));
 
         // The strip is flowed first: how many rows it wraps onto decides where the canvas starts.
+        // Its buttons are sized before that, since the flow goes by their widths.
+        fitStripButtons(listVisible);
         Frame provisional = frame(area, 1);
         controlRows = flowControls(provisional.flowX(), provisional.top() + 2,
                 provisional.flowWidth(), listVisible);
@@ -1890,6 +2024,64 @@ public class TasksTab extends LuneTab {
         }
     }
 
+    /**
+     * Sizes the strip's buttons to the widest words each can show there, so that no change of
+     * label (Run to Stop, Find to Close, Map on to off) ever reflows the strip.
+     *
+     * <p>Run belongs to the task pane, and only the pane sizes it. When a lesson or a collapsed
+     * list puts it in the strip, it arrives at whatever width the pane last gave it - 44px with
+     * the default pane, where Send pulse scrolled. So in the strip it is measured here instead:
+     * on Send pulse in a lesson, otherwise on the wider of Run and Stop. {@link #layoutTaskPane}
+     * gives it the pane's width back the next time the pane lays it out.</p>
+     *
+     * <p>Fixed widths went wrong both ways. The lesson's own buttons were about a hundred pixels
+     * for words half that long, which was often the difference between one row of strip and two.
+     * Find, Map, Tasks and the Always interval were narrower than some of their own labels, which
+     * scrolled.</p>
+     */
+    private void fitStripButtons(boolean listVisible) {
+        findButton.setWidth(labelWidth("lune.gui.tasks.find", "lune.gui.recipe.close"));
+        minimapButton.setWidth(labelWidth("lune.gui.tasks.map", "lune.gui.tasks.map_off"));
+        tasksButton.setWidth(labelWidth("lune.gui.tasks.title", "lune.gui.tasks.hide_list"));
+        // The cap is the widest interval: it has the most digits, and the seconds box accepts it.
+        alwaysFrequencyButton.setWidth(textWidth(alwaysFrequencyLabel(0),
+                alwaysFrequencyLabel(TaskNode.MAX_ALWAYS_INTERVAL_SECONDS)));
+        if (inTraining()) {
+            runButton.setWidth(labelWidth("lune.gui.tasks.send_pulse"));
+            restartButton.setWidth(labelWidth("lune.gui.tasks.restart"));
+            outcomeButton.setWidth(labelWidth("lune.gui.tasks.path_success",
+                    "lune.gui.tasks.path_fail"));
+            helpButton.setWidth(labelWidth("lune.gui.tasks.need_help"));
+            nextLessonButton.setWidth(labelWidth("lune.gui.tasks.next_step",
+                    "lune.gui.tasks.course_map"));
+        } else if (!listVisible) {
+            runButton.setWidth(labelWidth("lune.gui.tasks.run", "lune.gui.tasks.stop"));
+        }
+    }
+
+    /**
+     * Wide enough for the widest of these labels, plus {@link #LABEL_PAD}. Measured at layout and
+     * never ahead of it, because which label is the widest depends on the language: Path: Success
+     * is the longer outcome in English, and Path: Fail in Turkish.
+     */
+    private static int labelWidth(String... keys) {
+        String[] labels = new String[keys.length];
+        for (int i = 0; i < keys.length; i++) {
+            labels[i] = Lang.get(keys[i]);
+        }
+        return textWidth(labels);
+    }
+
+    /** {@link #labelWidth} for text already looked up, such as a label with a number in it. */
+    private static int textWidth(String... labels) {
+        var font = Minecraft.getInstance().font;
+        int widest = 0;
+        for (String label : labels) {
+            widest = Math.max(widest, font.width(label));
+        }
+        return widest + LABEL_PAD;
+    }
+
     private void layoutTaskPane(Frame frame) {
         int left = frame.left();
         int top = frame.top();
@@ -1897,11 +2089,6 @@ public class TasksTab extends LuneTab {
         int fullW = Math.max(28, frame.leftPane());
         int halfW = Math.max(28, (frame.leftPane() - BUTTON_GAP) / 2);
         int tailW = Math.max(28, frame.leftPane() - halfW - BUTTON_GAP);
-
-        // Row one is the mode switch in both modes, so the button that took you in is the button
-        // that takes you out, without moving.
-        trainingButton.setPosition(left, rowY);
-        trainingButton.setSize(fullW, CONTROL_H);
 
         if (inTraining()) {
             layoutTrainingPane(rowY, left, fullW, halfW, tailW);
@@ -1913,16 +2100,15 @@ public class TasksTab extends LuneTab {
         taskList.setPosition(left, top + 22);
         taskList.setSize(frame.leftPane(), Math.max(20, frame.listHeight() - 22));
 
-        int taskButtonsY = rowY + 21;
         int topW = Math.max(28, (frame.leftPane() - BUTTON_GAP * 2) / 3);
-        newButton.setPosition(left, taskButtonsY);
+        newButton.setPosition(left, rowY);
         newButton.setSize(topW, CONTROL_H);
-        deleteButton.setPosition(left + topW + BUTTON_GAP, taskButtonsY);
+        deleteButton.setPosition(left + topW + BUTTON_GAP, rowY);
         deleteButton.setSize(topW, CONTROL_H);
-        runButton.setPosition(left + 2 * (topW + BUTTON_GAP), taskButtonsY);
+        runButton.setPosition(left + 2 * (topW + BUTTON_GAP), rowY);
         runButton.setSize(Math.max(28, frame.leftPane() - 2 * (topW + BUTTON_GAP)), CONTROL_H);
 
-        int midY = taskButtonsY + 21;
+        int midY = rowY + 21;
         importButton.setPosition(left, midY);
         importButton.setSize(halfW, CONTROL_H);
         exportButton.setPosition(left + halfW + BUTTON_GAP, midY);
@@ -1936,14 +2122,17 @@ public class TasksTab extends LuneTab {
     }
 
     /**
-     * The same four rows, with different occupants.
+     * The same block of rows, with different occupants.
      *
-     * <p>Keeping the geometry identical is deliberate: the pane above it changes completely, and
-     * a button block that also jumped around would make the switch read as a different screen
-     * rather than the same editor in another mode.</p>
+     * <p>Keeping the geometry is deliberate: the pane above it changes completely, and a button
+     * block that also changed shape would make the switch read as a different screen rather than
+     * the same editor in another mode.</p>
      */
     private void layoutTrainingPane(int rowY, int left, int fullW, int halfW, int tailW) {
-        // Training controls live in the canvas toolbar. The brief stays focused on the lesson.
+        // The way out sits directly under the brief it ends. The lesson's own controls live in the
+        // canvas toolbar, so the brief stays about the lesson.
+        leaveButton.setPosition(left, rowY);
+        leaveButton.setSize(fullW, CONTROL_H);
         int botY = rowY + 21;
         undoButton.setPosition(left, botY);
         undoButton.setSize(halfW, CONTROL_H);
@@ -1958,9 +2147,9 @@ public class TasksTab extends LuneTab {
      * practice task looks exactly like a real one on the canvas, so the only honest place to say
      * which mode the editor is in is the pane the player reads before they touch anything.</p>
      *
-     * <p>Run and Training are absent from both sets. Neither is ever hidden - when the pane
-     * collapses they move into the control strip instead, because starting a task and getting into
-     * the course are not things to bury behind a toggle.</p>
+     * <p>Run and Leave puzzle are absent from both sets. Neither is ever hidden while it applies -
+     * when the pane collapses they move into the control strip instead, because starting a task and
+     * getting out of a lesson are not things to bury behind a toggle.</p>
      */
     private void syncPaneWidgets(boolean paneVisible) {
         show(paneVisible && !inTraining(), nameBox, taskList, newButton, deleteButton,
@@ -1992,26 +2181,95 @@ public class TasksTab extends LuneTab {
         nextLessonButton.setMessage(Component.literal(Lang.get(activeLesson != null
                 && stepNumber(activeLesson) == TrainingCourse.lessons().size()
                 ? "lune.gui.tasks.course_map" : "lune.gui.tasks.next_step")));
-        trainingButton.setMessage(Component.literal(Lang.get(!training ? "lune.gui.tasks.training" : "lune.gui.tasks.leave_puzzle")));
+        leaveButton.visible = training;
+        leaveButton.active = training;
         syncRunButton();
     }
 
     /**
      * Lays the step controls left to right, wrapping to another row when one runs out. Returns the
-     * number of rows used, which is what the canvas below has to make room for.
+     * rows the canvas below has to make room for, which can be more than this used: see
+     * {@link #stripRows}.
      */
     private int flowControls(int x, int y, int available, boolean listVisible) {
+        flow(stripControls(shownCardControls(), listVisible), x, y, available, true);
+        return stripRows(available, listVisible);
+    }
+
+    /**
+     * Rows the strip keeps: as many as it would take with any card of the task selected.
+     *
+     * <p>Selecting a card brings its controls into the strip. When they wrapped onto a row of
+     * their own, the canvas moved down the moment a card was pressed - out from under the pointer,
+     * halfway into a drag, and a lesson's banner and wires with it. So the room is kept whether or
+     * not anything is selected. It is measured on the cards the task holds, so a task with no Relay
+     * in it does not give up a row to the Relay's two buttons.</p>
+     */
+    private int stripRows(int available, boolean listVisible) {
+        int rows = flow(stripControls(shownCardControls(), listVisible), 0, 0, available, false);
+        TaskGraph task = taskList.getSelected();
+        if (task != null) {
+            java.util.Set<CardControls> possible = new java.util.HashSet<>();
+            for (TaskNode node : task.nodes) {
+                possible.add(cardControls(node));
+            }
+            for (CardControls card : possible) {
+                rows = Math.max(rows,
+                        flow(stripControls(card, listVisible), 0, 0, available, false));
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * Measures the kept rows again when the cards under them change - one brought in by a paste or
+     * an undo, the last Relay deleted, another task opened. Nothing else lays the tab out for
+     * those, and leaving it to the next selection would move the canvas on the very click the
+     * kept rows are there to hold still.
+     */
+    private void syncStripRows() {
+        if (area != null && area.width() > 0
+                && stripRows(frame(area, 1).flowWidth(), listVisible()) != controlRows) {
+            layout(area);
+        }
+    }
+
+    /**
+     * The controls a selected card brings into the strip: Break, and an Always, Relay or Button
+     * card's own. One rule for the controls shown and for the room kept for them, so the two
+     * cannot drift apart.
+     */
+    private record CardControls(boolean breakpoint, boolean clock, boolean relay, boolean button) {}
+
+    private CardControls cardControls(TaskNode card) {
+        if (card == null) {
+            return new CardControls(false, false, false, false);
+        }
+        // Not Break in a lesson: Send pulse there is a preview that never stops at a breakpoint,
+        // so the button would only put down a red dot that cannot stop anything.
+        return new CardControls(!inTraining(), card.isClockNode(), card.isSignalRelayNode(),
+                card.isButtonNode());
+    }
+
+    /** The card controls on screen, which the sync methods bring in line with the selection. */
+    private CardControls shownCardControls() {
+        return new CardControls(breakpointButton.visible, alwaysFrequencyButton.visible,
+                relayInputsButton.visible, buttonPressButton.visible);
+    }
+
+    /** The strip in order, as it reads with the given card controls. */
+    private List<AbstractWidget> stripControls(CardControls card, boolean listVisible) {
         List<AbstractWidget> controls = new java.util.ArrayList<>(List.of(removeStepButton,
                 upButton, downButton, repeatButton, repeatBox, layoutButton, minimapButton));
-        if (alwaysFrequencyButton.visible) {
+        if (card.clock()) {
             controls.add(5, alwaysFrequencyButton);
             controls.add(6, alwaysSecondsBox);
         }
-        if (relayInputsButton.visible) {
+        if (card.relay()) {
             controls.add(relayInputsButton);
             controls.add(relayOutputsButton);
         }
-        if (buttonPressButton.visible) {
+        if (card.button()) {
             controls.add(buttonPressButton);
         }
         // The canvas tools sit after the card controls: those act on what is selected, these act
@@ -2020,7 +2278,7 @@ public class TasksTab extends LuneTab {
         controls.add(findButton);
         controls.add(noteButton);
         controls.add(groupButton);
-        if (breakpointButton.visible) {
+        if (card.breakpoint()) {
             controls.add(breakpointButton);
         }
         if (stepButton.visible) {
@@ -2028,23 +2286,32 @@ public class TasksTab extends LuneTab {
             controls.add(resumeButton);
         }
         if (inTraining()) {
-            controls.addAll(0, List.of(runButton, restartButton, outcomeButton, helpButton,
-                    nextLessonButton, trainingButton));
+            List<AbstractWidget> lesson = new java.util.ArrayList<>(List.of(runButton,
+                    restartButton, outcomeButton, helpButton, nextLessonButton));
+            // Leave puzzle lives in the pane under the brief; with that collapsed it comes here,
+            // or a narrow window would be a window with no way out of a puzzle.
+            if (!listVisible) {
+                lesson.add(leaveButton);
+            }
+            controls.addAll(0, lesson);
         } else if (!listVisible) {
             // Run lives in the task pane; with that collapsed it moves here, because starting the
-            // selected task is not something to hide behind a toggle. Training comes with it, and
-            // so do the preview and next-step buttons - otherwise a narrow window is a window with
-            // no way into the course and no way out of a puzzle.
-            List<AbstractWidget> promoted = new java.util.ArrayList<>(
-                    List.of(runButton, trainingButton));
-            if (outcomeButton.visible) promoted.add(outcomeButton);
-            if (nextLessonButton.visible) promoted.add(nextLessonButton);
-            controls.addAll(0, promoted);
+            // selected task is not something to hide behind a toggle.
+            controls.add(0, runButton);
         }
         if (tasksButton.visible) {
             controls.add(0, tasksButton);
         }
+        return controls;
+    }
 
+    /**
+     * Flows the controls left to right from x, starting a new row when the next one would run past
+     * the width, and returns the rows used. It only moves them when told to place: the same
+     * arithmetic measures strips that are never shown.
+     */
+    private static int flow(List<AbstractWidget> controls, int x, int y, int available,
+                            boolean place) {
         int cursorX = x;
         int rows = 1;
         for (AbstractWidget control : controls) {
@@ -2052,7 +2319,9 @@ public class TasksTab extends LuneTab {
                 cursorX = x;
                 rows++;
             }
-            control.setPosition(cursorX, y + (rows - 1) * CONTROL_ROW_H);
+            if (place) {
+                control.setPosition(cursorX, y + (rows - 1) * CONTROL_ROW_H);
+            }
             cursorX += control.getWidth() + CONTROL_GAP;
         }
         return rows;

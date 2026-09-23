@@ -173,6 +173,14 @@ class LangTest {
             // A starter job's title, looked up by the id the graph carries.
             return source.contains("\"lune.task.seeded.\" + seededId");
         }
+        if (key.startsWith("lune.task.note.")) {
+            // A starter job's sticky note, looked up by the id the note carries.
+            return source.contains("\"lune.task.note.\" + seededId");
+        }
+        if (key.startsWith("lune.task.group.")) {
+            // A starter job's frame title, looked up by the id the frame carries.
+            return source.contains("\"lune.task.group.\" + seededId");
+        }
         return false;
     }
 
@@ -302,7 +310,7 @@ class LangTest {
     private static boolean isBuiltFromAnId(String key) {
         return key.startsWith("lune.command.") || key.startsWith("lune.choice.")
                 || key.startsWith("lune.training.") || key.startsWith("lune.param.")
-                || key.startsWith("lune.gui.section.")
+                || key.startsWith("lune.gui.section.") || key.startsWith("lune.task.group.")
                 || key.startsWith("lune.mascot.dismissal.") || key.matches(".*\\.\\d+$");
     }
 

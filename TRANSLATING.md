@@ -99,9 +99,14 @@ English too. A Blaze is a mob, not a flame.
 
 ## Two things with a catch
 
-**`lune.task.seeded.*`** — the six starter job titles — have a **32-character
+**`lune.task.seeded.*`** — the fifteen starter job titles — have a **32-character
 limit**, because they appear in the rename box and a longer one is cut off
 mid-word.
+
+**`lune.task.note.*`** — the sticky notes on the starter jobs' canvases — are drawn
+inside a box of fixed size, and whatever does not fit is simply not drawn. A note
+may run a third longer than its English, not much more; the build measures every
+one in every shipped language and names the ones that overflow.
 
 **`lune.reason.*`** is never a whole line. It is dropped *into* one, so
 `lune.reason.took_too_long` lands inside
@@ -121,7 +126,9 @@ placeholders if your language wants the reason somewhere else in the sentence.
 | `lune.audit.*` | Wiring problems reported on the blueprint |
 | `lune.training.*` | The training course's lesson titles, briefs and hints |
 | `lune.task.*` | Running task names, as shown on the Main tab and in the queue |
-| `lune.task.seeded.*` | The titles of the six starter jobs a new profile receives |
+| `lune.task.seeded.*` | The titles of the fifteen starter jobs a new profile receives |
+| `lune.task.note.*` | The sticky notes that explain each starter job on its canvas |
+| `lune.task.group.*` | The titles of the frames drawn round each section of a starter job |
 | `lune.param.*` | Wording shared by a parameter that appears on several cards |
 | `lune.choice.*` | What dropdown options are *called* |
 | `lune.unit.*` | What a progress bar counts: "3 / 10 **blocks**" |

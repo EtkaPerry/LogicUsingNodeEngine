@@ -26,6 +26,8 @@ class SafetyOptionParamTest {
 
     private static final Set<String> TACTICS = Set.of(
             "clutch_water", "clutch_boat", "clutch_cushion", "protect_fireballs", "build_cover");
+    /** Dangers added to the card after tasks had already been saved with it. */
+    private static final Set<String> LATER_DANGERS = Set.of("protect_fire");
 
     private static CommandDef card() {
         return CommandRegistry.byId(TaskSafety.COMMAND_ID);
@@ -37,7 +39,7 @@ class SafetyOptionParamTest {
         // and walks away has flipped it for every test after it.
         card().apply(Map.of());
         for (Param<?> param : card().params()) {
-            if (TACTICS.contains(param.id())) {
+            if (TACTICS.contains(param.id()) || LATER_DANGERS.contains(param.id())) {
                 param.deserialize("true");
             }
         }
@@ -69,6 +71,25 @@ class SafetyOptionParamTest {
             assertEquals("true", def.snapshot().get(tactic),
                     tactic + " came back off for a card that has never heard of it");
         }
+    }
+
+    @Test
+    void aCardSavedBeforeFireWasADangerPutsFiresOut() {
+        CommandDef def = card();
+        // Every guard already on somebody's canvas has no line for fire, and the point of adding it
+        // was for those cards to start putting fires out - so a card that never heard of it is on.
+        def.apply(Map.of(
+                "protect_air", "true", "protect_lava", "true", "protect_fall", "true",
+                "protect_monsters", "true", "protect_health", "true"));
+        assertEquals("true", def.snapshot().get("protect_fire"),
+                "a card saved before fire was a danger came back ignoring it");
+
+        def.apply(Map.of("protect_fire", "false"));
+        Map<String, String> saved = def.snapshot();
+        assertEquals("false", saved.get("protect_fire"), "turning fire off does not stick");
+        def.apply(Map.of("protect_fire", "true"));
+        def.apply(saved);
+        assertFalse(def.boolValue("protect_fire"));
     }
 
     @Test
