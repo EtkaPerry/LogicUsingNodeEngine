@@ -72,13 +72,17 @@ Inside the Task Editor, Lune acts as your intelligent advisor. She watches your 
 - Learn node mechanics step-by-step: understand power sources, signal flow, loop termination, and life-saving safety circuits.
 - Open it from **Menu** at the right end of the panel's tab bar: Lune's corner shows the whole course, what each step is about, and a Continue button for the one that is next.
 
-### Games While Lune Works
+<details>
+<summary><b>Games While Lune Works</b></summary>
+
 - **Redstone Wires**: turn tiles of redstone dust until the block of redstone lights every lamp on the board. It is drawn in the game's own textures and colours, so a resource pack's redstone is the redstone you play with.
 - Every board is new. The block of redstone can stand anywhere, some boards are bushy with lamps and some wind through with only a few, and a board you have been dealt is never dealt again, not even turned round or mirrored. Every one has an answer, because each starts as a finished circuit that is then scrambled.
 - Four board sizes from 5×5 to 13×11, each with its own best time and a count of how many you have solved. Left-click turns a tile, right-click turns it back, and Shift-click locks one you are sure of.
 - The clock only runs while the board is on screen, so looking away to check on the bot never costs you time. Open it from **Menu**, then **Games**.
 - **Recipe Riddle**: an item on the left, the game's own crafting table on the right, and twenty stacks below: the recipe's ingredients hidden among decoys. Craft it. Any crafting recipe can come up, a mod's as well as the game's; on a server, the ones your recipe book has unlocked. It handles like any inventory in the game: left-click takes a stack, right-click half, holding the button while you drag across the grid lays one in every square you pass, and Shift-click moves a stack into the grid or a square back out.
 - The result square shows whatever your grid would make, so a wrong answer still tells you what it is. Stuck? Place one item, show the shape, or clear half the decoys, and the last square is always yours. Solved riddles are counted, and the ones solved without a hint are counted apart.
+
+</details>
 
 ### Accessibility & Modern Comfort
 - **Color-Blind Friendly**: One-click toggle for the Okabe-Ito high-contrast color palette, making Success and Failure connections effortless to distinguish.
@@ -116,7 +120,8 @@ All keys can be rebound in the standard Minecraft **Controls** screen under the 
 
 ---
 
-## Pre-Loaded Starter Tasks
+<details>
+<summary><b>Pre-Loaded Starter Tasks</b></summary>
 
 Lune ships with 15 tasks on a shelf that runs from a two-minute demo to what the engine can be asked to do. The last two need a compass mod and are listed only while it is installed, so a pack without them shows tasks 1 to 13. Every one of them explains itself: open it on the **Task** tab and sticky notes above each section say what the cards under them do, in your language, while framed groups name the sections. Each task reads left to right along one lane, however long it gets.
 
@@ -154,9 +159,12 @@ Lune ships with 15 tasks on a shelf that runs from a two-minute demo to what the
 
 > **Upgrading from an earlier version?** Your existing tasks are never touched. Press **Restore default tasks** on the Config tab to add the new shelf beside them.
 
+</details>
+
 ---
 
-## The Cards Palette
+<details>
+<summary><b>The Cards Palette</b></summary>
 
 Every card defines a distinct capability that can be combined with others:
 
@@ -171,9 +179,12 @@ Every card defines a distinct capability that can be combined with others:
 | **Logic & Flow** | `START`, `End`, `Always` (continuous power), `Pulse` (metronome clock), `While` (condition monitor), `Check Item Count`, `Check Player` (health, hunger, air, XP level, tool durability, free slots, light level, nearest player), `Check Distance`, `Check Time` (day/night phase), `Check Clock` (until 20:00, on the game or system clock), `Check Weather` (clear, raining, thundering), `Check Dimension` (Overworld, Nether, End), `Timer` (pulse delay in game ticks), `Countdown` (20 minutes, 5 hours, 2 days &mdash; real time), `Counter`, `Signal Relay`, `Observer`, `Button`, `Run Task`, `Notify` (any sound in the game, plus an on-screen line) |
 | **Grand Missions** | `Complete Game` (experimental multi-stage progression route &mdash; see the note on tasks 11 to 13) |
 
+</details>
+
 ---
 
-## Compatible Mods
+<details>
+<summary><b>Compatible Mods</b></summary>
 
 None of these is required. Lune notices which ones are installed and adds the matching buttons and
 cards; without them the panel looks exactly as it always did. Every hook reads the other mod the way
@@ -194,7 +205,7 @@ line in the log rather than crashing.
 
 The four cards in that table are in the palette only where their mod is installed, so nothing is
 offered that could only fail. A task saved with one still opens, still draws it and still explains
-it anywhere, so a routine shared out of a modpack is never quietly rewritten on the way in.
+it anywhere, so a task shared out of a modpack is never quietly rewritten on the way in.
 
 Places the compasses find are kept per world and shown under **Found** on the Waypoints tab, so the
 compass is needed to learn a place, never to go back to it. Lune never writes into another mod's
@@ -203,6 +214,8 @@ going into an accessory slot, both of them the same action as your own shift-cli
 
 Verified against the 26.1.2 builds of each mod, and compiled for every Minecraft version Lune ships
 for. A mod that has not been released for a version simply is not there to hook into.
+
+</details>
 
 ---
 
@@ -213,7 +226,8 @@ for. A mod that has not been released for a version simply is not there to hook 
 - **Cheating Protections**: The omniscient modes (X-raying blocks the bot cannot see) are not settings at all — they are session-only cheats behind a command, and they are **hard-locked off** unless you are in your own world or hold operator permission on the server. See below.
 - **Safety Backups**: Because Lune can dig, place blocks, and traverse terrain, always keep backups of your single-player worlds!
 
-### The Cheat Command
+<details>
+<summary><b>The Cheat Command</b></summary>
 
 Everything Lune does is deliberately limited to what a player could actually see. The two exceptions
 — letting the bot mine or harvest through walls — are cheats, so they are **not on the settings
@@ -247,6 +261,8 @@ always allowed, anywhere.
 
 The command is the only thing Lune adds to chat. Every ordinary setting stays on the panel behind
 **`X`**.
+
+</details>
 
 ---
 
