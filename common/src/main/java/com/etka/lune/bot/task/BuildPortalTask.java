@@ -11,7 +11,6 @@ import com.etka.lune.bot.learning.LearningContext;
 import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.util.BlockPlacer;
-import com.etka.lune.bot.util.BlockScanner;
 import com.etka.lune.bot.util.InventoryHelper;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -28,7 +27,21 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/** Builds and lights a Nether portal from blocks carried by the player. */
+/**
+ * Builds and lights a Nether portal from blocks carried by the player.
+ *
+ * <p>Done is its own frame lit, and nothing else. It used to be any lit portal within 48 blocks,
+ * seen or not: the card said a portal was built and lit without laying a block whenever one stood
+ * behind a hill, and on a server that success told a player where somebody's hidden portal was.
+ * Where the opening is was never a question - the bot laid every block round it - so asking
+ * whether it is lit is not a search. A portal already standing is Use Nether Portal's to use, and
+ * a task that would rather use one than build puts that card first.</p>
+ *
+ * <p>The speedrun's variant enters the portal once it is lit, and what it is after is the Nether
+ * rather than a portal of its own. So a lit portal it can already see is taken instead of
+ * building one, through {@link UsePortalTask#findPortal}: the same look the speedrun's lava-cast
+ * route takes, which only Omniscient mining widens to one out of sight.</p>
+ */
 public final class BuildPortalTask implements Task {
 
     public enum FrameMode {
@@ -188,10 +201,13 @@ public final class BuildPortalTask implements Task {
             return TaskStatus.SUCCESS;
         }
 
-        BlockPos foundPortal = findPortal(ctx, ctx.player.blockPosition(), 48);
-        if (foundPortal != null) {
-            portal = foundPortal;
-            state = enterAfterBuild ? State.ENTER : State.DONE;
+        if (enterAfterBuild) {
+            // After the Nether, not a portal of its own: one lit and in sight beats building.
+            BlockPos seen = UsePortalTask.findPortal(ctx, ctx.player.blockPosition(), 48);
+            if (seen != null) {
+                portal = seen;
+                state = State.ENTER;
+            }
         }
 
         return switch (state) {
@@ -363,7 +379,9 @@ public final class BuildPortalTask implements Task {
     }
 
     private TaskStatus light(BotContext ctx) {
-        if (portal != null || (portal = findPortal(ctx, ctx.player.blockPosition(), 48)) != null) {
+        BlockPos lit = litOpening(ctx);
+        if (lit != null) {
+            portal = lit;
             state = enterAfterBuild ? State.ENTER : State.DONE;
             return TaskStatus.RUNNING;
         }
@@ -393,8 +411,13 @@ public final class BuildPortalTask implements Task {
             status.set("lune.status.speedrun.entered_nether");
             return TaskStatus.SUCCESS;
         }
-        if (portal == null) {
-            portal = findPortal(ctx, ctx.player.blockPosition(), 64);
+        if (portal == null || !ctx.level.getBlockState(portal).is(Blocks.NETHER_PORTAL)) {
+            // Gone out, or never known: this frame's own if it is lit, else one in sight.
+            stopApproach(ctx);
+            portal = litOpening(ctx);
+            if (portal == null) {
+                portal = UsePortalTask.findPortal(ctx, ctx.player.blockPosition(), 64);
+            }
         }
         if (portal == null) {
             status.set("lune.status.speedrun.portal_disappeared");
@@ -422,9 +445,20 @@ public final class BuildPortalTask implements Task {
         return TaskStatus.RUNNING;
     }
 
-    private static BlockPos findPortal(BotContext ctx, BlockPos centre, int radius) {
-        return BlockScanner.findNearest(ctx.level, centre, Set.of(Blocks.NETHER_PORTAL), radius,
-                ctx.level.getMinY(), ctx.level.getMaxY());
+    /**
+     * The lowest lit block in this task's own frame, or null while the opening is dark. Never
+     * somebody else's portal, and never a search: the frame is where the bot built it.
+     */
+    private BlockPos litOpening(BotContext ctx) {
+        if (base == null) {
+            return null;
+        }
+        for (BlockPos cell : NetherPortalFrame.opening(base)) {
+            if (ctx.level.getBlockState(cell).is(Blocks.NETHER_PORTAL)) {
+                return cell;
+            }
+        }
+        return null;
     }
 
     private static boolean inReach(BotContext ctx, BlockPos pos) {

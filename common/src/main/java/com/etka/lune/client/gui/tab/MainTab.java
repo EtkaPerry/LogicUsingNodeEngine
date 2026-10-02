@@ -12,6 +12,7 @@ import com.etka.lune.bot.AutoRun;
 import com.etka.lune.bot.task.TaskRunner;
 import com.etka.lune.bot.util.Vision;
 import com.etka.lune.config.BotConfig;
+import com.etka.lune.client.TaskShortcutKeys;
 import com.etka.lune.client.gui.Accessibility;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.LuneTab;
@@ -92,6 +93,15 @@ public class MainTab extends LuneTab {
                         task -> taskEditorOpener.accept(task, true)),
                 new ListPanel.RowAction<>(GuiIcons.Icon.VIEW, Lang.get("lune.gui.main.view"),
                         task -> taskEditorOpener.accept(task, false))));
+        // Where tasks are started from the panel, the key that starts them from the game.
+        launchList.setBadge(TaskShortcutKeys::badge, TaskShortcutKeys::badgeTip,
+                TaskGraph::displayName);
+        // The same mark as on the Tasks tab: starting one of these hands the keys straight back.
+        launchList.setMark(task -> task.beside, GuiIcons.Icon.BESIDE, LuneScreen.BESIDE,
+                task -> Lang.get("lune.beside.mark_tip"));
+        // The same gesture as on the Tasks tab, on the same order: held for a second, a task
+        // lifts, and carried to another place it stays there in both lists.
+        launchList.setOnMove((moved, order) -> TaskStore.get().reorder(order));
         statisticsPanel = add(new DashboardStatsPanel(0, 0, 10, 10));
         statisticsCurrentButton = add(Button.builder(Component.literal(Lang.get("lune.gui.main.current")),
                 b -> selectStatistics(StatisticsScope.CURRENT)).size(62, 16).build());
@@ -147,7 +157,10 @@ public class MainTab extends LuneTab {
         if (task == null || task.nodes.isEmpty()) {
             return;
         }
-        BotEngine.get().runNow(new TaskRunner(task));
+        if (!BotEngine.get().runNow(new TaskRunner(task))) {
+            // Refused; the Last row says why, and the panel stays open to show it.
+            return;
+        }
         if (BotConfig.get().closePanelOnRun) {
             Screens.open(Minecraft.getInstance(), null);
         }
@@ -359,7 +372,10 @@ public class MainTab extends LuneTab {
                                 BotEngine engine, Task current, DebugInfo debug) {
         drawPanelHeader(extractor, card, Lang.get("lune.gui.main.bot_status"));
         int stateColour = stateColour(engine, current);
-        String state = current == null ? Lang.get("lune.gui.main.idle") : engine.isPaused() ? Lang.get("lune.gui.overlay.paused") : Lang.get("lune.gui.overlay.working");
+        String state = current == null ? Lang.get("lune.gui.main.idle")
+                : engine.isPaused() ? Lang.get("lune.gui.overlay.paused")
+                : engine.isWatchingBeside() ? Lang.get("lune.beside.state")
+                : Lang.get("lune.gui.overlay.working");
         int availableStateWidth = Math.max(1, card.width() - 20);
         int stateWidth = Math.min(availableStateWidth,
                 Math.max(62, Minecraft.getInstance().font.width(state) + 18));
@@ -748,7 +764,11 @@ public class MainTab extends LuneTab {
         if (current == null) {
             return Accessibility.colour(Accessibility.Mark.NEUTRAL);
         }
-        return engine.isPaused() ? Accessibility.colour(Accessibility.Mark.WARN) : Accessibility.colour(Accessibility.Mark.GOOD);
+        if (engine.isPaused()) {
+            return Accessibility.colour(Accessibility.Mark.WARN);
+        }
+        // Beside the player and only watching: the same blue the task wears in the lists.
+        return engine.isWatchingBeside() ? LuneScreen.BESIDE : Accessibility.colour(Accessibility.Mark.GOOD);
     }
 
     private static int healthColour(float health, float maxHealth) {

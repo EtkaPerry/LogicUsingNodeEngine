@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Random;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -13,14 +14,80 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SoulAnimationTest {
 
     @Test
-    void everyMoodHasItsOwnRowOfTheAtlas() {
+    void everyRowOfTheAtlasBelongsToExactlyOneMood() {
         Set<Integer> rows = new HashSet<>();
         for (MascotAdvisor.Mood mood : MascotAdvisor.Mood.values()) {
-            int row = SoulAnimation.row(mood);
-            assertTrue(row >= 0 && row < SoulAnimation.ROWS, mood + " row " + row);
-            assertTrue(rows.add(row), mood + " shares row " + row);
+            int[] forms = SoulAnimation.rows(mood);
+            assertTrue(forms.length >= 1, mood + " has no row");
+            assertEquals(SoulAnimation.row(mood), forms[0], mood + " starts from another row");
+            for (int row : forms) {
+                assertTrue(row >= 0 && row < SoulAnimation.ROWS, mood + " row " + row);
+                assertTrue(rows.add(row), mood + " shares row " + row);
+            }
         }
-        assertEquals(SoulAnimation.ROWS, rows.size());
+        assertEquals(SoulAnimation.ROWS, rows.size(), "a row of the atlas no mood ever shows");
+    }
+
+    @Test
+    void aJobWithSeveralFormsKeepsTheOneItStartedWith() {
+        SoulAnimation soul = new SoulAnimation(new Random(7L));
+        int shown = soul.layers(MascotAdvisor.Mood.FARMING, 0L).get(0).row();
+        assertTrue(contains(SoulAnimation.rows(MascotAdvisor.Mood.FARMING), shown));
+        for (long now = 100L; now < 5_000L; now += 100L) {
+            List<SoulAnimation.Layer> layers = soul.layers(MascotAdvisor.Mood.FARMING, now);
+            assertEquals(1, layers.size(), "no wipe while the mood lasts");
+            assertEquals(shown, layers.get(0).row(), "the form changed while she was farming");
+        }
+    }
+
+    @Test
+    void comingBackToAJobCanBringAnotherOfItsForms() {
+        SoulAnimation soul = new SoulAnimation(new Random(11L));
+        Set<Integer> seen = new HashSet<>();
+        long now = 0L;
+        for (int visit = 0; visit < 40; visit++) {
+            List<SoulAnimation.Layer> layers = soul.layers(MascotAdvisor.Mood.CRAFTING, now);
+            seen.add(layers.get(layers.size() - 1).row());
+            now += 1_000L;
+            soul.layers(MascotAdvisor.Mood.TRAVEL, now);
+            now += 1_000L;
+        }
+        assertEquals(SoulAnimation.rows(MascotAdvisor.Mood.CRAFTING).length, seen.size(),
+                "forty visits never showed every form of crafting: " + seen);
+    }
+
+    @Test
+    void theJobFacesAreOrdinaryWorkAndNotTrouble() {
+        for (MascotAdvisor.Mood mood : List.of(MascotAdvisor.Mood.DIGGING,
+                MascotAdvisor.Mood.FARMING, MascotAdvisor.Mood.CRAFTING,
+                MascotAdvisor.Mood.SMELTING, MascotAdvisor.Mood.COLLECTING)) {
+            assertTrue(MascotAdvisor.ordinaryWork(mood), mood + " would stop her suggestions");
+            for (int row : SoulAnimation.rows(mood)) {
+                assertTrue(SoulAnimation.frameMillis(row) >= 200,
+                        mood + " row " + row + " is paced like an alarm");
+            }
+        }
+    }
+
+    @Test
+    void whatHappensToHerBodyIsNotTroubleEither() {
+        // A geyser throwing her up, or gliding on elytra, is shown like swimming: it replaces the
+        // job's face while it lasts and does not stop her suggestions.
+        assertTrue(MascotAdvisor.ordinaryWork(MascotAdvisor.Mood.GEYSER));
+        assertTrue(MascotAdvisor.ordinaryWork(MascotAdvisor.Mood.GLIDING));
+        assertTrue(SoulAnimation.pool(SoulAnimation.ROW_GEYSER));
+        assertFalse(SoulAnimation.pool(SoulAnimation.ROW_GLIDING));
+        assertTrue(SoulAnimation.frameMillis(SoulAnimation.ROW_GLIDING)
+                * SoulAnimation.FRAMES * 3 > 4_000, "the rings pass too fast for calm flight");
+    }
+
+    private static boolean contains(int[] rows, int row) {
+        for (int candidate : rows) {
+            if (candidate == row) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Test

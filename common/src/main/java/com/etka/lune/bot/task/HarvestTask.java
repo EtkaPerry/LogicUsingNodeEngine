@@ -1,6 +1,7 @@
 package com.etka.lune.bot.task;
 
 import com.etka.lune.util.Lang;
+import com.etka.lune.bot.Beside;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
@@ -80,6 +81,8 @@ public final class HarvestTask implements Task {
     private int harvested;
     private String collectionStrategy = CollectionPolicy.DEFAULT;
     private final StatusText status = new StatusText();
+    /** Beside the player: ripe crops in their view, no sweep of the head and no walk to another farm. */
+    private final Beside beside = new Beside();
 
     public HarvestTask(Set<Block> targets, int radius, int limit) {
         this(targets, radius, limit, true, true);
@@ -109,6 +112,16 @@ public final class HarvestTask implements Task {
     @Override
     public StatusText statusLine() {
         return status;
+    }
+
+    @Override
+    public void runBesidePlayer() {
+        beside.enable();
+    }
+
+    @Override
+    public boolean holdsControls() {
+        return beside.holdsControls();
     }
 
     @Override
@@ -183,6 +196,7 @@ public final class HarvestTask implements Task {
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
+        beside.tick();
         if (targets.isEmpty()) {
             status.set("lune.status.harvest.no_crops_selected");
             return TaskStatus.FAILED;
@@ -235,9 +249,16 @@ public final class HarvestTask implements Task {
         }
 
         if (target == null) {
+            if (!beside.mayStart(ctx)) {
+                return beside.watch(status, "lune.status.harvest.watching_beside");
+            }
             BlockPos found = findMatureCrop(ctx);
             if (found != null) {
                 selectTarget(ctx, found);
+            } else if (beside.on()) {
+                // Nothing ripe in the player's view, and no other farm walked to: the field is
+                // theirs to wander, and this waits for them to look at it.
+                return beside.watch(status, "lune.status.harvest.watching_beside");
             } else if (!scanDone) {
                 return TaskStatus.RUNNING;
             } else if (!scoutingDone && canScoutForAnotherFarm()) {
@@ -321,7 +342,8 @@ public final class HarvestTask implements Task {
         }
 
         boolean settled = true;
-        if (!ctx.omniscientHarvesting()
+        // Beside the player the head is theirs: what is in front of it is the whole look.
+        if (!ctx.omniscientHarvesting() && !beside.on()
                 && (headScanner.isTurning() || headScanner.isVerticalGlance())) {
             // Visibility is tested below on every tick, including while turning. A player notices
             // a crop as it swings into view; settled is only used to decide when to turn farther.
@@ -366,7 +388,7 @@ public final class HarvestTask implements Task {
             return memory;
         }
 
-        if (ctx.omniscientHarvesting()) {
+        if (ctx.omniscientHarvesting() || beside.on()) {
             scanDone = true;
             return null;
         }

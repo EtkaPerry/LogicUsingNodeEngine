@@ -49,12 +49,18 @@ public final class NodePalette {
      * The colours that carry meaning rather than taste.
      *
      * @param exec the plain execution In pin
+     * @param done the one pin a card shows when Success and Fail are joined. It carries either
+     *             outcome, so it is neither of their colours: a neutral grey, the same in both
+     *             palettes, because grey reads as grey to everybody
      */
     public record Pins(int exec, int success, int failure, int whilePin, int signal, int observe,
-                       int data) {}
+                       int data, int done) {}
+
+    private static final int DONE = 0xFFC8CDD5;
 
     private static final Pins CLASSIC = new Pins(
-            0xFFF2F2F2, 0xFF58C878, 0xFFE15B64, 0xFFF0B84D, 0xFFB77DFF, 0xFF6E5A8C, 0xFFF2C14E);
+            0xFFF2F2F2, 0xFF58C878, 0xFFE15B64, 0xFFF0B84D, 0xFFB77DFF, 0xFF6E5A8C, 0xFFF2C14E,
+            DONE);
 
     /**
      * Okabe-Ito, the standard colour-blind-safe qualitative set.
@@ -63,7 +69,8 @@ public final class NodePalette {
      * as hue, so it survives being seen in greyscale, let alone by a deuteranope.</p>
      */
     private static final Pins COLOUR_BLIND = new Pins(
-            0xFFF2F2F2, 0xFF56B4E9, 0xFFD55E00, 0xFFF0E442, 0xFFCC79A7, 0xFF8A6B7D, 0xFFE69F00);
+            0xFFF2F2F2, 0xFF56B4E9, 0xFFD55E00, 0xFFF0E442, 0xFFCC79A7, 0xFF8A6B7D, 0xFFE69F00,
+            DONE);
 
     /** A sticky note or a group frame: the paper, its edge and the ink on it. */
     public record Paper(int border, int body, int text) {}

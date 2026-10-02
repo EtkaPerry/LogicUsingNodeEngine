@@ -42,6 +42,12 @@ public final class FailTask implements Task {
         return new FailTask(commandName, "lune.status.fail.not_implemented");
     }
 
+    /** Never touches the controls, so beside the player it never takes them. */
+    @Override
+    public boolean holdsControls() {
+        return false;
+    }
+
     @Override
     public String name() {
         return Lang.getOr(nameKey, name);

@@ -103,6 +103,11 @@ public final class SpeedrunTask implements Task {
     private static final int HUNGRY_SEARCH_COOLDOWN_TICKS = 1200;
     /** Do not interrupt a Nether objective for food until the carried reserve is genuinely low. */
     private static final int NETHER_EMERGENCY_FOOD = 4;
+    /**
+     * How close the walk back brings the run to the portal it came in by before Use Nether Portal
+     * takes the last steps: near enough that the frame is loaded and its face a few steps away.
+     */
+    private static final int NETHER_PORTAL_NEAR = 4;
     private static final int MAX_GATHER_ATTEMPTS = 6;
     /** How far a flock may be and still be worth a stop. */
     private static final int SHEEP_DIVERSION_RADIUS = 32;
@@ -294,6 +299,8 @@ public final class SpeedrunTask implements Task {
     private boolean woodMineAfterExplore;
     private BlockPos fortress;
     private BlockPos netherPortal;
+    /** The walk back to {@link #netherPortal} is made once; after it, stepping in is what is left. */
+    private boolean walkedBackToPortal;
     /** A completed empty iron mine must be followed by a physical scout to a new area. */
     private boolean ironExplorePending;
     private boolean ironScoutActive;
@@ -671,6 +678,7 @@ public final class SpeedrunTask implements Task {
         woodMineAfterExplore = false;
         fortress = null;
         netherPortal = null;
+        walkedBackToPortal = false;
         ironExplorePending = false;
         ironScoutActive = false;
         ironScoutFailures = 0;
@@ -956,6 +964,23 @@ public final class SpeedrunTask implements Task {
                     : "relocation was blocked; scout from the best new position");
             status.set("lune.status.speedrun.relocation_ended_scouting_new_area", describe());
             return TaskStatus.RUNNING;
+        }
+
+        if (phase == Phase.NETHER_EXIT && finished instanceof FarWalkTask) {
+            // The walk back is a step of this phase, not the end of it: stepping in comes next,
+            // from wherever the walk stopped. One that stopped short still hands over while the
+            // frame is back in the loaded world - the Netherite job's Go to Waypoint hands over on
+            // either edge too, and Use Nether Portal can walk to a frame the client has. Only one
+            // that stopped with the frame still out of the world falls through, and ends the run
+            // on its own reason, where the portal card could only have said it saw none.
+            boolean stranded = result == TaskStatus.FAILED
+                    && ctx.level.dimension() == Level.NETHER && !ctx.level.hasChunkAt(netherPortal);
+            if (!stranded) {
+                ctx.debug.decide(result == TaskStatus.SUCCESS
+                        ? "back at the portal; stepping in next"
+                        : "the walk back stopped short; trying the portal from here");
+                return TaskStatus.RUNNING;
+            }
         }
 
         if (result == TaskStatus.FAILED) {
@@ -1338,7 +1363,7 @@ public final class SpeedrunTask implements Task {
                         new KillOptions(false, true, false, KillOptions.EndermanSafety.AUTO,
                                 KillOptions.WeaponPreference.SWORD, false), unreachableEndermen);
             }
-            case NETHER_EXIT -> new UsePortalTask(Level.OVERWORLD, netherPortal, 256);
+            case NETHER_EXIT -> netherExitTask(ctx);
             case BLAZE_POWDER -> {
                 if (InventoryHelper.has(ctx.player, Items.BLAZE_POWDER, 14)) {
                     phase = Phase.EYES;
@@ -2173,6 +2198,35 @@ public final class SpeedrunTask implements Task {
     private static boolean canCraftShield(BotContext ctx) {
         return InventoryHelper.count(ctx.player, Items.IRON_INGOT) >= 1
                 && InventoryHelper.count(ctx.player, stack -> stack.is(ItemTags.PLANKS)) >= 6;
+    }
+
+    /**
+     * Home is through the portal this run came in by, and the fortress, the blazes and the
+     * endermen can each have taken it hundreds of blocks from there.
+     *
+     * <p>Use Nether Portal finds a portal by seeing one. Beyond the chunks the client keeps, the
+     * frame reads as air - no different from a portal that has gone out - so asked from where the
+     * last hunt ended, it looked round, saw nothing, and the whole run was over. So the way home is
+     * two steps, the two the Netherite starter job wires as Go to Waypoint in front of its own Use
+     * Nether Portal card: walk back, then step in. The walk is the long kind Find Stronghold takes,
+     * which digs on once walking has failed: hundreds of blocks of Nether is a long way to go
+     * without meeting a wall, and one route that will not go should not end a run this far in.
+     * Where it may walk is no question of sight; the bot came through that frame.</p>
+     *
+     * <p>A run resumed in the Nether starts with no portal noted, and steps into whichever one is
+     * in sight, as it always has.</p>
+     */
+    private Task netherExitTask(BotContext ctx) {
+        if (netherPortal != null && !walkedBackToPortal && ctx.level.dimension() == Level.NETHER) {
+            walkedBackToPortal = true;
+            Goals.Near besidePortal = new Goals.Near(netherPortal, NETHER_PORTAL_NEAR);
+            if (!besidePortal.isReached(MovementHelper.feetPosition(ctx.player))) {
+                ctx.debug.decide("walking back to the portal at " + netherPortal.toShortString()
+                        + " before stepping in");
+                return new FarWalkTask(besidePortal, true);
+            }
+        }
+        return new UsePortalTask(Level.OVERWORLD, netherPortal, 256);
     }
 
     private void advance(BotContext ctx, Task finished) {
@@ -3688,15 +3742,9 @@ public final class SpeedrunTask implements Task {
                 return TaskStatus.RUNNING;
             }
 
-            if (!inReach(ctx, door)) {
-                status.set("lune.status.speedrun.arrived_near_visible_doorway_adjusting");
-                return TaskStatus.RUNNING;
-            }
-            if (!BlockPlacer.use(ctx, door)) {
-                status.set("lune.status.speedrun.aiming_visible_village_doorway");
-                return TaskStatus.RUNNING;
-            }
-
+            // The walk in opens the door, and shuts it behind, as every walk does. This used to click
+            // the door itself, aimed at the middle of the block: a door whose slab stood on the far
+            // side was never touched, and nothing counted the misses.
             BlockPos insideTarget = insideTarget(ctx, door);
             inside = new GotoTask(new Goals.Near(insideTarget, 1), true, false, true);
             inside.start(ctx);
@@ -3719,26 +3767,29 @@ public final class SpeedrunTask implements Task {
             door = null;
         }
 
+        /**
+         * The cell through the door from where Lune stands, which, from outside, is the inside. The
+         * door's facing does not say which side is in: it is whichever way its placer looked.
+         */
         private static BlockPos insideTarget(BotContext ctx, BlockPos door) {
             BlockState state = ctx.level.getBlockState(door);
             Direction facing = state.hasProperty(DoorBlock.FACING)
                     ? state.getValue(DoorBlock.FACING) : Direction.NORTH;
-            BlockPos first = door.relative(facing);
-            BlockPos second = door.relative(facing.getOpposite());
-            if (isWalkableSpace(ctx, first)) {
-                return first;
+            BlockPos one = door.relative(facing);
+            BlockPos other = door.relative(facing.getOpposite());
+            BlockPos at = ctx.player.blockPosition();
+            BlockPos far = one.distSqr(at) >= other.distSqr(at) ? one : other;
+            BlockPos near = far == one ? other : one;
+            if (isWalkableSpace(ctx, far)) {
+                return far;
             }
-            return isWalkableSpace(ctx, second) ? second : door;
+            return isWalkableSpace(ctx, near) ? near : door;
         }
 
         private static boolean isWalkableSpace(BotContext ctx, BlockPos feet) {
             return MovementHelper.isPassable(ctx.level, feet)
                     && MovementHelper.isPassable(ctx.level, feet.above())
                     && MovementHelper.isSolidFloor(ctx.level, feet.below());
-        }
-
-        private static boolean inReach(BotContext ctx, BlockPos pos) {
-            return ctx.player.getEyePosition().distanceToSqr(Vec3.atCenterOf(pos)) <= 20.0;
         }
 
         @Override

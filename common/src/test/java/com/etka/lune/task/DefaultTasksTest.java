@@ -1,10 +1,17 @@
 package com.etka.lune.task;
 
+import com.etka.lune.bot.path.AStarPathfinder;
+import com.etka.lune.bot.path.Goal;
+import com.etka.lune.bot.path.Goals;
+import com.etka.lune.bot.path.TestLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.Blocks;
 import org.junit.jupiter.api.Test;
 
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -18,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DefaultTasksTest {
 
     private static final List<String> DEMOS = List.of(DefaultTasks.CHOP_WOOD,
-            DefaultTasks.STONE_TOOLS, DefaultTasks.GO_FISHING, DefaultTasks.DIG_TUNNEL);
+            DefaultTasks.STONE_TOOLS, DefaultTasks.GO_FISHING, DefaultTasks.MINE_BESIDE);
     private static final List<String> CHORES = List.of(DefaultTasks.LUMBER_CAMP,
             DefaultTasks.STONE_QUARRY, DefaultTasks.HOMESTEAD, DefaultTasks.SMELTERY,
             DefaultTasks.NIGHT_WATCH);
@@ -32,13 +39,13 @@ class DefaultTasksTest {
 
     /** Jobs that must end on their own, which is why none of them owns a clock or a Button. */
     private static final List<String> FINISHING = List.of(DefaultTasks.CHOP_WOOD,
-            DefaultTasks.STONE_TOOLS, DefaultTasks.GO_FISHING, DefaultTasks.DIG_TUNNEL,
+            DefaultTasks.STONE_TOOLS, DefaultTasks.GO_FISHING, DefaultTasks.MINE_BESIDE,
             DefaultTasks.SMELTERY, DefaultTasks.NIGHT_WATCH, DefaultTasks.STUFF_BACK,
             DefaultTasks.FIND_VILLAGE, DefaultTasks.CHERRY_TIMBER);
 
     /** Quoted in the README's table of what ships, so the doc goes stale loudly rather than quietly. */
     private static final List<Integer> EXPECTED_SIZES =
-            List.of(12, 16, 10, 10, 27, 25, 34, 17, 18, 11, 56, 79, 46, 13, 16);
+            List.of(12, 16, 10, 8, 27, 25, 34, 17, 18, 11, 56, 79, 52, 13, 16);
 
     /** The Task tab's rename box; a seeded name longer than this cannot be typed back. */
     private static final int NAME_BOX_LIMIT = 32;
@@ -209,6 +216,7 @@ class DefaultTasksTest {
                 new Anchored(DefaultTasks.LIT_PORTAL, "diamond_count", "branch_two"),
                 new Anchored(DefaultTasks.LIT_PORTAL, "portal_build", "portal_retry"),
                 new Anchored(DefaultTasks.ENDER_DRAGON, "e_scan", "e_branch_one"),
+                new Anchored(DefaultTasks.NETHERITE, "where", "known_portal"),
                 new Anchored(DefaultTasks.NETHERITE, "debris_count", "strip_two"),
                 new Anchored(DefaultTasks.FIND_VILLAGE, "on_foot", "none"))) {
             TaskGraph task = task(pair.job());
@@ -505,6 +513,38 @@ class DefaultTasksTest {
                 "Fish only reads the hand, so the rod is put there first");
     }
 
+    /**
+     * Job 4 is the one job on the shelf run beside the player, and the only thing that makes it so
+     * is the task's switch: its cards are the ordinary ones, set so that the same card reads the
+     * same job whichever way it is run - no search of its own, no tool fetched.
+     */
+    @Test
+    void theBesideJobMinesOreInSightWithTheGuardOnItsPin() {
+        for (TaskGraph task : DefaultTasks.create()) {
+            assertEquals(DefaultTasks.MINE_BESIDE.equals(task.name), task.beside,
+                    task.name + ": only job 4 runs beside the player");
+        }
+        TaskGraph beside = task(DefaultTasks.MINE_BESIDE);
+        TaskNode ore = beside.nodeById("ore");
+        assertEquals("mine", ore.commandId);
+        assertEquals("#minecraft:iron_ores,#minecraft:diamond_ores", ore.params.get("targets"));
+        assertEquals("10", ore.params.get("limit"), "ten ores is what the job promises");
+        for (String off : List.of("auto_tool", "prospect", "check_around")) {
+            assertEquals("false", ore.params.get(off), off + " is a search the player does");
+        }
+        assertEquals("guard", ore.onWhile, "the guard watches while Mine is powered: all of it");
+        assertEquals("done", ore.onSuccess);
+        assertEquals("no_ore", ore.onFailure);
+
+        TaskNode guard = beside.nodeById("guard");
+        assertEquals("4", guard.params.get("monster_distance"),
+                "a mob is the player's fight until it is at arm's length");
+        assertEquals("false", guard.params.get("build_cover"),
+                "no walls round somebody who is playing");
+        assertEquals("hello", TaskWiring.explicitStart(beside).onSuccess);
+        assertEquals("ore", beside.nodeById("hello").onSuccess);
+    }
+
     /** Smelt asked for more than is carried gives up; one at a time empties the pack instead. */
     @Test
     void theSmelteryEmptiesThePackOneItemAtATime() {
@@ -631,6 +671,17 @@ class DefaultTasksTest {
         TaskGraph run = task(DefaultTasks.NETHERITE);
         assertEquals("check_dimension", run.nodeById("where").commandId);
         assertEquals("Nether", run.nodeById("where").params.get("dimension"));
+        assertEquals("known_portal", run.nodeById("where").onSuccess,
+                "starting in the Nether asks what is saved before saving anything");
+        TaskNode known = run.nodeById("known_portal");
+        assertEquals("check_distance", known.commandId);
+        assertEquals(run.nodeById("n_mark").params.get("name"), known.params.get("waypoint"));
+        assertEquals("At most", known.params.get("comparison"));
+        assertEquals("armor", known.onSuccess, "a portal saved near enough is kept");
+        assertEquals("n_mark", known.onFailure);
+        assertEquals("n_mark", run.nodeById("cross").onSuccess,
+                "a crossing always saves the portal it came through");
+        assertEquals("n_mark", run.nodeById("enter").onSuccess);
         assertEquals("use_portal", run.nodeById("cross").commandId);
         assertEquals("obsidian_check", run.nodeById("cross").onFailure,
                 "no portal in sight: build one from the obsidian carried");
@@ -641,11 +692,122 @@ class DefaultTasksTest {
                 run.nodeById("to_portal").params.get("name"),
                 "the way home is the waypoint saved on arrival");
         assertEquals("use_portal", run.nodeById("exit").commandId);
+        assertEquals("home_check", run.nodeById("exit").onSuccess);
+        assertEquals("home_check", run.nodeById("exit").onFailure,
+                "where she ends up decides, not what the portal card said");
+        TaskNode home = run.nodeById("home_check");
+        assertEquals("check_dimension", home.commandId);
+        assertEquals("Overworld", home.params.get("dimension"));
+        assertEquals("furnace_check", home.onSuccess);
+        assertEquals("stranded", home.onFailure);
         assertEquals("minecraft:ancient_debris", run.nodeById("strip_one").params.get("target"));
         assertEquals("15", run.nodeById("strip_one").params.get("y_level"));
         assertEquals("upgrade_netherite", run.nodeById("upgrade").commandId);
         assertEquals("rest", run.nodeById("short").onSuccess,
                 "anything missing ends at the pause, so the player can see how far it got");
+    }
+
+    /**
+     * Why the way home stops within one block, asked of the real search.
+     *
+     * <p>The waypoint is where she came through, a cell of the sheet. Walking back along the
+     * portal's own line, a tolerance of two is met in the cell beyond the side column, where the
+     * obsidian stands between her eyes and every portal block. Use Nether Portal goes by what it
+     * can see and walks toward nothing it cannot, so from there the job ended stranded. One is met
+     * only in front of the portal, behind it, or inside it.</p>
+     */
+    @Test
+    void theWayHomeStopsWhereThePortalCanBeSeen() {
+        // A two-wide portal along x at z = 0: side columns at x = 0 and 3, the sheet over x = 1..2.
+        TestLevel level = TestLevel.scene()
+                .floor(-8, 8, -4, 4, 63)
+                .fill(0, 3, 63, 67, 0, 0, Blocks.OBSIDIAN)
+                .fill(1, 2, 64, 66, 0, 0, Blocks.NETHER_PORTAL);
+        BlockPos landed = new BlockPos(1, 64, 0);
+        BlockPos alongTheLine = new BlockPos(-6, 64, 0);
+
+        assertEquals(new BlockPos(-1, 64, 0),
+                stopOf(level, alongTheLine, new Goals.Near(landed, 2)),
+                "the scene has to reproduce the stop beside the frame, or it proves nothing");
+
+        int tolerance = Integer.parseInt(
+                task(DefaultTasks.NETHERITE).nodeById("to_portal").params.get("tolerance"));
+        BlockPos stop = stopOf(level, alongTheLine, new Goals.Near(landed, tolerance));
+        boolean inTheSheet = level.getBlockState(stop).is(Blocks.NETHER_PORTAL);
+        boolean facingIt = Math.abs(stop.getZ()) == 1
+                && level.getBlockState(new BlockPos(stop.getX(), stop.getY(), 0))
+                        .is(Blocks.NETHER_PORTAL);
+        assertTrue(inTheSheet || facingIt,
+                "the way home stops at " + stop + ", where the frame hides the portal");
+    }
+
+    /**
+     * Near enough to be this trip's portal is anywhere the job's own digging can take her from it:
+     * the staircase down to the debris band from under the Nether's roof, one block forward for
+     * every block down, then both strip-mine passes laid end to end with every branch off to the
+     * same side. Started again anywhere in that mine, the job keeps the portal it came through.
+     */
+    @Test
+    void aRestartAnywhereInTheMineKeepsThePortalItCameThrough() {
+        TaskGraph run = task(DefaultTasks.NETHERITE);
+        int roof = 128;  // the Nether's ceiling; the game makes no portal above it
+        int down = 0;
+        int along = 0;
+        int aside = 0;
+        for (String id : List.of("strip_one", "strip_two")) {
+            Map<String, String> pass = run.nodeById(id).params;
+            down = Math.max(down, roof - Integer.parseInt(pass.get("y_level")));
+            along += Integer.parseInt(pass.get("branches")) * Integer.parseInt(pass.get("spacing"));
+            aside += Integer.parseInt(pass.get("branch_length"));
+        }
+        along += down;
+        double reach = Math.sqrt((double) along * along + (double) aside * aside
+                + (double) down * down);
+        int kept = Integer.parseInt(run.nodeById("known_portal").params.get("distance"));
+        assertTrue(reach <= kept, "the mine reaches " + Math.round(reach) + " blocks from the "
+                + "portal; a restart past " + kept + " would save the mine as the way home");
+    }
+
+    /**
+     * Run again, the job starts from the furthest step its pack proves, asked from the end back the
+     * way the speedrun resumes. At home a netherite ingot goes to the template, four scrap to the
+     * gold and four ancient debris to the furnace, and only a pack with none of them crosses over.
+     * In the Nether four debris go straight home, before the pickaxe is asked for, since the way
+     * home needs none.
+     */
+    @Test
+    void runAgainTheNetheriteJobPicksUpFromWhatItCarries() {
+        TaskGraph run = task(DefaultTasks.NETHERITE);
+        assertEquals("has_ingot", run.nodeById("where").onFailure);
+        assertCarrying(run, "has_ingot", "minecraft:netherite_ingot", "template_check",
+                "has_scrap");
+        assertCarrying(run, "has_scrap", "minecraft:netherite_scrap", "gold_check", "has_debris");
+        assertCarrying(run, "has_debris", "minecraft:ancient_debris", "furnace_check", "cross");
+        assertEquals("debris_ready", run.nodeById("armor").onSuccess);
+        assertEquals("debris_ready", run.nodeById("armor").onFailure);
+        assertCarrying(run, "debris_ready", "minecraft:ancient_debris", "to_portal", "pick_check");
+
+        // Each asks for exactly what the steps it skips would have made.
+        assertEquals("1", run.nodeById("has_ingot").params.get("count"), "one ingot, one upgrade");
+        assertEquals(run.nodeById("scrap_check").params.get("count"),
+                run.nodeById("has_scrap").params.get("count"));
+        for (String id : List.of("has_debris", "debris_ready")) {
+            assertEquals(run.nodeById("smelt").params.get("count"),
+                    run.nodeById(id).params.get("count"), id + " should ask for what Smelt takes");
+            assertEquals(run.nodeById("debris_count").params.get("count"),
+                    run.nodeById(id).params.get("count"), id);
+        }
+    }
+
+    private static void assertCarrying(TaskGraph task, String id, String item, String yes,
+                                       String no) {
+        TaskNode node = task.nodeById(id);
+        assertNotNull(node, task.name + " has no card " + id);
+        assertEquals("check_item", node.commandId, id);
+        assertEquals(item, node.params.get("item"), id);
+        assertEquals("At least", node.params.get("comparison"), id);
+        assertEquals(yes, node.onSuccess, id);
+        assertEquals(no, node.onFailure, id);
     }
 
     /** Without the compass mod the village search still does something a player would. */
@@ -703,6 +865,14 @@ class DefaultTasksTest {
                         .map(target -> node.id + " -> " + target))
                 .distinct()
                 .toList();
+    }
+
+    /** Where the walking search toward {@code goal} ends. */
+    private static BlockPos stopOf(TestLevel level, BlockPos from, Goal goal) {
+        AStarPathfinder.Result route = AStarPathfinder.find(level, from, goal,
+                AStarPathfinder.Settings.walking());
+        assertTrue(route.reachedGoal(), "no way home from " + from);
+        return route.path().getLast();
     }
 
     private static TaskGraph task(String name) {

@@ -22,6 +22,8 @@ import com.etka.lune.bot.task.FindTask;
 import com.etka.lune.bot.task.BackpackDepositTask;
 import com.etka.lune.bot.task.BackpackTakeTask;
 import com.etka.lune.bot.task.CompassFindTask;
+import com.etka.lune.bot.task.EnderEyeTask;
+import com.etka.lune.bot.task.PortalRoomTask;
 import com.etka.lune.bot.util.ItemFilters;
 import com.etka.lune.mods.Backpacks;
 import com.etka.lune.mods.CompassHook;
@@ -266,6 +268,8 @@ public final class CommandRegistry {
             Map.entry("explore", "Movement"),
             Map.entry("find_biome", "Movement"),
             Map.entry("find_structure", "Movement"),
+            Map.entry("find_stronghold", "Movement"),
+            Map.entry("portal_room", "Movement"),
             Map.entry("use_portal", "Movement"),
             Map.entry("mine", "Gathering"),
             Map.entry("chop", "Gathering"),
@@ -556,6 +560,19 @@ public final class CommandRegistry {
                     def.intValue("tolerance"), def.boolValue("fresh"));
         }));
 
+        // The vanilla way to the same answer Find Structure gets from a compass, remembered under
+        // the same id: one Eye of Ender, read rather than chased.
+        register(new CommandDef("find_stronghold", List.of(
+                new Param.Choice("then", CompassFindTask.THEN_OPTIONS, CompassFindTask.WALK_THERE),
+                new Param.Ints("tolerance", 4, 1, 64),
+                new Param.Bool("fresh", false)
+        ), def -> new EnderEyeTask(def.choiceValue("then"), def.intValue("tolerance"),
+                def.boolValue("fresh"))));
+
+        // Nothing to set: the stronghold is the one Find Stronghold remembered, and the room is
+        // wherever the looking finds it.
+        register(new CommandDef("portal_room", List.of(), def -> new PortalRoomTask(null)));
+
         register(new CommandDef("waypoint", List.of(
                 new Param.Choice("name", () -> WaypointStore.get().names(), ""),
                 new Param.Ints("tolerance", 2, 0, 32)
@@ -563,7 +580,7 @@ public final class CommandRegistry {
             String name = def.choiceValue("name");
             return WaypointStore.get().byName(name)
                     .<com.etka.lune.bot.Task>map(waypoint -> WaypointStore.isInCurrentDimension(waypoint)
-                            ? new GotoTask(new Goals.Near(waypoint.pos(), def.intValue("tolerance")), true, false)
+                            ? GotoTask.toPlace(new Goals.Near(waypoint.pos(), def.intValue("tolerance")), true)
                             : FailTask.forCommand("waypoint", "Go to Waypoint", "lune.status.fail.waypoint_other_dimension"))
                     .orElseGet(() -> FailTask.forCommand("waypoint", "Go to Waypoint",
                             name.isEmpty() ? "lune.status.fail.no_waypoint_chosen"
@@ -923,29 +940,33 @@ public final class CommandRegistry {
                 def.boolValue("reclaim"),
                 def.intValue("radius"))));
 
-        // The threat switches say when to step in; the tactic switches under each of them say how.
-        // Each sits directly beneath the danger it belongs to, and CommandDef.isRelevant hides it
-        // while that danger is switched off - a row that is read in one state and ignored in the
-        // other invites an answer and then throws it away.
+        // The danger switches say when to step in; the rows under each of them say when exactly and
+        // how. Each sits directly beneath the danger it belongs to and is hidden while that danger
+        // is switched off - a row that is read in one state and ignored in the other invites an
+        // answer and then throws it away. Being under a danger also keeps a tactic out of the
+        // dangers' own group, so Only on Drowning leaves the clutches as they were.
         register(new CommandDef("self_preservation", List.of(
                 new Param.Bool("protect_air", true),
-                new Param.Choice("air_compare", List.of("At most", "Less than", "At least", "Greater than"), "At most"),
-                new Param.Ints("air_value", 120, 0, 300),
+                new Param.Choice("air_compare", List.of("At most", "Less than", "At least", "Greater than"), "At most")
+                        .under("protect_air"),
+                new Param.Ints("air_value", 120, 0, 300).under("protect_air"),
                 new Param.Bool("protect_lava", true),
                 new Param.Bool("protect_fire", true),
                 new Param.Bool("protect_fall", true),
-                new Param.Ints("fall_threshold", 10, 2, 512),
-                new Param.Bool("clutch_water", true),
-                new Param.Bool("clutch_boat", true),
-                new Param.Bool("clutch_cushion", true),
+                new Param.Ints("fall_threshold", 10, 2, 512).under("protect_fall"),
+                new Param.Bool("clutch_water", true).under("protect_fall"),
+                new Param.Bool("clutch_boat", true).under("protect_fall"),
+                new Param.Bool("clutch_cushion", true).under("protect_fall"),
                 new Param.Bool("protect_monsters", true),
-                new Param.Choice("monster_compare", List.of("At most", "Less than", "At least", "Greater than"), "At most"),
-                new Param.Ints("monster_distance", 8, 1, 64),
-                new Param.Bool("protect_fireballs", true),
-                new Param.Bool("build_cover", true),
+                new Param.Choice("monster_compare", List.of("At most", "Less than", "At least", "Greater than"), "At most")
+                        .under("protect_monsters"),
+                new Param.Ints("monster_distance", 8, 1, 64).under("protect_monsters"),
+                new Param.Bool("protect_fireballs", true).under("protect_monsters"),
+                new Param.Bool("build_cover", true).under("protect_monsters"),
                 new Param.Bool("protect_health", true),
-                new Param.Choice("health_compare", List.of("At most", "Less than", "At least", "Greater than"), "At most"),
-                new Param.Ints("health_value", 8, 1, 20)
+                new Param.Choice("health_compare", List.of("At most", "Less than", "At least", "Greater than"), "At most")
+                        .under("protect_health"),
+                new Param.Ints("health_value", 8, 1, 20).under("protect_health")
         ), def -> new SelfPreservationTask(
                 def.boolValue("protect_air"), def.choiceValue("air_compare"), def.intValue("air_value"),
                 def.boolValue("protect_lava"), def.boolValue("protect_monsters"),
@@ -998,7 +1019,7 @@ public final class CommandRegistry {
         if (target == null) {
             return FailTask.forCommand(def.id(), label, "lune.status.fail.no_destination");
         }
-        return new GotoTask(new Goals.Near(target, def.intValue("tolerance")), sprint, false);
+        return GotoTask.toPlace(new Goals.Near(target, def.intValue("tolerance")), sprint);
     }
 
     public static List<CommandDef> all() {

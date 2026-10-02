@@ -42,6 +42,15 @@ public final class AStarPathfinder {
     /** Shallow water is waded, not swum, at roughly half the speed of a submerged sprint. */
     private static final double WATER_WADE_COST = 6.0;
     /**
+     * Surcharge on a node with water over it, on top of the swim.
+     *
+     * <p>Not because swimming deep is slower - it is not - but because every block overhead is a
+     * block between the bot and its next breath, and the way out of the water is at the top. A
+     * route planned from under the surface used to stay at whatever depth it started, all the way
+     * to a bank it could not climb from there.</p>
+     */
+    private static final double WATER_DEPTH_COST = 1.0;
+    /**
      * Nodes a search may spend per block of straight-line distance to its goal.
      *
      * <p>Generous - a route that has to climb, detour or tunnel expands far more nodes than the
@@ -104,7 +113,8 @@ public final class AStarPathfinder {
      * Tuning for a single search.
      *
      * @param maxFall          how far the bot will drop voluntarily, in blocks
-     * @param allowBreak       whether it may mine through obstacles (Mine and Tunnel; not Goto)
+     * @param allowBreak       whether it may mine through obstacles (Mine and Tunnel, and a walk to a
+     *                         named place, which may be underground; never ordinary travel)
      * @param allowSwim        whether it may enter water
      * @param allowJump        whether it may change elevation or jump a gap
      * @param nodeBudget       how many nodes to expand before giving up and returning a partial path
@@ -414,6 +424,21 @@ public final class AStarPathfinder {
             relax(level, current, climbDown, CLIMB_COST, goal, settings, nodes, open);
         }
 
+        // Swim straight up. A route planned from under the surface - after a dive, a fall into a
+        // lake, a replan in the middle of a crossing - had no way back to the top: in water the
+        // search only moved sideways, and stepped up only onto a node it could stand on, which two
+        // blocks down nothing above is. So every such route ran along at its starting depth to the
+        // far bank and stopped against it. One swim test failed five blocks from dry land that way,
+        // out of routes. There is no matching move down: going under is the stroke's business, not
+        // the route's, and a route that dives is a route into whatever is down there.
+        BlockPos swimUp = pos.above();
+        if (settings.allowSwim()
+                && MovementHelper.isWater(level, pos)
+                && MovementHelper.isWater(level, swimUp)
+                && MovementHelper.isPassable(level, swimUp.above())) {
+            relax(level, current, swimUp, Goals.STEP, goal, settings, nodes, open);
+        }
+
         // Dig straight down. Without this the search can only ever tunnel sideways, so reaching
         // anything buried means hunting the surface for a natural opening - which is exactly how a
         // short trip to an ore 16 blocks down burns the entire node budget and returns a partial
@@ -430,11 +455,28 @@ public final class AStarPathfinder {
             }
         }
 
+        // A doorway is left the way it was come in by, straight along it; nothing else steps out of
+        // one. The steps that go through doorways are relaxDoorways', for every node beside one.
+        boolean inDoorway = Doorways.isDoorway(level, pos) || Doorways.isDoorway(level, pos.above());
+
         for (int[] dir : HORIZONTAL) {
             int dx = dir[0];
             int dz = dir[1];
             boolean diagonal = dx != 0 && dz != 0;
             double baseCost = diagonal ? Goals.DIAGONAL : Goals.STEP;
+            if (!diagonal) {
+                // Two lookups decide whether a doorway is there at all, because this runs for every
+                // node of every search and almost none of them are beside a door. A door is two
+                // blocks tall, so these two catch one that stands level, a step up or a step down.
+                BlockPos ahead = pos.offset(dx, 0, dz);
+                if (inDoorway || Doorways.isDoorway(level, ahead)
+                        || Doorways.isDoorway(level, ahead.above())) {
+                    relaxDoorways(level, current, ahead, baseCost, goal, settings, nodes, open);
+                }
+            }
+            if (inDoorway) {
+                continue;
+            }
 
             // Diagonals must not clip through a corner: both orthogonal columns need to be clear.
             // When we are allowed to break, leaves and other soft blocks can be cleared.
@@ -516,15 +558,13 @@ public final class AStarPathfinder {
                     relax(level, current, flat, baseCost + sideCost, goal, settings, nodes, open);
                 }
 
-                // Swim *below* the surface. Without this the cheap swim rate was unreachable: the
-                // only water nodes ever generated were surface ones, and surface water has air
-                // above it by definition, so relax() charged every crossing the wade rate and the
-                // route hugged the top of the water the whole way. That is the crossing that looks
-                // nothing like a person swimming - and no amount of holding sprint fixes it,
-                // because vanilla will not start the stroke while the head is out.
-                //
-                // Depth needs no encouragement beyond this: every submerged node costs the same, so
-                // the search takes the shallowest line that works rather than diving to the bed.
+                // Swim on *below* the surface, for a route that starts there - a bot that fell into
+                // a lake, or was already working under one. A crossing planned from the bank stays
+                // on the top layer, where every node is a breath away; that layer is priced as
+                // swimming in deep water and swum a block under it (SwimPolicy), so keeping a
+                // surface route is not keeping a slow one. Every node with water over it pays
+                // WATER_DEPTH_COST besides, so a route that starts down here swims up to the top
+                // layer as soon as it is worth it rather than staying at its starting depth.
                 if (settings.allowSwim()
                         && MovementHelper.isWater(level, flat)
                         && MovementHelper.isWater(level, flat.above())) {
@@ -561,6 +601,39 @@ public final class AStarPathfinder {
     }
 
     /**
+     * The steps that go through a doorway, one block along {@code flat}'s way: level, or a step up
+     * or down where the door stands a block higher or lower than the ground outside it. Each is
+     * priced by {@link Doorways#stepCost}, which charges for opening a shut door and refuses what a
+     * hand cannot open.
+     *
+     * <p>The search had no such step. A door is a full-height slab, open or shut, and the walking
+     * tests read any block taller than a step as a wall - so a house was a sealed box, and a route
+     * that could dig went in through the front door with a pickaxe.</p>
+     */
+    private static void relaxDoorways(BlockGetter level, Node current, BlockPos flat, double baseCost,
+                                      Goal goal, Settings settings, Map<Long, Node> nodes,
+                                      PriorityQueue<Node> open) {
+        BlockPos pos = current.pos;
+        for (int rise = -1; rise <= 1; rise++) {
+            if (rise > 0 && !settings.allowJump()) {
+                continue;
+            }
+            BlockPos to = flat.above(rise);
+            if (!Doorways.touches(level, pos, to)
+                    || !MovementHelper.isSolidFloor(level, to.below())
+                    || Doorways.isDoorway(level, to.below())
+                    || (MovementHelper.isWater(level, to) && !settings.allowSwim())) {
+                continue;
+            }
+            double through = Doorways.stepCost(level, pos, to);
+            if (Double.isFinite(through)) {
+                double climb = rise > 0 ? JUMP_COST : rise < 0 ? FALL_COST : 0.0;
+                relax(level, current, to, baseCost + climb + through, goal, settings, nodes, open);
+            }
+        }
+    }
+
+    /**
      * Surcharge for where a step ends up, as opposed to how far it goes.
      * <p>
      * Charging water on <em>entry</em> rather than per block is what produces the behaviour you'd
@@ -579,14 +652,22 @@ public final class AStarPathfinder {
             } else {
                 // Wading and swimming are not the same movement and must not cost the same.
                 //
-                // The crawl stroke only starts once the eyes are under, so water with air above it
-                // is waded, not swum - and wading is the slowest way to travel in the game, about
-                // half the speed of a submerged sprint and a third of running on land. Charging one
-                // flat rate for both let routes hug a shoreline for a thousand ticks: measured at
-                // 0.100 blocks per tick, with the sprint key held the whole time and the head above
-                // water 98% of it. Deep water is genuinely quicker, so it stays cheap.
-                penalty += MovementHelper.isWater(level, to.above())
+                // The crawl stroke only starts once the eyes are under, so water too shallow to
+                // cover them is waded, not swum - and wading is the slowest way to travel in the
+                // game, about half the speed of the stroke and a third of running on land. Charging
+                // one flat rate for both let routes hug a shoreline for a thousand ticks: measured
+                // at 0.100 blocks per tick, with the sprint key held the whole time and the head
+                // above water 98% of it.
+                //
+                // What counts is the depth of the column, not which layer of it the node is on. A
+                // crossing is planned along the top layer, where it can breathe, and swum a block
+                // under it (SwimPolicy). This used to charge that whole layer the wading rate because
+                // it has air above it, which priced every lake as if it were a ford.
+                penalty += MovementHelper.isDeepWater(level, to)
                         ? WATER_SWIM_COST : WATER_WADE_COST;
+            }
+            if (MovementHelper.isWater(level, to.above())) {
+                penalty += WATER_DEPTH_COST;
             }
         }
         return penalty;
@@ -607,6 +688,11 @@ public final class AStarPathfinder {
             return 0.0;
         }
         if (!MovementHelper.isBreakable(level, pos)) {
+            return Double.POSITIVE_INFINITY;
+        }
+        // A door or a gate is opened or gone round, never dug - and nor is the block a door stands
+        // on, which takes the door off with it.
+        if (Doorways.isDoorway(level, pos) || Doorways.holdsUpADoor(level, pos)) {
             return Double.POSITIVE_INFINITY;
         }
         // A dry route may walk beside water, but it must not tunnel through the wall that keeps

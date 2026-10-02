@@ -5,8 +5,12 @@ import java.util.Map;
 
 import static com.etka.lune.bot.StatusSignal.BLOCKED;
 import static com.etka.lune.bot.StatusSignal.BRIDGING;
+import static com.etka.lune.bot.StatusSignal.COLLECTING;
+import static com.etka.lune.bot.StatusSignal.CRAFTING;
 import static com.etka.lune.bot.StatusSignal.DANGER;
 import static com.etka.lune.bot.StatusSignal.DEAD;
+import static com.etka.lune.bot.StatusSignal.DIGGING;
+import static com.etka.lune.bot.StatusSignal.FARMING;
 import static com.etka.lune.bot.StatusSignal.FIGHT;
 import static com.etka.lune.bot.StatusSignal.FLEE;
 import static com.etka.lune.bot.StatusSignal.FRAMING;
@@ -18,6 +22,7 @@ import static com.etka.lune.bot.StatusSignal.NONE;
 import static com.etka.lune.bot.StatusSignal.PILLARING;
 import static com.etka.lune.bot.StatusSignal.RECOVERING;
 import static com.etka.lune.bot.StatusSignal.SEARCH;
+import static com.etka.lune.bot.StatusSignal.SMELTING;
 import static com.etka.lune.bot.StatusSignal.STAIRS;
 import static com.etka.lune.bot.StatusSignal.SUCCESS;
 import static com.etka.lune.bot.StatusSignal.TRAVEL;
@@ -42,6 +47,15 @@ import static com.etka.lune.bot.StatusSignal.WAITING;
  * so bridging a gap, pillaring up, cutting stairs, raising a portal frame and walking somewhere
  * each get their own face. They sit at the bottom of {@link StatusSignal#priority()}, so a
  * blockage or a mob still wins over "she is building".</p>
+ *
+ * <p>The five jobs - digging, farming, crafting, smelting, collecting - are declared on the lines
+ * a task says while it is at the work, never on the ones it says while walking to it: those wrap
+ * the walk's own status, and the walk carries {@link StatusSignal#TRAVEL}. Nor on the line a task
+ * finishes with, which becomes the milestone she announces and is not work in hand. A job's
+ * sweep for its own drops stays that job's - Mine's is digging and Harvest's is farming - or
+ * her face would change after every block; {@link StatusSignal#COLLECTING} is the Loot card, the
+ * drops a fight leaves, and the chests the speedrun empties. Depositing is not collecting: it is
+ * items leaving her, and it keeps the plain working face until it has one of its own.</p>
  */
 public final class StatusKeys {
 
@@ -75,6 +89,7 @@ public final class StatusKeys {
 
         put(SUCCESS,
                 "lune.status.dragon_egg.collected",
+                "lune.status.portal_room.found",
                 "lune.status.self_preservation.escaped_lava",
                 "lune.status.self_preservation.fireball_gone",
                 "lune.status.self_preservation.fireball_sent_back",
@@ -224,10 +239,10 @@ public final class StatusKeys {
                 "lune.status.collect_crafting_table.table_drop_unreachable",
                 "lune.status.complete_game.cannot_reach_center",
                 "lune.status.complete_game.cannot_reach_exit_portal",
-                "lune.status.complete_game.cannot_reach_landing_site",
                 "lune.status.complete_game.cannot_reach_portal",
                 "lune.status.complete_game.cannot_reach_portal_frames",
                 "lune.status.complete_game.cannot_reach_target",
+                "lune.status.complete_game.no_exit_portal",
                 "lune.status.crafting_table_access.arrived_beside_blocked_table_trying",
                 "lune.status.crafting_table_access.cant_reach_table_reconnecting_dry_ground",
                 "lune.status.deposit.cannot_open_container",
@@ -236,6 +251,9 @@ public final class StatusKeys {
                 "lune.status.dragon_egg.could_not_pick_up",
                 "lune.status.dragon_egg.moved_too_often",
                 "lune.status.dragon_egg.none_in_sight",
+                "lune.status.ender_eye.cannot_reach_stronghold",
+                "lune.status.ender_eye.eye_would_not_fly",
+                "lune.status.ender_eye.too_many_throws",
                 "lune.status.explore.previous_route_blocked",
                 "lune.status.flint_from_gravel.cannot_break_gravel_here",
                 "lune.status.goto.ceiling_recovery_made_no_progress",
@@ -258,10 +276,18 @@ public final class StatusKeys {
                 "lune.status.mine.tree_unreachable_because",
                 "lune.status.pillar_up.could_not_place_block_underfoot",
                 "lune.status.place_block.could_not_place_block",
+                "lune.status.portal_room.cannot_dig_down",
+                "lune.status.portal_room.cannot_reach_portal",
+                "lune.status.portal_room.explored_everything",
+                "lune.status.portal_room.no_stronghold_known",
+                "lune.status.portal_room.reached_bottom",
+                "lune.status.portal_room.took_too_long",
+                "lune.status.portal_room.under_water",
                 "lune.status.quick_stone.could_not_reach_another_stone_start",
                 "lune.status.quick_stone.could_not_reach_stable_ground_stone",
                 "lune.status.quick_stone.no_stable_ground_nearby_stone_stair",
                 "lune.status.route.blocked_by",
+                "lune.status.route.door_wont_open",
                 "lune.status.smelt.cant_open_furnace",
                 "lune.status.smelt.cant_reach_furnace",
                 "lune.status.smelt.could_not_place_furnace",
@@ -283,12 +309,19 @@ public final class StatusKeys {
                 "lune.status.use_portal.could_not_reach");
 
         put(SEARCH,
+                "lune.status.complete_game.looking_round_center",
                 "lune.status.crafting_table_access.cant_place_trying_another_spot",
                 "lune.status.crafting_table_access.cant_place_trying_another_spot_2",
                 "lune.status.crafting_table_access.cant_reach_table_trying_another",
                 "lune.status.dragon_egg.fell_further",
                 "lune.status.dragon_egg.jumped",
                 "lune.status.dragon_egg.looking_around",
+                "lune.status.ender_eye.checking",
+                "lune.status.ender_eye.following_eye",
+                "lune.status.ender_eye.picking_up_eye",
+                "lune.status.ender_eye.read_several",
+                "lune.status.ender_eye.tracking_eye",
+                "lune.status.ender_eye.unreadable",
                 "lune.status.explore.at",
                 "lune.status.explore.blocked_ways_out_here_needs_different",
                 "lune.status.explore.exploring",
@@ -304,24 +337,36 @@ public final class StatusKeys {
                 "lune.status.kill.target_unreachable_looking_another",
                 "lune.status.mine.could_not_enter_opening_checking_from",
                 "lune.status.mine.target_unreachable_trying_next_one",
+                "lune.status.portal_room.could_not_get_there",
+                "lune.status.portal_room.exploring",
+                "lune.status.portal_room.looking_round",
+                "lune.status.portal_room.something_ahead",
+                "lune.status.sight.going_to_see",
                 "lune.status.speedrun.arrived_beside_blocked_chest_checking");
 
+        // Crafting's own waits for the server are crafting, not loading: they last a tick or two
+        // between the steps of one craft, and a spinner there would flicker in and out of it.
         put(LOADING,
-                "lune.status.craft.waiting_recipe",
                 "lune.status.eat.waiting_server_see_food",
                 "lune.status.ender_eye.waiting_eye",
-                "lune.status.find_map.holding_map_waiting_fill",
-                "lune.status.grid_craft.waiting_result");
+                "lune.status.find_map.holding_map_waiting_fill");
 
         put(WAITING,
                 "lune.status.collect_crafting_table.waiting_table_drop",
                 "lune.status.countdown.remaining",
+                "lune.status.explore.watching_beside",
+                "lune.status.find.watching_beside",
                 "lune.status.fish.waiting_bite_caught",
                 "lune.status.fish.waiting_bobber",
                 "lune.status.fish.waiting_bobber_reach_water_caught",
                 "lune.status.fish.waiting_reel",
+                "lune.status.harvest.watching_beside",
                 "lune.status.kill.waiting_drop",
                 "lune.status.kill.waiting_top_jump",
+                "lune.status.kill.watching_beside",
+                "lune.status.loot.watching_beside",
+                "lune.status.mine.watching_beside",
+                "lune.status.mine.watching_beside_trees",
                 "lune.status.pillar_up.waiting_rise_onto_placed_pillar_block",
                 "lune.status.self_preservation.waiting_boat_appear",
                 "lune.status.self_preservation.waiting_settle",
@@ -394,6 +439,7 @@ public final class StatusKeys {
                 "lune.status.bridge.placing_block");
 
         put(TRAVEL,
+                "lune.status.ender_eye.walking_to",
                 "lune.status.goto.blocks_left",
                 "lune.status.goto.break",
                 "lune.status.goto.bridge_failed",
@@ -407,7 +453,92 @@ public final class StatusKeys {
                 "lune.status.goto.replanning_after_movement_stalled",
                 "lune.status.goto.replanning_after_reaching_air",
                 "lune.status.goto.swimming_breathable_air",
+                "lune.status.portal_room.walking_to_stronghold",
+                "lune.status.route.closing_door",
                 "lune.status.route.fluid_replanning",
+                "lune.status.route.opening_door",
                 "lune.status.route.refusing_open_water");
+
+        put(COLLECTING,
+                "lune.status.backpack.taking",
+                "lune.status.kill.collecting_drop",
+                "lune.status.loot.collecting",
+                "lune.status.loot.drop_trying_next_one",
+                "lune.status.loot.edging_toward_drop_blocks",
+                "lune.status.loot.stepping_onto_drop",
+                "lune.status.loot.walking_collected",
+                "lune.status.recover_death.collecting",
+                "lune.status.speedrun.aiming_visible_chest",
+                "lune.status.speedrun.opening_visible_chest",
+                "lune.status.speedrun.taking_from_chest",
+                "lune.status.speedrun.took_items_from_visible_chest");
+
+        put(DIGGING,
+                "lune.status.ceiling_break.clearing_obstruction",
+                "lune.status.complete_game.digging_stronghold",
+                "lune.status.dragon_egg.breaking_support",
+                "lune.status.dragon_egg.digging_stance",
+                "lune.status.dragon_egg.step.digging",
+                "lune.status.flint_from_gravel.collecting_gravel_back",
+                "lune.status.flint_from_gravel.knapping_gravel_flint",
+                "lune.status.flint_from_gravel.placing_gravel",
+                "lune.status.mine.checking_whether_drop_landed",
+                "lune.status.mine.cleared_head_two_block_high_opening",
+                "lune.status.mine.clearing_head_two_block_high_opening",
+                "lune.status.mine.collected_drop",
+                "lune.status.mine.collecting_drops",
+                "lune.status.mine.mining_done",
+                "lune.status.mine.opened_visible_toward",
+                "lune.status.mine.opening_visible_toward_ore",
+                "lune.status.mine.prospecting_exposed_mined_target_blocks",
+                "lune.status.mine.prospecting_mined_target_blocks",
+                "lune.status.mine.taking_stump",
+                "lune.status.portal_room.digging_down",
+                "lune.status.quick_stone.mining_out_shaft",
+                "lune.status.quick_stone.stone_already_exposed_here_mining_before",
+                "lune.status.tunnel.advancing_n_of_n",
+                "lune.status.tunnel.digging",
+                "lune.status.tunnel.mining_exposed");
+
+        put(CRAFTING,
+                "lune.status.collect_crafting_table.breaking_table",
+                "lune.status.collect_crafting_table.collecting_table",
+                "lune.status.craft.crafting",
+                "lune.status.craft.waiting_recipe",
+                "lune.status.crafting_table_access.aiming_crafting_table",
+                "lune.status.crafting_table_access.opening_crafting_table",
+                "lune.status.crafting_table_access.placed_crafting_table",
+                "lune.status.crafting_table_access.placing_crafting_table",
+                "lune.status.grid_craft.clearing_what_left_grid",
+                "lune.status.grid_craft.closing_open_container_use_crafting_grid",
+                "lune.status.grid_craft.crafted",
+                "lune.status.grid_craft.laying_out_ingredients",
+                "lune.status.grid_craft.waiting_result",
+                "lune.status.kill.crafting",
+                "lune.status.kill.crafting_shield",
+                "lune.status.netherite_upgrade.adding",
+                "lune.status.netherite_upgrade.adding_template",
+                "lune.status.netherite_upgrade.aiming_table",
+                "lune.status.netherite_upgrade.opening_table",
+                "lune.status.netherite_upgrade.placed_table",
+                "lune.status.netherite_upgrade.placing_table",
+                "lune.status.netherite_upgrade.taking");
+
+        put(SMELTING,
+                "lune.status.smelt.adding",
+                "lune.status.smelt.adding_fuel",
+                "lune.status.smelt.aiming_furnace",
+                "lune.status.smelt.collecting",
+                "lune.status.smelt.furnace_placed",
+                "lune.status.smelt.opening_furnace",
+                "lune.status.smelt.placing_furnace",
+                "lune.status.smelt.smelting");
+
+        put(FARMING,
+                "lune.status.harvest.collecting_harvest_drops",
+                "lune.status.harvest.harvesting_done",
+                "lune.status.harvest.replanting_crop",
+                "lune.status.harvest.settling_beside_crop",
+                "lune.status.replant.planting");
     }
 }

@@ -88,6 +88,18 @@ public final class TaskNode {
     /** Whether the editor displays this node's optional While output. Execution is unaffected. */
     public boolean whileVisible;
 
+    /**
+     * Whether the editor draws Success and Fail as one Done pin, for a card that carries on the
+     * same way whichever way it ends.
+     *
+     * <p>Execution never reads this. A joined card keeps both {@link #onSuccess} and
+     * {@link #onFailure}, pointing at the same card, which is exactly how "either way" was already
+     * wired - so the runner, the audit and a copy of Lune that has never heard of Done all read
+     * the task the way it is drawn. {@link TaskWiring} keeps the two edges together while this is
+     * set, and {@link #showsDone()} is what the canvas asks.</p>
+     */
+    public boolean outcomesJoined;
+
     /** Target node ids for the special Always source node; one pulse may fan out to many. */
     public Set<String> alwaysTargets = new LinkedHashSet<>();
 
@@ -184,6 +196,7 @@ public final class TaskNode {
         copy.onFailure = onFailure;
         copy.onWhile = onWhile;
         copy.whileVisible = whileVisible;
+        copy.outcomesJoined = outcomesJoined;
         if (alwaysTargets != null) {
             copy.alwaysTargets.addAll(alwaysTargets);
         }
@@ -262,6 +275,22 @@ public final class TaskNode {
     /** True for the two sources that own a clock and fan out to targets. */
     public boolean isClockNode() {
         return isAlwaysNode() || isPulseSourceNode();
+    }
+
+    /** Cards that end in a Success or a Fail: every job and check, and nothing carrying pulses. */
+    public boolean hasOutcomes() {
+        return !isStartNode() && !isClockNode() && !isPulseNode();
+    }
+
+    /**
+     * Whether the canvas draws this card with one Done pin in place of Success and Fail.
+     *
+     * <p>Asked of the wiring as well as the switch. A joined card whose two edges disagree would
+     * have one of them drawn nowhere, and a wire the player cannot see is worse than a pin they
+     * did not ask for, so such a card is drawn split until the edges agree again.</p>
+     */
+    public boolean showsDone() {
+        return outcomesJoined && hasOutcomes() && java.util.Objects.equals(onSuccess, onFailure);
     }
 
     public String describeRepeat() {

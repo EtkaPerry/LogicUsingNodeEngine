@@ -31,14 +31,18 @@ import java.util.Optional;
  */
 public final class TaskStore {
 
-    private static final Gson GSON = new GsonBuilder()
-            .setPrettyPrinting()
-            // Routes used to be serialised as one {x, y} anchor. Read that shape as a
-            // one-point route while writing the new repeatable {points: [...]} shape.
-            .registerTypeAdapter(TaskCableRoute.class,
-                    (JsonDeserializer<TaskCableRoute>) TaskStore::deserializeCableRoute)
-            .create();
+    private static final Gson GSON = gson().setPrettyPrinting().create();
+    /** The same, on one line: what a share code compresses, where every byte is a longer link. */
+    private static final Gson COMPACT = gson().create();
     private static TaskStore instance;
+
+    private static GsonBuilder gson() {
+        return new GsonBuilder()
+                // Routes used to be serialised as one {x, y} anchor. Read that shape as a
+                // one-point route while writing the new repeatable {points: [...]} shape.
+                .registerTypeAdapter(TaskCableRoute.class,
+                        (JsonDeserializer<TaskCableRoute>) TaskStore::deserializeCableRoute);
+    }
 
     private final List<TaskGraph> tasks = new ArrayList<>();
 
@@ -129,6 +133,51 @@ public final class TaskStore {
         if (doomed != null && tasks.removeAll(doomed)) {
             save();
         }
+    }
+
+    /**
+     * Puts the tasks a list shows into the order it now shows them in, and writes the file: the
+     * order both task lists read.
+     *
+     * @param order every task the list shows, in its new order
+     * @return whether anything moved
+     */
+    public boolean reorder(List<TaskGraph> order) {
+        if (!reorder(tasks, order)) {
+            return false;
+        }
+        save();
+        return true;
+    }
+
+    /**
+     * Gives the tasks in {@code order} that order, in the places they already hold in the whole
+     * list, and leaves every other task where it is.
+     *
+     * <p>Those others are the starter jobs hidden for want of a mod. The lists show
+     * {@link #listed()}, so two neighbours on screen can have a hidden job between them in the
+     * file, and moving a task past it on screen must not carry it along: it keeps its place at the
+     * end of the shelf, where it waits for its mod without leaving a gap in the numbers the player
+     * can see.</p>
+     *
+     * @return whether anything moved; false too for an order naming a task that is not in the
+     *         list, or one twice, which changes nothing
+     */
+    static boolean reorder(List<TaskGraph> tasks, List<TaskGraph> order) {
+        List<Integer> places = new ArrayList<>();
+        for (int i = 0; i < tasks.size(); i++) {
+            if (order.contains(tasks.get(i))) {
+                places.add(i);
+            }
+        }
+        if (places.size() != order.size()) {
+            return false;
+        }
+        boolean moved = false;
+        for (int i = 0; i < places.size(); i++) {
+            moved |= tasks.set(places.get(i), order.get(i)) != order.get(i);
+        }
+        return moved;
     }
 
     /**
@@ -241,6 +290,11 @@ public final class TaskStore {
         return GSON.toJson(task);
     }
 
+    /** The same JSON with no layout, for {@link TaskCode}. Static: it needs no saved tasks. */
+    public static String exportCompact(TaskGraph task) {
+        return COMPACT.toJson(task);
+    }
+
     /** A snapshot of the whole task list, used for undo/redo. */
     public String exportAll() {
         return GSON.toJson(tasks);
@@ -278,15 +332,11 @@ public final class TaskStore {
     }
 
     /**
-     * Reads a shared task from the clipboard and adds it under a non-colliding name.
+     * Adds a shared task under a non-colliding name. Import on the Tasks tab reads the clipboard
+     * through {@link TaskCode} first, which turns a share link or a code into this JSON.
      *
-     * @return the imported task, or empty if the clipboard didn't hold a valid one
+     * @return the imported task, or empty if the text was not a task
      */
-    public Optional<TaskGraph> importFromClipboard() {
-        String text = Minecraft.getInstance().keyboardHandler.getClipboard();
-        return importFrom(text);
-    }
-
     public Optional<TaskGraph> importFrom(String json) {
         if (json == null || json.isBlank()) {
             return Optional.empty();
@@ -439,6 +489,7 @@ public final class TaskStore {
                 node.onFailure = null;
                 node.onWhile = null;
             }
+            TaskWiring.normalizeOutcomes(node);
             node.signalInputCount = Math.clamp(node.signalInputCount,
                     TaskNode.MIN_SIGNAL_PORTS, TaskNode.MAX_SIGNAL_PORTS);
             node.signalOutputCount = Math.clamp(node.signalOutputCount,

@@ -129,6 +129,16 @@ public final class SelectItemTask implements Task {
         this.preference = preference == null ? Preference.MOST_DURABLE : preference;
     }
 
+    /**
+     * Beside the player this card never takes the keys. Its whole job is the hand, done in one tick
+     * without moving anybody, and taking the controls for it would give the player their old hotbar
+     * slot back the moment it was done - undoing exactly what it was asked for.
+     */
+    @Override
+    public boolean holdsControls() {
+        return false;
+    }
+
     @Override
     public String name() {
         return Lang.get("lune.task.select_item.name", item == null

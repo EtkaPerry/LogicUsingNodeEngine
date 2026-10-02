@@ -38,11 +38,32 @@ public abstract class Param<T> {
     private final String id;
     /** The command this parameter belongs to, which is half of its translation key. */
     private String owner = "";
+    /** The switch this row sits under, or null; see {@link #under}. */
+    private String parentSwitch;
     protected T value;
 
     protected Param(String id, T initial) {
         this.id = id;
         this.value = initial;
+    }
+
+    /**
+     * Puts this row under one of the card's switches.
+     *
+     * <p>A statement about the card's shape and nothing else - what is saved is unchanged. The row
+     * is only shown while that switch is on, because how near a mob may come is no question for a
+     * card that is not watching for mobs. And switches under the same switch are one group, the
+     * same way a card's own switches are, which is what {@link CommandDef#keepOnly} keeps one of:
+     * the clutches under a fall are chosen among themselves, never against the dangers.</p>
+     */
+    public Param<T> under(String switchId) {
+        this.parentSwitch = switchId;
+        return this;
+    }
+
+    /** The id of the switch this row sits under, or null for a row of the card's own. */
+    public String parentSwitch() {
+        return parentSwitch;
     }
 
     /**
@@ -489,6 +510,22 @@ public abstract class Param<T> {
             if (!get().remove(type)) {
                 get().add(type);
             }
+        }
+
+        /** True when this is the one type chosen, so keeping only it would change nothing. */
+        public boolean isOnly(EntityType<?> type) {
+            return get().size() == 1 && get().contains(type);
+        }
+
+        /**
+         * Chooses this type and drops the rest.
+         *
+         * <p>There is no "all" to go back to, as there is for a card's switches: every mob in the
+         * list includes the villagers and the pets, and a Kill card that went after all of them at
+         * one careless click is a click that did harm.</p>
+         */
+        public void keepOnly(EntityType<?> type) {
+            set(new LinkedHashSet<>(List.of(type)));
         }
 
         @Override

@@ -11,6 +11,10 @@ import net.minecraft.server.permissions.Permissions;
  * On a dedicated server, the client only gets this access when the server has granted the player
  * vanilla's gamemaster/operator command permission. The permission is received from the server;
  * a locally edited config file is never treated as proof of authority.</p>
+ *
+ * <p>A server that runs Lune has the last word instead: its rules may open the modes to everyone
+ * or close them to everyone, operators included, and {@link ServerAccess} holds its answer. That
+ * answer is received from the server too, so the principle is the same one.</p>
  */
 public final class OmniscientAccess {
 
@@ -21,10 +25,13 @@ public final class OmniscientAccess {
         if (mc == null) {
             return false;
         }
-        return isAllowed(mc.hasSingleplayerServer(), hasServerPermission(mc.player));
+        return ServerAccess.mayCheat(mc, mc.hasSingleplayerServer(), hasServerPermission(mc.player));
     }
 
-    /** Pure policy decision kept separate so the boundary can be tested without a running client. */
+    /**
+     * The boundary on a server that says nothing about Lune, kept separate so it can be tested
+     * without a running client.
+     */
     public static boolean isAllowed(boolean singleplayer, boolean serverOperator) {
         return singleplayer || serverOperator;
     }

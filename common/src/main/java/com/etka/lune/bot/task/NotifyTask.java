@@ -39,6 +39,12 @@ public final class NotifyTask implements Task {
         this.soundId = soundId == null ? "" : soundId.strip();
     }
 
+    /** Never touches the controls, so beside the player it never takes them. */
+    @Override
+    public boolean holdsControls() {
+        return false;
+    }
+
     @Override
     public String name() {
         return message.isEmpty() ? Lang.get("lune.task.notify.name")

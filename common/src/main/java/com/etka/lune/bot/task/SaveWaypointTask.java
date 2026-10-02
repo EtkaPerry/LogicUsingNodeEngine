@@ -75,6 +75,12 @@ public final class SaveWaypointTask implements Task {
         return false;
     }
 
+    /** Never touches the controls, so beside the player it never takes them. */
+    @Override
+    public boolean holdsControls() {
+        return false;
+    }
+
     @Override
     public String name() {
         return switch (action) {

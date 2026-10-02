@@ -17,9 +17,6 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Util;
 
-import java.util.ArrayList;
-import java.util.List;
-
 /** Screen-level Lune assistant with contextual speech bubbles. */
 public final class MascotWidget extends AbstractWidget {
 
@@ -34,13 +31,6 @@ public final class MascotWidget extends AbstractWidget {
     private static final int BUTTON_YES_HOVER = 0xFF3D7656;
     private static final int PROGRESS_BG = 0xFF151A22;
     private static final int PROGRESS_FILL = 0xFFF4C95D;
-    private static final int BLOCKED_ACCENT = 0xFFE6A15C;
-    private static final int WAITING_ACCENT = 0xFF8BB9D8;
-    private static final int DANGER_ACCENT = 0xFFFF6868;
-    private static final int SUCCESS_ACCENT = 0xFF7EDB92;
-    private static final int INVENTORY_ACCENT = 0xFFE4A45F;
-    private static final int MISSING_ACCENT = 0xFFC8A6F2;
-    private static final int PAUSED_ACCENT = 0xFF91A4BE;
 
     private Runnable trainingHint;
     private Runnable trainingAnswer;
@@ -205,7 +195,7 @@ public final class MascotWidget extends AbstractWidget {
         boolean dismissalMenu = advisor.isDismissalMenu();
         boolean preview = !dismissalMenu && advisor.hasPreview();
         boolean canUndo = !dismissalMenu && advisor.canUndo();
-        boolean expandedState = expandedState(mood);
+        boolean expandedState = MascotSpeech.expanded(mood);
         layoutBubble(advisor.isPrompting(), advisor.hasAmountChoice(), progress != null,
                 expandedState, preview, canUndo, dismissalMenu, artSize, config.luneChatboxSize);
         boolean bubbleOnLeft = bubbleX < renderedArtX;
@@ -213,23 +203,23 @@ public final class MascotWidget extends AbstractWidget {
                 renderedArtX, renderedArtY, artSize, bubbleOnLeft);
         drawCloseButton(extractor, font, mouseX, mouseY);
 
-        String title = advisor.isPrompting() ? advisor.promptTitle() : stateTitle(mood);
+        String title = advisor.isPrompting() ? advisor.promptTitle() : MascotSpeech.banner(mood);
         extractor.textRenderer().accept(bubbleX + 8, bubbleY + 6,
-                Component.literal(fit(font, title, bubbleWidth - 34))
-                        .withColor(stateColour(mood)));
+                Component.literal(MascotSpeech.fit(font, title, bubbleWidth - 34))
+                        .withColor(MascotSpeech.colour(mood)));
 
         int textX = bubbleX + 8;
         int textWidth = Math.max(40, bubbleWidth - 16);
         int bodyY = bubbleY + 23;
         if (!advisor.isPrompting() && current != null) {
             extractor.textRenderer().accept(textX, bodyY,
-                    Component.literal(fit(font, current.name(), textWidth)).withColor(LuneScreen.TEXT));
+                    Component.literal(MascotSpeech.fit(font, current.name(), textWidth)).withColor(LuneScreen.TEXT));
             bodyY += 14;
         }
 
         int lineCount = advisor.isPrompting() ? dismissalMenu ? 1 : preview ? 2 : 3
                 : expandedState ? 3 : current == null ? 3 : progress == null ? 2 : 1;
-        for (String line : wrap(font, advisor.speech(engine), textWidth, lineCount)) {
+        for (String line : MascotSpeech.wrap(font, advisor.speech(engine), textWidth, lineCount)) {
             extractor.textRenderer().accept(textX, bodyY,
                     Component.literal(line).withColor(advisor.isPrompting()
                             ? LuneScreen.TEXT : LuneScreen.TEXT_DIM));
@@ -273,7 +263,7 @@ public final class MascotWidget extends AbstractWidget {
         closeVisible = false;
         bubbleVisible = true;
         bubbleWidth = Math.min(320, getWidth() - 16);
-        var lines = wrap(font, trainingSpeech, bubbleWidth - 16, Integer.MAX_VALUE);
+        var lines = MascotSpeech.wrap(font, trainingSpeech, bubbleWidth - 16, Integer.MAX_VALUE);
         bubbleHeight = Math.min(getHeight() - 16, Math.max(100, 53 + lines.size() * 11));
         bubbleX = Math.clamp(renderedArtX - bubbleWidth - 9, getX() + 4,
                 Math.max(getX() + 4, getX() + getWidth() - bubbleWidth - 4));
@@ -381,53 +371,6 @@ public final class MascotWidget extends AbstractWidget {
                 Component.literal(mark).withColor(LuneScreen.TEXT));
     }
 
-    private static boolean expandedState(MascotAdvisor.Mood mood) {
-        return switch (mood) {
-            case WAITING, BLOCKED, DANGER, SUCCESS, INVENTORY_FULL, MISSING_MATERIALS, PAUSED,
-                    FIGHT, FLEE, HURT, RECOVERING, DEAD, EFFECT, HUNGRY, STALLED -> true;
-            default -> false;
-        };
-    }
-
-    private static String stateTitle(MascotAdvisor.Mood mood) {
-        return switch (mood) {
-            case WORKING -> Lang.get("lune.mascot.banner.working");
-            case WAITING -> Lang.get("lune.mascot.banner.waiting");
-            case BLOCKED -> Lang.get("lune.mascot.banner.blocked");
-            case DANGER -> Lang.get("lune.mascot.banner.danger");
-            case SUCCESS -> Lang.get("lune.mascot.banner.success");
-            case INVENTORY_FULL -> Lang.get("lune.mascot.banner.inventory_full");
-            case MISSING_MATERIALS -> Lang.get("lune.mascot.banner.missing_materials");
-            case PAUSED -> Lang.get("lune.mascot.banner.paused");
-            case THINKING -> Lang.get("lune.mascot.banner.thinking");
-            case QUIET -> Lang.get("lune.mascot.banner.sleeping");
-            case RESTING -> Lang.get("lune.mascot.banner.resting");
-            case FIGHT -> Lang.get("lune.mascot.banner.fight");
-            case FLEE -> Lang.get("lune.mascot.banner.flee");
-            case HURT -> Lang.get("lune.mascot.banner.hurt");
-            case RECOVERING -> Lang.get("lune.mascot.banner.recovering");
-            case DEAD -> Lang.get("lune.mascot.banner.dead");
-            case EFFECT -> Lang.get("lune.mascot.banner.effect");
-            case HUNGRY -> Lang.get("lune.mascot.banner.hungry");
-            case STALLED -> Lang.get("lune.mascot.banner.stalled");
-            default -> Lang.get("lune.gui.about.lune");
-        };
-    }
-
-    private static int stateColour(MascotAdvisor.Mood mood) {
-        return switch (mood) {
-            case WAITING -> WAITING_ACCENT;
-            case BLOCKED -> BLOCKED_ACCENT;
-            case DANGER, FIGHT, FLEE, HURT, DEAD -> DANGER_ACCENT;
-            case RECOVERING, EFFECT, HUNGRY, STALLED -> MISSING_ACCENT;
-            case SUCCESS -> SUCCESS_ACCENT;
-            case INVENTORY_FULL -> INVENTORY_ACCENT;
-            case MISSING_MATERIALS -> MISSING_ACCENT;
-            case PAUSED -> PAUSED_ACCENT;
-            default -> LuneScreen.ACCENT;
-        };
-    }
-
     private void drawPromptButtons(GuiGraphicsExtractor extractor, Font font, int mouseX, int mouseY,
                                    int x, int width, int y) {
         int gap = 4;
@@ -470,11 +413,11 @@ public final class MascotWidget extends AbstractWidget {
             extractor.fill(x, rowY, x + width, rowY + rowHeight,
                     hover ? BUTTON_HOVER : BUTTON);
             extractor.textRenderer().accept(x + 6, rowY + 4,
-                    Component.literal(fit(font, choice.label(), width - 12))
+                    Component.literal(MascotSpeech.fit(font, choice.label(), width - 12))
                             .withColor(choice == MascotAdvisor.Dismissal.NEVER_TYPE
                                     ? 0xFFFF7777 : LuneScreen.TEXT));
             extractor.textRenderer().accept(x + 6, rowY + 16,
-                    Component.literal(fit(font, choice.description(), width - 12))
+                    Component.literal(MascotSpeech.fit(font, choice.description(), width - 12))
                             .withColor(choice == MascotAdvisor.Dismissal.NEVER_TYPE
                                     ? 0xFFCC7777 : LuneScreen.TEXT_DIM));
             rowY += rowHeight + 1;
@@ -489,10 +432,10 @@ public final class MascotWidget extends AbstractWidget {
                                     int y, String before, String after) {
         extractor.fill(x, y, x + width, y + 25, PROGRESS_BG);
         extractor.textRenderer().accept(x + 4, y + 3,
-                Component.literal(fit(font, Lang.get("lune.mascot.preview_before", before), width - 8))
+                Component.literal(MascotSpeech.fit(font, Lang.get("lune.mascot.preview_before", before), width - 8))
                         .withColor(LuneScreen.TEXT_DIM));
         extractor.textRenderer().accept(x + 4, y + 14,
-                Component.literal(fit(font, Lang.get("lune.mascot.preview_after", after), width - 8))
+                Component.literal(MascotSpeech.fit(font, Lang.get("lune.mascot.preview_after", after), width - 8))
                         .withColor(PROGRESS_FILL));
     }
 
@@ -523,7 +466,7 @@ public final class MascotWidget extends AbstractWidget {
                 minusHover ? BUTTON_HOVER : BUTTON, "−");
         extractor.fill(valueX, amountY, valueX + valueWidth, amountY + 15, BUBBLE_BORDER);
         extractor.fill(valueX + 1, amountY + 1, valueX + valueWidth - 1, amountY + 14, PROGRESS_BG);
-        String amount = fit(font, advisor.chosenAmountLabel(), valueWidth - 6);
+        String amount = MascotSpeech.fit(font, advisor.chosenAmountLabel(), valueWidth - 6);
         extractor.textRenderer().accept(valueX + Math.max(3, (valueWidth - font.width(amount)) / 2),
                 amountY + 4, Component.literal(amount).withColor(PROGRESS_FILL));
         button(extractor, font, plusX, amountY, amountButtonWidth,
@@ -532,7 +475,7 @@ public final class MascotWidget extends AbstractWidget {
 
     private static void drawProgress(GuiGraphicsExtractor extractor, Font font, int x, int width,
                                      int y, TaskProgress progress) {
-        String label = fit(font, progress.label(), width);
+        String label = MascotSpeech.fit(font, progress.label(), width);
         extractor.textRenderer().accept(x, y, Component.literal(label).withColor(PROGRESS_FILL));
         int barY = y + 12;
         extractor.fill(x, barY, x + width, barY + 5, PROGRESS_BG);
@@ -545,7 +488,7 @@ public final class MascotWidget extends AbstractWidget {
     private static void button(GuiGraphicsExtractor extractor, Font font, int x, int y,
                                int width, int colour, String label) {
         extractor.fill(x, y, x + width, y + 15, colour);
-        String visible = fit(font, label, Math.max(1, width - 4));
+        String visible = MascotSpeech.fit(font, label, Math.max(1, width - 4));
         int textX = x + Math.max(2, (width - font.width(visible)) / 2);
         extractor.textRenderer().accept(textX, y + 4,
                 Component.literal(visible).withColor(LuneScreen.TEXT));
@@ -706,51 +649,6 @@ public final class MascotWidget extends AbstractWidget {
 
     private static boolean inside(double mouseX, double mouseY, int x, int y, int width, int height) {
         return mouseX >= x && mouseX < x + width && mouseY >= y && mouseY < y + height;
-    }
-
-    private static List<String> wrap(Font font, String value, int maxWidth, int maxLines) {
-        List<String> lines = new ArrayList<>();
-        String[] words = value == null ? new String[0] : value.trim().split("\\s+");
-        int index = 0;
-        while (index < words.length && lines.size() < maxLines) {
-            StringBuilder line = new StringBuilder();
-            while (index < words.length) {
-                String candidate = line.isEmpty() ? words[index] : line + " " + words[index];
-                if (!line.isEmpty() && font.width(candidate) > maxWidth) {
-                    break;
-                }
-                line.setLength(0);
-                line.append(candidate);
-                index++;
-                if (font.width(candidate) > maxWidth) {
-                    break;
-                }
-            }
-            if (!line.isEmpty()) {
-                lines.add(fit(font, line.toString(), maxWidth));
-            }
-        }
-        if (lines.isEmpty()) {
-            lines.add("");
-        }
-        if (index < words.length) {
-            int last = lines.size() - 1;
-            lines.set(last, fitWithEllipsis(font, lines.get(last), maxWidth));
-        }
-        return lines;
-    }
-
-    private static String fitWithEllipsis(Font font, String value, int maxWidth) {
-        String suffix = "…";
-        return font.plainSubstrByWidth(value,
-                Math.max(0, maxWidth - font.width(suffix)), false) + suffix;
-    }
-
-    private static String fit(Font font, String value, int maxWidth) {
-        if (font.width(value) <= maxWidth) {
-            return value;
-        }
-        return fitWithEllipsis(font, value, maxWidth);
     }
 
     @Override

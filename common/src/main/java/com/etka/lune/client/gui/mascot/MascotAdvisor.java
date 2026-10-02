@@ -8,7 +8,9 @@ import com.etka.lune.bot.catalog.ToolCatalog;
 import com.etka.lune.bot.knowledge.BiomeKnowledge;
 import com.etka.lune.bot.knowledge.Need;
 import com.etka.lune.bot.task.TaskRunner;
+import com.etka.lune.bot.util.Geysers;
 import com.etka.lune.bot.util.InventoryHelper;
+import com.etka.lune.bot.util.ServerAccess;
 import com.etka.lune.bot.util.WorldClock;
 import com.etka.lune.task.TaskGraph;
 import com.etka.lune.task.TaskWiring;
@@ -56,12 +58,17 @@ public final class MascotAdvisor {
     private static int MEMORY_GENERATION;
 
     /**
-     * Every face Lune has. One row of the soul atlas each, in the order {@link SoulAnimation}
-     * fixes.
+     * Every face Lune has. A row of the soul atlas each, or a few rows to pick from for the jobs
+     * watched longest - see {@link SoulAnimation#rows}.
      *
      * <p>{@link #QUIET} is Lune muted - the speech setting, or a dismissal she has taken to heart.
      * {@link #RESTING} is the bot actually asleep in a bed. They look alike on purpose and mean
      * entirely different things, so they are never merged.</p>
+     *
+     * <p>{@link #DIGGING} to {@link #COLLECTING} are jobs that all wore {@link #WORKING} until they
+     * had faces of their own; {@link #WORKING} is still what any other job wears. {@link #GEYSER}
+     * and {@link #GLIDING} are not jobs but things happening to her body, like {@link #SWIMMING}:
+     * they show whatever the job is.</p>
      */
     public enum Mood {
         IDLE,
@@ -95,7 +102,14 @@ public final class MascotAdvisor {
         DEAD,
         SUCCESS,
         INVENTORY_FULL,
-        MISSING_MATERIALS
+        MISSING_MATERIALS,
+        DIGGING,
+        FARMING,
+        CRAFTING,
+        SMELTING,
+        COLLECTING,
+        GEYSER,
+        GLIDING
     }
 
     public enum Surface {
@@ -105,8 +119,15 @@ public final class MascotAdvisor {
         CONFIG,
         /** The terms, the license and the credits. Nothing here is hers to advise on. */
         ABOUT,
+        /** The rules of the server she is on. She says where she stands, since she is the one bound. */
+        SERVER,
         /** A training puzzle is open. Lune watches and offers, but never answers. */
-        TRAINING
+        TRAINING,
+        /**
+         * The card in the corner of the world while a run is on. Nothing there can be clicked, so
+         * she says how things stand and keeps her ideas for the panel.
+         */
+        WORLD
     }
 
     private Pending candidate;
@@ -134,6 +155,7 @@ public final class MascotAdvisor {
     private String liveDetail = "";
     private int blockedTicks;
     private int waitingTicks;
+    private final MoodHold hold = new MoodHold();
     /** What Lune says while a puzzle is open; the Task tab owns the timing behind it. */
     private String trainingLine = "";
 
@@ -163,6 +185,14 @@ public final class MascotAdvisor {
         public String description() {
             return Lang.get(key() + ".desc");
         }
+    }
+
+    public MascotAdvisor() {
+        this(Surface.MAIN);
+    }
+
+    public MascotAdvisor(Surface surface) {
+        setSurface(surface);
     }
 
     /** Task ideas belong in Task; the other tabs use calm, contextual ambient dialogue. */
@@ -212,6 +242,16 @@ public final class MascotAdvisor {
             // A puzzle is a question the player is being asked, and every task suggestion Lune has
             // is an answer to it - "this task has no START, shall I add one?" is step one, solved
             // for them and dismissed in a click. She stays out of the graph until they leave.
+            prompting = false;
+            dismissalMenu = false;
+            stableTaskTicks = 0;
+            clearCandidate();
+            return;
+        }
+
+        if (surface == Surface.WORLD) {
+            // An idea in the corner of the world is a question with no button to answer it, and it
+            // would sit there over the game until it went stale. The panel is where she asks.
             prompting = false;
             dismissalMenu = false;
             stableTaskTicks = 0;
@@ -551,9 +591,13 @@ public final class MascotAdvisor {
         }
         Task current = engine.getCurrent();
         if (current == null) {
-            return surface == Surface.TASKS
-                    ? Lang.get("lune.mascot.nothing_running")
-                    : idleSpeech(surface);
+            return switch (surface) {
+                case TASKS -> Lang.get("lune.mascot.nothing_running");
+                // The card in the world is only up while a run is, so no task in hand there means
+                // the next one is being picked up, not that she has time for small talk.
+                case WORLD -> sentence(Lang.get("lune.gui.overlay.getting_ready"));
+                default -> idleSpeech(surface);
+            };
         }
         String status = current.status();
         return status == null || status.isBlank()
@@ -644,15 +688,13 @@ public final class MascotAdvisor {
         if (signal == StatusSignal.BLOCKED) {
             waitingTicks = 0;
             blockedTicks = Math.min(BLOCKED_CONFIRM_TICKS, blockedTicks + 1);
-            liveMood = blockedTicks >= BLOCKED_CONFIRM_TICKS ? Mood.BLOCKED
-                    : current == null ? Mood.IDLE : Mood.WORKING;
+            liveMood = blockedTicks >= BLOCKED_CONFIRM_TICKS ? Mood.BLOCKED : unconfirmed(current);
             return;
         }
         if (signal == StatusSignal.WAITING) {
             blockedTicks = 0;
             waitingTicks = Math.min(WAITING_CONFIRM_TICKS, waitingTicks + 1);
-            liveMood = waitingTicks >= WAITING_CONFIRM_TICKS ? Mood.WAITING
-                    : current == null ? Mood.IDLE : Mood.WORKING;
+            liveMood = waitingTicks >= WAITING_CONFIRM_TICKS ? Mood.WAITING : unconfirmed(current);
             return;
         }
         resetConfirmationTicks();
@@ -665,7 +707,7 @@ public final class MascotAdvisor {
 
         Mood body = bodyMood(player);
         if (body != null) {
-            liveMood = body;
+            liveMood = hold.next(liveMood, body);
             if (status.isBlank()) {
                 liveDetail = "";
             }
@@ -678,17 +720,30 @@ public final class MascotAdvisor {
             return;
         }
 
-        liveMood = current == null ? Mood.IDLE : moodFor(signal);
-        if (liveMood == Mood.IDLE && current != null) {
-            liveMood = Mood.WORKING;
+        Mood work = current == null ? Mood.IDLE : moodFor(signal);
+        if (work == Mood.IDLE && current != null) {
+            work = Mood.WORKING;
         }
+        liveMood = hold.next(liveMood, work);
+    }
+
+    /**
+     * What she shows while a blockage or a wait is still being confirmed: the job face already on
+     * screen, so a moment's stall reads as the job going on rather than as a flash of working.
+     */
+    private Mood unconfirmed(Task current) {
+        if (current == null) {
+            return Mood.IDLE;
+        }
+        return ordinaryWork(liveMood) && liveMood != Mood.IDLE ? liveMood : Mood.WORKING;
     }
 
     /**
      * What the player's own body says, or {@code null} when it has nothing to add.
      *
      * <p>Read from the client rather than from a status line, because none of it belongs to a task:
-     * she is in a bed, or under water, or poisoned, whatever she happens to be doing.</p>
+     * she is in a bed, or thrown up by a geyser, or gliding, or under water, or poisoned, whatever
+     * she happens to be doing. A walk that crosses a geyser wears the geyser, not the walk.</p>
      */
     private static Mood bodyMood(LocalPlayer player) {
         if (player == null) {
@@ -696,6 +751,15 @@ public final class MascotAdvisor {
         }
         if (player.isSleeping()) {
             return Mood.RESTING;
+        }
+        // Before the water: a geyser's column starts in the water on the sulfur. The same bodies
+        // the game leaves alone - flying, or riding something - are left alone here.
+        if (!player.getAbilities().flying && !player.isPassenger()
+                && Geysers.lifting(player.level(), player)) {
+            return Mood.GEYSER;
+        }
+        if (player.isFallFlying()) {
+            return Mood.GLIDING;
         }
         if (player.isInWater()) {
             double rise = player.getDeltaMovement().y;
@@ -752,18 +816,25 @@ public final class MascotAdvisor {
             case SUCCESS -> Mood.SUCCESS;
             case INVENTORY_FULL -> Mood.INVENTORY_FULL;
             case MISSING_MATERIALS -> Mood.MISSING_MATERIALS;
+            case DIGGING -> Mood.DIGGING;
+            case FARMING -> Mood.FARMING;
+            case CRAFTING -> Mood.CRAFTING;
+            case SMELTING -> Mood.SMELTING;
+            case COLLECTING -> Mood.COLLECTING;
             case NONE -> Mood.IDLE;
         };
     }
 
     /**
      * Moods that are simply a job in hand. Lune keeps offering ideas through these; everything else
-     * means she has something more useful to say than an unrelated suggestion.
+     * means she has something more useful to say than an unrelated suggestion. They are also the
+     * faces {@link MoodHold} makes wait their turn.
      */
-    private static boolean ordinaryWork(Mood mood) {
+    static boolean ordinaryWork(Mood mood) {
         return switch (mood) {
             case IDLE, WORKING, TRAVEL, BRIDGING, PILLARING, STAIRS, FRAMING, SEARCH, LOADING,
-                    SWIMMING, DIVING, ASCENDING -> true;
+                    SWIMMING, DIVING, ASCENDING, DIGGING, FARMING, CRAFTING, SMELTING,
+                    COLLECTING, GEYSER, GLIDING -> true;
             default -> false;
         };
     }
@@ -843,6 +914,13 @@ public final class MascotAdvisor {
         String bank = switch (surface) {
             case CONFIG -> "lune.mascot.idle.config";
             case ABOUT -> "lune.mascot.idle.about";
+            case SERVER -> switch (ServerAccess.standing(Minecraft.getInstance())) {
+                case OWN_WORLD -> "lune.mascot.idle.server.own_world";
+                case NO_LUNE -> "lune.mascot.idle.server.no_lune";
+                case WAITING -> "lune.mascot.idle.server.waiting";
+                case ALLOWED -> "lune.mascot.idle.server.allowed";
+                case REFUSED -> "lune.mascot.idle.server.refused";
+            };
             case WAYPOINTS -> "lune.mascot.idle.waypoints";
             default -> timeOfDayBank(now.getHour());
         };
@@ -931,6 +1009,7 @@ public final class MascotAdvisor {
         liveMood = Mood.IDLE;
         liveDetail = "";
         resetConfirmationTicks();
+        hold.reset();
     }
 
     private void finishPrompt() {

@@ -11,6 +11,7 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -38,8 +39,16 @@ public final class PathExecutor {
     private static final double CENTRE_RADIUS_SQR = 0.25;
     /** Squared horizontal distance within which we count as standing in the node's column. */
     private static final double COLUMN_RADIUS_SQR = 0.36;
-    /** How steeply to aim below the horizon to get the eyes under and start the swim. */
-    private static final double DIVE_SLOPE = 0.75;
+    /** How far up a breath looks for the top of the water before settling for what it found. */
+    private static final int SURFACE_SEARCH = 16;
+    /**
+     * How far ahead a swimmer looks, at the least. Depth follows the pitch, and a waypoint a block
+     * away pitches the head straight down or straight up; looking further along the same line
+     * changes depth on a slope instead.
+     */
+    private static final double SWIM_LEAD = 3.0;
+    /** How far under a water waypoint a swimmer may pass and still have passed it. */
+    private static final int SWIM_UNDER_REACH = 4;
     /** A normal jump has less than this much fall distance; beyond it, a route has lost its floor. */
     private static final double UNEXPECTED_FALL_DISTANCE = 1.1;
     /** Give the player a short window to steer back onto the last safe route node. */
@@ -65,6 +74,8 @@ public final class PathExecutor {
     /** Whether this route may deliberately press jump for ascent, climbing, or a gap. */
     private final boolean allowJump;
     private final BlockBreaker breaker = new BlockBreaker();
+    /** Opens the doors on the route and shuts them behind; null for a route that has none to mind. */
+    private final DoorKeeper doors;
 
     private int index = 1; // path[0] is the block we're already standing on
     private int noProgressTicks;
@@ -78,6 +89,7 @@ public final class PathExecutor {
         this.tracksFluidChanges = false;
         this.allowSwim = true;
         this.allowJump = true;
+        this.doors = null;
     }
 
     public PathExecutor(List<BlockPos> path, BlockGetter level) {
@@ -90,10 +102,20 @@ public final class PathExecutor {
 
     public PathExecutor(List<BlockPos> path, BlockGetter level, boolean allowSwim,
                         boolean allowJump) {
+        this(path, level, allowSwim, allowJump, null);
+    }
+
+    /**
+     * @param doors the walk's own door keeper, which outlives this route: what it opened under
+     *              this one is still to be shut under the next
+     */
+    public PathExecutor(List<BlockPos> path, BlockGetter level, boolean allowSwim,
+                        boolean allowJump, DoorKeeper doors) {
         this.path = path;
         this.tracksFluidChanges = true;
         this.allowSwim = allowSwim;
         this.allowJump = allowJump;
+        this.doors = doors;
         for (BlockPos pos : path) {
             if (MovementHelper.isWater(level, pos)) {
                 initiallyWet.add(pos.asLong());
@@ -211,6 +233,24 @@ public final class PathExecutor {
         }
         fallRecoveryTicks = 0;
 
+        // A door on the next steps is opened, and one left behind is shut, before anything else is
+        // done about the way ahead. Doors are opened, never dug; the clearing below skips them.
+        if (doors != null) {
+            DoorKeeper.Work work = doors.tick(ctx, feet,
+                    path.subList(index, Math.min(path.size(), index + 3)));
+            if (work == DoorKeeper.Work.REFUSED) {
+                breaker.stop(ctx);
+                blockedBy.set(doors.status());
+                return Status.HAZARD;
+            }
+            if (work == DoorKeeper.Work.BUSY) {
+                // Standing at a door is not a stall. It ends on its own: a door gets three clicks.
+                breaker.stop(ctx);
+                noProgressTicks = 0;
+                return Status.RUNNING;
+            }
+        }
+
         // Clear the way before trying to walk into it. Mining counts as progress, so the stall
         // timer must not run while a block is being chewed through.
         //
@@ -304,6 +344,18 @@ public final class PathExecutor {
             return Status.STUCK;
         }
 
+        // In water the keys and the eyes are the swim's. SwimPolicy decides both, so that how the
+        // bot dives, swims, breathes and climbs out is one set of rules for every route.
+        SwimPolicy.Stroke stroke = player.isInWater()
+                ? SwimPolicy.decide(waterAround(ctx, player, feet, target, allowSprint,
+                        climbing, descending, onClimbable))
+                : null;
+        if (stroke != null) {
+            // The rule's own name, lower-cased with ROOT so a Turkish client does not write "dıve".
+            ctx.debug.movement(target, "route waypoint, "
+                    + stroke.kind().name().toLowerCase(Locale.ROOT).replace('_', ' '));
+        }
+
         // A node directly above or below gives no horizontal direction to walk in, which would
         // otherwise leave the bot pressing "forward" into whatever it happened to be facing. Steer
         // at the following node instead, so it walks off the ledge it needs to drop from.
@@ -312,11 +364,10 @@ public final class PathExecutor {
                 : centre;
 
         // Aim one node further than we're walking, at eye height, so turns lead the movement
-        // instead of chasing it. Swimming is the exception: a swimming player travels along their
-        // whole line of sight, pitch included, so in water the head has to aim at the node itself
-        // or the bot will only ever swim dead level.
-        Vec3 lookCentre = Vec3.atCenterOf(path.get(Math.min(index + 1, path.size() - 1)));
-        look(ctx, diveAim(player, lookCentre), player.isInWater());
+        // instead of chasing it. Swimming is the exception: a swimmer's depth follows the pitch, so
+        // in water the head aims where the stroke says the body should go.
+        BlockPos lookNode = path.get(Math.min(index + 1, path.size() - 1));
+        look(ctx, aimFor(ctx, stroke, lookNode), player.isInWater());
 
         steer(player, ctx, steerTarget);
 
@@ -358,27 +409,21 @@ public final class PathExecutor {
         // down one block at a time. Sneak is the opposite of what it looks like here - on a
         // climbable it is the "hold on where I am" key, so pressing it while trying to descend is
         // exactly how a bot ends up hanging in a jungle canopy until its stall counter runs out.
-        // Crossing water: sprint, and steer depth with the head.
         //
-        // Sprint is the swim. It turns paddling upright into the crawl stroke, and a swimming
-        // player travels along their whole line of sight - so the look above, which is already
-        // aiming at the next node, is what decides depth. That is how a person crosses a river:
-        // face where you are going and hold the run key.
-        //
-        // Space is the safety net rather than the technique. Holding it every tick is what pins
-        // the bot to the surface bobbing upright, and the swim stroke only ever starts while the
-        // eyes are under. So it takes over only when air actually runs low, or when the route
-        // wants to climb out onto a bank.
+        // In water, Shift and Space are the stroke's: Shift to get under and start swimming, or to
+        // sink to a lower waypoint, and Space to climb out or come up for air. Holding Space just
+        // because a surface waypoint is above the feet is what kept the bot bobbing upright across
+        // whole oceans; a swimmer is meant to be under that layer.
         if (player.isInLava() || (!player.isInWater() && MovementHelper.isWater(ctx.level, target))) {
             ctx.input.jump = true;
-        } else if (player.isInWater()) {
-            ctx.input.jump = WaterEscape.needsAir(player) || climbing;
+        } else if (stroke != null) {
+            ctx.input.jump = stroke.jump();
+            ctx.input.sneak = stroke.sneak();
         }
-        // Sprinting is what turns paddling into the crawl stroke, which is roughly twice as fast.
-        // Vanilla latches the swimming pose when sprint is held while the eyes are under - which
-        // happens on the way in - and then keeps it for as long as the body is in water, so the
-        // bot goes on swimming properly even once the jump above has brought it back to the
-        // surface. Refusing to sprint in water gave up that speed on every crossing.
+        // Sprinting is what turns paddling into the crawl stroke, which is twice as fast. Vanilla
+        // starts the swimming pose when sprint is held while the eyes are under - which is what
+        // the stroke's Shift is for - and keeps it for as long as the body is in water, so the run
+        // key is held for the whole crossing, the dive included.
         //
         // The rule itself lives in SprintPolicy; all that happens here is reading the situation off
         // the player and the route.
@@ -450,20 +495,6 @@ public final class PathExecutor {
     }
 
     /**
-     * Ducks the head under before a surface crossing, because that is the only way the swim starts.
-     *
-     * <p>Holding sprint at the surface does nothing at all. Vanilla only latches the swimming pose
-     * while the eyes are already submerged, and - worse - {@code LocalPlayer.aiStep} actively
-     * cancels sprint on any tick where the body is in water but the head is not. A route across a
-     * river is flat, so aiming at the next node keeps the head level, the eyes stay up, and the bot
-     * wades the whole way at about half speed. That is the "doesn't swim like a human" behaviour.
-     *
-     * <p>A person dips their head and pushes off. So while in water and not yet swimming, aim below
-     * the horizon to drive the body under; once vanilla reports the pose, the aim goes straight
-     * back to the node so the crossing stays on its line - a swimmer travels along their whole line
-     * of sight, so leaving the head down would bury the route in the riverbed.
-     */
-    /**
      * Whether the next node is across a gap rather than the next step along.
      *
      * <p>Adjacent nodes - including diagonals - are one block away in each axis. Anything further
@@ -481,14 +512,81 @@ public final class PathExecutor {
                         feet.offset(stepX * step, -1, stepZ * step)));
     }
 
-    private static Vec3 diveAim(LocalPlayer player, Vec3 lookCentre) {
-        if (!player.isInWater() || player.isSwimming() || player.isUnderWater()) {
-            return lookCentre;
+    /**
+     * Reads the water round the player for {@link SwimPolicy}, which decides what to do with it.
+     *
+     * <p>The stroke is the run key, so it is only on offer when this route may sprint and vanilla
+     * would let it: the same food, blindness and riding rules {@code LocalPlayer} checks before it
+     * starts a sprint. Diving for a stroke that will never start would only spend the air.</p>
+     */
+    private static SwimPolicy.Water waterAround(BotContext ctx, LocalPlayer player, BlockPos feet,
+                                                BlockPos target, boolean allowSprint,
+                                                boolean climbing, boolean descending,
+                                                boolean onClimbable) {
+        boolean canStroke = allowSprint
+                && !player.isPassenger()
+                && !player.isMobilityRestricted()
+                && (player.getFoodData().hasEnoughFood() || player.getAbilities().mayfly);
+        boolean deep = MovementHelper.isDeepWater(ctx.level, feet)
+                && MovementHelper.isDeepWater(ctx.level, target);
+        return new SwimPolicy.Water(player.isSwimming(), player.isUnderWater(),
+                player.getAirSupply(), player.getMaxAirSupply(), canStroke, deep,
+                MovementHelper.isWater(ctx.level, target), climbing, descending, onClimbable);
+    }
+
+    /**
+     * Where the eyes go this tick: the waypoint, or what the stroke wants instead.
+     *
+     * <p>The route across water runs along its top layer, because every node there is somewhere to
+     * breathe. The swimmer goes a block under it: that keeps the eyes under, and with them the
+     * stroke, where a swimmer at the very top keeps breaking out and dropping back to a paddle.
+     * Water too shallow for that is simply swum through at the node.</p>
+     */
+    private static Vec3 aimFor(BotContext ctx, SwimPolicy.Stroke stroke, BlockPos node) {
+        Vec3 centre = Vec3.atCenterOf(node);
+        if (stroke == null) {
+            return centre;
         }
-        double reach = Math.hypot(lookCentre.x - player.getX(), lookCentre.z - player.getZ());
-        return new Vec3(lookCentre.x,
-                player.getEyePosition().y - Math.max(1.0, reach * DIVE_SLOPE),
-                lookCentre.z);
+        return switch (stroke.aim()) {
+            case NODE -> centre;
+            case LANE -> ahead(ctx.player, centre, MovementHelper.isSurfaceWater(ctx.level, node)
+                    && MovementHelper.isWater(ctx.level, node.below())
+                    ? centre.y - 1.0
+                    : centre.y);
+            case SURFACE -> new Vec3(centre.x,
+                    surfaceAbove(ctx.level, ctx.player.blockPosition()) + 0.5, centre.z);
+        };
+    }
+
+    /**
+     * A point at height {@code y} on the way to {@code toward}, at least {@link #SWIM_LEAD} blocks
+     * off. Aiming at the next waypoint itself, a block away, turned every dive into a plunge two
+     * blocks past the lane, and every climb back into a stall with the head pointing at the sky.
+     */
+    private static Vec3 ahead(LocalPlayer player, Vec3 toward, double y) {
+        double dx = toward.x - player.getX();
+        double dz = toward.z - player.getZ();
+        double reach = Math.hypot(dx, dz);
+        if (reach < 1.0E-3) {
+            return new Vec3(toward.x, y, toward.z);
+        }
+        double scale = Math.max(1.0, SWIM_LEAD / reach);
+        return new Vec3(player.getX() + dx * scale, y, player.getZ() + dz * scale);
+    }
+
+    /**
+     * The first block above {@code pos} that is not water: the air a breath is taken in.
+     *
+     * <p>Bounded, so a flooded cave with no top answers somewhere above the head rather than
+     * scanning to the build limit. There is no breath to be had in one, and {@link WaterEscape}
+     * is what goes looking for an air pocket when the bar gets that low.</p>
+     */
+    private static int surfaceAbove(BlockGetter level, BlockPos pos) {
+        BlockPos.MutableBlockPos cursor = pos.mutable();
+        for (int step = 0; step < SURFACE_SEARCH && MovementHelper.isWater(level, cursor); step++) {
+            cursor.move(0, 1, 0);
+        }
+        return cursor.getY();
     }
 
     private void look(BotContext ctx, Vec3 lookCentre, boolean includePitch) {
@@ -525,38 +623,9 @@ public final class PathExecutor {
             return body;
         }
 
-        // Headroom to jump. Only needed when the step actually goes up.
-        if (target.getY() > feet.getY() && !MovementHelper.isPassable(ctx.level, feet.above(2))) {
-            return feet.above(2);
-        }
-
-        // Diagonal moves also need the two corner columns clear, otherwise the player clips a leaf.
-        int dx = Mth.clamp(target.getX() - feet.getX(), -1, 1);
-        int dz = Mth.clamp(target.getZ() - feet.getZ(), -1, 1);
-        if (dx != 0 && dz != 0) {
-            BlockPos sideX = feet.offset(dx, 0, 0);
-            BlockPos sideZ = feet.offset(0, 0, dz);
-            if (!MovementHelper.isPassable(ctx.level, sideX)) {
-                return sideX;
-            }
-            if (!MovementHelper.isPassable(ctx.level, sideX.above())) {
-                return sideX.above();
-            }
-            if (!MovementHelper.isPassable(ctx.level, sideZ)) {
-                return sideZ;
-            }
-            if (!MovementHelper.isPassable(ctx.level, sideZ.above())) {
-                return sideZ.above();
-            }
-        }
-
-        if (!MovementHelper.isPassable(ctx.level, target)) {
-            return target;
-        }
-        if (!MovementHelper.isPassable(ctx.level, target.above())) {
-            return target.above();
-        }
-        return null;
+        // Headroom for a step up, the corners of a diagonal, then the body space ahead.
+        List<BlockPos> inTheWay = MovementHelper.stepClearance(ctx.level, feet, target);
+        return inTheWay.isEmpty() ? null : inTheWay.get(0);
     }
 
     /**
@@ -598,10 +667,15 @@ public final class PathExecutor {
 
     private static boolean hasReached(BotContext ctx, LocalPlayer player, BlockPos pos) {
         // Height must match exactly on land. In water the player bobs, so allow one block of
-        // vertical slop as long as the path node and the player are both in water.
+        // vertical slop as long as the path node and the player are both in water - and more
+        // below it, because a swimmer is meant to be under the surface layer the route runs
+        // along, and a dive carries it deeper than that. Passing under a waypoint is passing it.
+        // Counting only one block made the bot stop under a node two blocks up and back-pedal
+        // to it, with the head tipped at the sky.
         boolean inWater = player.isInWater() && MovementHelper.isWater(ctx.level, pos);
         int y = MovementHelper.feetPosition(player).getY();
-        boolean yOk = y == pos.getY() || (inWater && Math.abs(y - pos.getY()) <= 1);
+        boolean yOk = y == pos.getY() || (inWater && Math.abs(y - pos.getY()) <= 1)
+                || (inWater && swimmingUnder(ctx.level, pos, y));
         if (!yOk) {
             return false;
         }
@@ -613,6 +687,26 @@ public final class PathExecutor {
         double dx = player.getX() - (pos.getX() + 0.5);
         double dz = player.getZ() - (pos.getZ() + 0.5);
         return dx * dx + dz * dz < CENTRE_RADIUS_SQR;
+    }
+
+    /**
+     * Whether feet at {@code feetY} are in the same body of water as {@code pos}, a few blocks
+     * straight under it: water all the way up, so it is the swim's own column and not a cave
+     * beneath a pond.
+     */
+    private static boolean swimmingUnder(BlockGetter level, BlockPos pos, int feetY) {
+        int depth = pos.getY() - feetY;
+        if (depth < 2 || depth > SWIM_UNDER_REACH) {
+            return false;
+        }
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos(pos.getX(), feetY, pos.getZ());
+        for (int y = feetY; y < pos.getY(); y++) {
+            cursor.setY(y);
+            if (!MovementHelper.isWater(level, cursor)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Releases any half-finished break. Must be called when the path is abandoned. */

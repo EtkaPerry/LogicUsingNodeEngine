@@ -31,6 +31,19 @@ public final class TaskGraph {
      * it is your task then, and your name for it is the right one to show.</p>
      */
     public String seededId;
+    /**
+     * Whether this task runs beside the player instead of in their place.
+     *
+     * <p>Nothing about how the task is wired changes: power flows exactly as it would, and a card
+     * only runs while it is powered. What changes is who holds the keys. The player plays, and Lune
+     * takes the controls only while a powered card has something to do - a block it can see, a
+     * danger its guard has noticed - and hands them back when it is done.</p>
+     *
+     * <p>A property of the task rather than a setting, because it is a statement about the job:
+     * "mine ore while I explore" is a different job from "go and mine ore", built from the same
+     * cards. False on every task saved before it existed, which is what Gson leaves it as.</p>
+     */
+    public boolean beside;
     public List<TaskNode> nodes = new ArrayList<>();
     /** Optional monitor node id active for every step in the task. */
     public String onWhile;

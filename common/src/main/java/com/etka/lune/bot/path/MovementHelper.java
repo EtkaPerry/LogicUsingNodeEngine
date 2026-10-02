@@ -12,7 +12,10 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * The world-reading predicates the pathfinder is built from: can the player occupy this block, can
@@ -226,7 +229,7 @@ public final class MovementHelper {
             return false;
         }
         if (isPassable(level, feet) && isPassable(level, feet.above())) {
-            if (isSolidFloor(level, feet.below())) {
+            if (isSolidFloor(level, feet.below()) && !standsHigherThanABlock(level, feet.below())) {
                 return true;
             }
             // Only the top water layer is a safe travel surface. Treating every water block with
@@ -236,6 +239,19 @@ public final class MovementHelper {
             return allowSwim && isSurfaceWater(level, feet);
         }
         return false;
+    }
+
+    /**
+     * Whether a block's collision rises above the block itself: a fence, a wall, a shut gate. Each
+     * stands half a block higher than the block it is in, so whatever stands on one has its feet
+     * half a block into the block above - which a route of whole blocks cannot describe, and which
+     * no step and no jump reaches from the ground beside it. Read as a floor, every fence was a
+     * step up, and the cheapest way into a pen was a hop over the fence that no jump clears,
+     * rather than the gate.
+     */
+    public static boolean standsHigherThanABlock(BlockGetter level, BlockPos pos) {
+        VoxelShape shape = level.getBlockState(pos).getCollisionShape(level, pos);
+        return !shape.isEmpty() && shape.max(Direction.Axis.Y) > 1.0 + 1.0E-6;
     }
 
     /**
@@ -287,13 +303,74 @@ public final class MovementHelper {
      * {@code supporting} and {@code onGround} exclude the honest case of standing on a tall but
      * walkable block - farmland and dirt paths are under the step height yet reach far enough up
      * that the feet position and the supporting position are the same block.
+     * <p>
+     * A doorway is never in the way of the body. A door's slab is at the edge of its block, so
+     * standing in a doorway is standing beside the door, not inside it - and counting it as
+     * inside had the route break the door out of the way, the first time it ever stood in one.
      */
     public static BlockPos blockedBodyPos(BlockGetter level, BlockPos feet, BlockPos supporting,
                                           boolean onGround) {
-        if (!isPassable(level, feet) && !(onGround && feet.equals(supporting))) {
+        if (!isPassable(level, feet) && !(onGround && feet.equals(supporting))
+                && !Doorways.isDoorway(level, feet)) {
             return feet;
         }
-        return isPassable(level, feet.above()) ? null : feet.above();
+        BlockPos head = feet.above();
+        return isPassable(level, head) || Doorways.isDoorway(level, head) ? null : head;
+    }
+
+    /**
+     * Every block in the way of one step, in the order {@link PathExecutor} clears them; empty when
+     * the step is open.
+     *
+     * <p>Headroom to jump comes first, and only for a step that goes up. Then the two corner columns
+     * of a diagonal, which the player otherwise clips - a leaf, usually. Then the body space at the
+     * far end, feet before head. A route can be read with this as well as walked: which block a
+     * planned dig would meet first is the same question the executor asks of the step in front of
+     * it, and the two must not give different answers.</p>
+     *
+     * <p>A doorway is never on the list. It is opened ({@link DoorKeeper}), not dug.</p>
+     */
+    public static List<BlockPos> stepClearance(BlockGetter level, BlockPos from, BlockPos to) {
+        List<BlockPos> inTheWay = new ArrayList<>(2);
+        if (to.getY() > from.getY()) {
+            addUnlessPassable(level, from.above(2), inTheWay);
+        }
+        int dx = Integer.signum(to.getX() - from.getX());
+        int dz = Integer.signum(to.getZ() - from.getZ());
+        if (dx != 0 && dz != 0) {
+            BlockPos sideX = from.offset(dx, 0, 0);
+            BlockPos sideZ = from.offset(0, 0, dz);
+            addUnlessPassable(level, sideX, inTheWay);
+            addUnlessPassable(level, sideX.above(), inTheWay);
+            addUnlessPassable(level, sideZ, inTheWay);
+            addUnlessPassable(level, sideZ.above(), inTheWay);
+        }
+        addUnlessPassable(level, to, inTheWay);
+        addUnlessPassable(level, to.above(), inTheWay);
+        return inTheWay;
+    }
+
+    private static void addUnlessPassable(BlockGetter level, BlockPos pos, List<BlockPos> into) {
+        if (!isPassable(level, pos) && !Doorways.isDoorway(level, pos)) {
+            into.add(pos);
+        }
+    }
+
+    /**
+     * The first block a route would have to dig that {@code canDig} refuses, or null when it
+     * refuses none. Read step by step in the order the route would be dug, as
+     * {@link #stepClearance} gives it, so the answer is the block the bot would actually stop at.
+     */
+    public static BlockPos firstUndiggable(BlockGetter level, List<BlockPos> route,
+                                           Predicate<BlockState> canDig) {
+        for (int step = 1; step < route.size(); step++) {
+            for (BlockPos pos : stepClearance(level, route.get(step - 1), route.get(step))) {
+                if (!canDig.test(level.getBlockState(pos))) {
+                    return pos;
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -341,6 +418,20 @@ public final class MovementHelper {
         return isWater(level, pos)
                 && !isWater(level, pos.above())
                 && isPassable(level, pos.above());
+    }
+
+    /**
+     * Water deep enough to swim in rather than wade: part of a column at least two blocks deep.
+     *
+     * <p>The line between the two movements is whether the eyes can go under, because that is the
+     * only place vanilla starts the stroke. One block of water over a floor never covers a
+     * standing player's eyes, so it is walked on its bottom at a paddle's pace whatever keys are
+     * held. The search prices the two apart on this test and {@link SwimPolicy} decides to dive on
+     * it, so the route and the stroke cannot disagree about which water is which.</p>
+     */
+    public static boolean isDeepWater(BlockGetter level, BlockPos pos) {
+        return isWater(level, pos)
+                && (isWater(level, pos.above()) || isWater(level, pos.below()));
     }
 
     /** Lava, including lava held by a modded or waterlog-style block state. */

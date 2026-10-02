@@ -27,6 +27,17 @@ import java.util.Set;
  * back. It finds the portal the way a player does, by seeing one, so a frame behind a hill is not
  * found until the bot has walked round the hill.</p>
  *
+ * <h2>Turning round, not walking round</h2>
+ *
+ * <p>A portal the bot has its back to is turned toward, as a player turns round: the
+ * {@link SightSearch} under the card knows where every lit portal in its radius is, and one with a
+ * clear line to it, outside the view cone, gets the head brought round until it is seen. One
+ * hidden behind something is not walked toward. The End's searches do that, because a player in a
+ * portal room knows where its frames are; nothing tells a player what is behind a hill, and a card
+ * whose radius the player sets, up to 128 blocks, would walk to every lit portal inside it - on a
+ * server, other players' bases, found through the ground. Seeing what cannot be seen is the
+ * omniscient cheat's to grant, and the card still honours that cheat.</p>
+ *
  * <h2>Standing in it, not walking through it</h2>
  *
  * <p>A portal only takes a player who stays inside it for a few seconds. Walking at it with the
@@ -51,6 +62,8 @@ public final class UsePortalTask implements Task {
     private final ResourceKey<Level> destination;
     private final BlockPos anchor;
     private final int searchRadius;
+    /** Built with nowhere to stand: it looks and it turns, and it never walks to see. */
+    private final SightSearch sight;
     private final StatusText status = new StatusText();
 
     private ResourceKey<Level> origin;
@@ -70,6 +83,7 @@ public final class UsePortalTask implements Task {
         this.destination = destination;
         this.anchor = anchor;
         this.searchRadius = Math.max(1, searchRadius);
+        this.sight = new SightSearch(Set.of(Blocks.NETHER_PORTAL), state -> true, this.searchRadius);
     }
 
     /** The card: whichever portal is in sight, to wherever it goes. */
@@ -109,23 +123,25 @@ public final class UsePortalTask implements Task {
         }
 
         if (portal == null || !ctx.level.getBlockState(portal).is(Blocks.NETHER_PORTAL)) {
-            portal = anchor != null && ctx.level.getBlockState(anchor).is(Blocks.NETHER_PORTAL)
-                    ? anchor : findPortal(ctx, ctx.player.blockPosition(), searchRadius);
-            if (portal == null) {
-                status.set("lune.status.use_portal.none_in_sight");
-                return TaskStatus.FAILED;
+            if (portal != null) {
+                // Gone out under the bot, as a ghast's fireball can do. The walk and the step were
+                // both for that one, and nothing may be held down while the head turns.
+                portal = null;
+                stopApproach(ctx);
+                ctx.input.reset();
             }
-            portal = footOf(ctx, portal);
+            BlockPos found = choose(ctx);
+            if (found == null) {
+                return lookBehind(ctx);
+            }
+            portal = footOf(ctx, found);
             front = frontOf(ctx, portal, ctx.player.blockPosition());
         }
 
         BlockPos feet = ctx.player.blockPosition();
         if (ctx.level.getBlockState(feet).is(Blocks.NETHER_PORTAL)) {
             // Inside. Every key up, and wait for the game to carry the bot across.
-            if (approach != null) {
-                approach.stop(ctx);
-                approach = null;
-            }
+            stopApproach(ctx);
             ctx.input.reset();
             if (++insideTicks > INSIDE_PATIENCE) {
                 // Standing in a portal that is not going anywhere - a server that forbids the
@@ -149,8 +165,7 @@ public final class UsePortalTask implements Task {
                 status.set("lune.status.use_portal.walking");
                 return TaskStatus.RUNNING;
             }
-            approach.stop(ctx);
-            approach = null;
+            stopApproach(ctx);
             if (walk == TaskStatus.FAILED) {
                 status.set("lune.status.use_portal.could_not_reach");
                 return TaskStatus.FAILED;
@@ -165,6 +180,35 @@ public final class UsePortalTask implements Task {
         ctx.input.forward = true;
         status.set("lune.status.use_portal.stepping_in");
         return TaskStatus.RUNNING;
+    }
+
+    /**
+     * The portal to use: the caller's own while it stands, and otherwise the nearest one in sight.
+     * Omniscient mining takes the nearest at all, as it always has here. Which cheat lets a job act
+     * on what it cannot see is that job's to say, so the cheat is read here rather than inside
+     * {@link SightSearch}, whose other callers honour none.
+     */
+    private BlockPos choose(BotContext ctx) {
+        if (anchor != null && ctx.level.getBlockState(anchor).is(Blocks.NETHER_PORTAL)) {
+            return anchor;
+        }
+        return ctx.omniscientMining()
+                ? findPortal(ctx, ctx.player.blockPosition(), searchRadius)
+                : sight.seen(ctx);
+    }
+
+    /**
+     * Nothing lit in sight. One the bot merely has its back to - a clear line to it, outside the
+     * view cone - gets the head turned toward it, and is taken the moment it swings into view.
+     * Anything else is not in sight, and the card says so.
+     */
+    private TaskStatus lookBehind(BotContext ctx) {
+        if (sight.turnToward(ctx)) {
+            status.set(sight.statusLine());
+            return TaskStatus.RUNNING;
+        }
+        status.set("lune.status.use_portal.none_in_sight");
+        return TaskStatus.FAILED;
     }
 
     /**
@@ -198,19 +242,27 @@ public final class UsePortalTask implements Task {
         return foot.immutable();
     }
 
-    /** The nearest lit portal the bot can actually see; never one behind a wall. */
+    /**
+     * The nearest lit portal the bot can see from where it stands, the way it faces now, and never
+     * one behind a wall - or, under Omniscient mining, the nearest at all. One look and no turning:
+     * the speedrun's own checks use it, and the card only when the cheat spares it looking.
+     */
     public static BlockPos findPortal(BotContext ctx, BlockPos centre, int radius) {
         return BlockScanner.findNearest(ctx.level, centre, Set.of(Blocks.NETHER_PORTAL), radius,
                 ctx.level.getMinY(), ctx.level.getMaxY(), Set.of(),
                 (pos, state) -> ctx.omniscientMining() || Vision.isVisible(ctx, pos));
     }
 
-    @Override
-    public void onStop(BotContext ctx) {
+    private void stopApproach(BotContext ctx) {
         if (approach != null) {
             approach.stop(ctx);
             approach = null;
         }
+    }
+
+    @Override
+    public void onStop(BotContext ctx) {
+        stopApproach(ctx);
         ctx.input.reset();
     }
 }

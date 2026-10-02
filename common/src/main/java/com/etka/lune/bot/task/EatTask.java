@@ -6,6 +6,7 @@ import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
+import com.etka.lune.bot.input.HeldKeys;
 import com.etka.lune.bot.util.InventoryHelper;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.InteractionHand;
@@ -200,8 +201,11 @@ public final class EatTask implements Task {
         if (!holdingUse) {
             holdingUse = true;
         }
-        // Set every tick: the key is a shared global that anything else may have cleared.
-        ctx.mc.options.keyUse.setDown(true);
+        // Asked for every tick, because the key is a shared global that anything else may have
+        // let go of - but pressed only when it is up, through HeldKeys. Under Toggle Use a press
+        // flips the key, and pressing it every tick turned it off every other tick, so a meal
+        // started again from nothing for as long as the job lasted.
+        HeldKeys.set(ctx.mc.options.keyUse, true);
     }
 
     private void releaseUse(BotContext ctx) {
@@ -209,7 +213,8 @@ public final class EatTask implements Task {
             return;
         }
         holdingUse = false;
-        ctx.mc.options.keyUse.setDown(false);
+        // Not setDown(false), which a toggled key ignores: that left use on after the meal.
+        HeldKeys.set(ctx.mc.options.keyUse, false);
         if (ctx.player.isUsingItem()) {
             ctx.gameMode.releaseUsingItem(ctx.player);
         }

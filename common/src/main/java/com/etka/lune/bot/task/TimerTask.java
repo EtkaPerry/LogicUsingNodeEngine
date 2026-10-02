@@ -21,6 +21,12 @@ public final class TimerTask implements Task {
         this.seconds = Math.max(0, seconds);
     }
 
+    /** Never touches the controls, so beside the player it never takes them. */
+    @Override
+    public boolean holdsControls() {
+        return false;
+    }
+
     @Override
     public String name() {
         return Lang.get("lune.gui.tasks.timer");

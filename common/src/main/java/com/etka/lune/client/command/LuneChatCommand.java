@@ -2,6 +2,7 @@ package com.etka.lune.client.command;
 
 import com.etka.lune.bot.util.Cheats;
 import com.etka.lune.bot.util.OmniscientAccess;
+import com.etka.lune.bot.util.ServerAccess;
 import com.etka.lune.util.Lang;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -89,7 +90,8 @@ public final class LuneChatCommand {
                     mode.about()));
         }
         if (!allowed) {
-            reply.success(source, line(Lang.get("lune.cheat.locked")));
+            reply.success(source, line(Lang.get(ServerAccess.serverClosesCheats()
+                    ? "lune.cheat.server_locked" : "lune.cheat.locked")));
         }
         return Command.SINGLE_SUCCESS;
     }
@@ -103,7 +105,8 @@ public final class LuneChatCommand {
     private static <S> int set(S source, Reply<S> reply, Cheats.Mode mode, boolean on) {
         if (!Cheats.set(mode, on, allowed())) {
             // Only ever reached for "on": switching a cheat off is allowed to anybody, anywhere.
-            reply.failure(source, line(Lang.get("lune.cheat.denied", mode.label())));
+            reply.failure(source, line(Lang.get(ServerAccess.serverClosesCheats()
+                    ? "lune.cheat.server_denied" : "lune.cheat.denied", mode.label())));
             return 0;
         }
         reply.success(source, line(on

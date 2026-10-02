@@ -105,6 +105,30 @@ public final class Goals {
         }
     }
 
+    /**
+     * Get down to {@code maxY} or below, within {@code radius} columns of a spot - for digging down
+     * to something known to be underneath without knowing how deep it is.
+     */
+    public record Below(int x, int z, int radius, int maxY) implements Goal {
+        @Override
+        public boolean isReached(BlockPos pos) {
+            return pos.getY() <= maxY
+                    && Math.abs(pos.getX() - x) <= radius && Math.abs(pos.getZ() - z) <= radius;
+        }
+
+        @Override
+        public double heuristic(BlockPos pos) {
+            int dx = Math.max(0, Math.abs(pos.getX() - x) - radius);
+            int dz = Math.max(0, Math.abs(pos.getZ() - z) - radius);
+            return octile(dx, dz) + Math.max(0, pos.getY() - maxY);
+        }
+
+        @Override
+        public String describe() {
+            return Lang.get("lune.goal.below", maxY, x, z);
+        }
+    }
+
     /** Reach a Y level - used by stripmine to descend to the ore band first. */
     public record YLevel(int y) implements Goal {
         @Override

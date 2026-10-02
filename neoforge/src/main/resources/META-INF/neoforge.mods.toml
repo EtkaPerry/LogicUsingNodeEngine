@@ -9,17 +9,23 @@ displayName = "${mod_name}"
 authors = "${mod_author}"
 credits = "${credits}"
 description = '''${description}'''
+# One square picture for every version. 26.1.2 shows logoFile on the mod's page; 26.2 shows it as
+# the page's banner, lists iconFile beside the name, and warns in development when only logoFile is
+# set. iconBlur scales the icon smoothly, since it is not pixel art.
+logoFile = "assets/${mod_id}/icon.png"
+iconFile = "assets/${mod_id}/icon.png"
+iconBlur = true
 
 [[dependencies.${mod_id}]]
 modId = "neoforge"
 type = "required"
 versionRange = "[${neoforge_version},)"
 ordering = "NONE"
-side = "CLIENT"
+side = "BOTH"
 
 [[dependencies.${mod_id}]]
 modId = "minecraft"
 type = "required"
 versionRange = "${minecraft_version_range}"
 ordering = "NONE"
-side = "CLIENT"
+side = "BOTH"

@@ -61,7 +61,7 @@ public final class CompassFindTask implements Task {
     private Phase phase = Phase.START;
     private int waited;
     private Discovery known;
-    private GotoTask walk;
+    private FarWalkTask walk;
 
     public CompassFindTask(CompassHook hook, String targetId, String then, int tolerance, boolean fresh) {
         this.hook = hook;
@@ -215,8 +215,9 @@ public final class CompassFindTask implements Task {
             status.set("lune.status.compass.remembered", targetName(), known.x(), known.z());
             return TaskStatus.SUCCESS;
         }
-        // A compass answers with a column, so the goal is one: arrive at any height there.
-        walk = new GotoTask(new Goals.NearXZ(known.x(), known.z(), tolerance), true, false);
+        // A compass answers with a column, so the goal is one: arrive at any height there. The walk
+        // is as long as Find Stronghold's, and digs its way out of a pit the same way.
+        walk = new FarWalkTask(new Goals.NearXZ(known.x(), known.z(), tolerance), true);
         walk.start(ctx);
         phase = Phase.WALKING;
         status.set("lune.status.find_map.heading_for", targetName());

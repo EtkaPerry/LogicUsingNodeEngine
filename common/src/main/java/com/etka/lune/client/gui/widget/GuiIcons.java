@@ -11,7 +11,9 @@ public final class GuiIcons {
         RENAME,
         VIEW,
         STOP,
-        ADD
+        ADD,
+        /** A task that runs beside the player: two figures, the player and a smaller Lune. */
+        BESIDE
     }
 
     private GuiIcons() {}
@@ -25,7 +27,20 @@ public final class GuiIcons {
             case VIEW -> view(extractor, x, y, colour);
             case STOP -> stop(extractor, x, y, colour);
             case ADD -> add(extractor, x, y, colour);
+            case BESIDE -> beside(extractor, x, y, colour);
         }
+    }
+
+    private static void beside(GuiGraphicsExtractor extractor, int x, int y, int colour) {
+        // Two figures shoulder to shoulder, the second a head shorter. Heads are two pixels square
+        // and stand clear of the shoulders, which is what keeps them reading as people rather than
+        // as a pair of crosses at Lune's small UI scale.
+        fill(extractor, x + 1, y + 1, x + 2, y + 2, colour);
+        fill(extractor, x, y + 4, x + 3, y + 4, colour);
+        fill(extractor, x + 1, y + 5, x + 2, y + 8, colour);
+        fill(extractor, x + 6, y + 3, x + 7, y + 4, colour);
+        fill(extractor, x + 5, y + 6, x + 8, y + 6, colour);
+        fill(extractor, x + 6, y + 7, x + 7, y + 8, colour);
     }
 
     private static void play(GuiGraphicsExtractor extractor, int x, int y, int colour) {

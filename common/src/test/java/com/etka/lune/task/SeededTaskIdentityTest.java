@@ -37,9 +37,10 @@ class SeededTaskIdentityTest {
     void everySeededJobCarriesAnIdAndTheyAreAllDifferent() {
         List<TaskGraph> tasks = DefaultTasks.create();
         List<String> ids = tasks.stream().map(task -> task.seededId).toList();
-        assertEquals(List.of("chop_wood", "stone_tools", "go_fishing", "dig_tunnel", "lumber_camp",
+        assertEquals(List.of("chop_wood", "stone_tools", "go_fishing", "mine_beside", "lumber_camp",
                 "stone_quarry", "homestead_day", "smeltery", "night_watch", "stuff_back",
-                "lit_portal", "ender_dragon", "netherite", "find_village", "cherry_timber"), ids);
+                "lit_portal", "ender_dragon", "netherite_trip", "find_village", "cherry_timber"),
+                ids);
     }
 
     @Test
@@ -77,6 +78,57 @@ class SeededTaskIdentityTest {
             assertFalse(TaskStore.alreadyPresent(saved, fresh),
                     fresh.name + " would be withheld from a player who still has the old ladder");
         }
+    }
+
+    /**
+     * Job 13 as it first shipped walked home to within two blocks of the portal, which let it stop
+     * where the frame hid the portal. The mended job has a new name and a new id, because a restore
+     * matches on either: a player who still has the old copy keeps it in their language, notes and
+     * all, and a restore brings the new one in beside it.
+     */
+    @Test
+    void theFirstJobThirteenKeepsItsWordsAndDoesNotHideTheMendedOne() {
+        TaskGraph old = new TaskGraph("13. Netherite from the Nether");
+        TaskStore.adoptSeededId(old);
+        assertEquals("netherite", old.seededId);
+        for (TaskGraph fresh : DefaultTasks.create()) {
+            assertFalse(TaskStore.alreadyPresent(List.of(old), fresh),
+                    fresh.name + " would be withheld from a player who still has the first job 13");
+        }
+
+        Lang.select("tr_tr");
+        assertEquals("13. Nether'dan Netherit", old.displayName());
+        // The notes it shipped with in 0.7.2, not the mended job's: a copy on disk carries these
+        // under the old id, and these are the lines that draw them.
+        for (String note : List.of("intro", "crossing", "debris", "home", "furnace", "smelting",
+                "upgrade", "finish", "guard")) {
+            assertTrue(Lang.has("lune.task.note.netherite." + note),
+                    "the first job 13 lost the line for its " + note + " note");
+        }
+    }
+
+    /**
+     * Job 4 gave its place to the job that runs beside the player. A player who still has the
+     * tunnel keeps it in their language, notes and all, and a restore brings the new job 4 in
+     * beside it rather than deciding it is already there.
+     */
+    @Test
+    void theTunnelJobKeepsItsWordsAndDoesNotHideTheNewJobFour() {
+        TaskGraph old = new TaskGraph("4. Dig a Tunnel");
+        TaskStore.adoptSeededId(old);
+        assertEquals("dig_tunnel", old.seededId);
+        for (TaskGraph fresh : DefaultTasks.create()) {
+            assertFalse(TaskStore.alreadyPresent(List.of(old), fresh),
+                    fresh.name + " would be withheld from a player who still has the tunnel");
+        }
+
+        Lang.select("tr_tr");
+        assertEquals("4. Tünel Kaz", old.displayName());
+        for (String note : List.of("intro", "pickaxe", "dig", "guard")) {
+            assertTrue(Lang.has("lune.task.note.dig_tunnel." + note),
+                    "the tunnel job lost the line for its " + note + " note");
+        }
+        assertTrue(Lang.has("lune.task.group.tunnel"), "the tunnel job lost its frame's title");
     }
 
     @Test

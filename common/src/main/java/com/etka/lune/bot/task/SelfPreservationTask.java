@@ -674,8 +674,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         }
         if (confirmingSafe) {
             stopRecovery(ctx);
-            if (threat == Threat.FALL
-                    && (bucketPlaced || boatPlacements > 0 || boatBoarded || cushionPos != null)) {
+            if (recoveringClutch()) {
                 return recoverClutch(ctx);
             }
             status.set("lune.status.self_preservation.confirming_danger_gone");
@@ -691,6 +690,28 @@ public final class SelfPreservationTask implements WhileMonitor {
             case HEALTH -> recoverHealth(ctx);
             case NONE -> TaskStatus.SUCCESS;
         };
+    }
+
+    /**
+     * Beside the player, the keys are this card's only while it is answering something.
+     *
+     * <p>The confirmation window after a danger has passed is spent watching: nothing is pressed
+     * while it runs, so the player has their keys back the moment it is over and has them taken
+     * again if the zombie comes round the wall after all. Picking a clutch's water, boat or cushion
+     * back up is still work, and keeps them.</p>
+     */
+    @Override
+    public boolean holdsControls() {
+        if (threat == Threat.NONE) {
+            return false;
+        }
+        return !confirmingSafe || recoveringClutch();
+    }
+
+    /** A fall is over but what broke it - water, a boat, a cushion - is still to be picked back up. */
+    private boolean recoveringClutch() {
+        return threat == Threat.FALL
+                && (bucketPlaced || boatPlacements > 0 || boatBoarded || cushionPos != null);
     }
 
     /**

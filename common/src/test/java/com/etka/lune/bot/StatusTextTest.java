@@ -61,6 +61,32 @@ class StatusTextTest {
     }
 
     @Test
+    void theWalkToTheWorkOutranksTheWork() {
+        // Quick Stone says "mining out the shaft - %s" and hands in whatever its miner is doing.
+        StatusText walking = new StatusText().set("lune.status.goto.blocks_left", 12);
+        StatusText digging = new StatusText().set("lune.status.quick_stone.mining_out_shaft",
+                walking);
+        assertEquals(StatusSignal.TRAVEL, digging.signal(),
+                "she is walking to the stone, not breaking it yet");
+
+        StatusText looking = new StatusText().set("lune.status.mine.looking_visible_blocks");
+        digging.set("lune.status.quick_stone.mining_out_shaft", looking);
+        assertEquals(StatusSignal.DIGGING, digging.signal(),
+                "a step with no face of its own leaves the job's face on");
+
+        for (StatusSignal job : new StatusSignal[] {StatusSignal.DIGGING, StatusSignal.FARMING,
+                StatusSignal.CRAFTING, StatusSignal.SMELTING, StatusSignal.COLLECTING}) {
+            assertTrue(job.priority() > StatusSignal.NONE.priority(), job + " never shows");
+            assertTrue(job.priority() < StatusSignal.TRAVEL.priority(),
+                    job + " would hide the walk to it");
+        }
+        assertTrue(StatusSignal.COLLECTING.priority() > StatusSignal.DIGGING.priority(),
+                "the drops a dig leaves are collected inside the dig");
+        assertTrue(StatusSignal.DIGGING.priority() > StatusSignal.CRAFTING.priority(),
+                "gathering for a tool happens inside crafting it");
+    }
+
+    @Test
     void adoptingAnotherStatusTakesItsMeaningToo() {
         StatusText child = new StatusText().set("lune.status.route.escaping_to_air");
         StatusText adopted = new StatusText().set(child);

@@ -3,6 +3,8 @@ package com.etka.lune.bot;
 import com.etka.lune.Constants;
 import com.etka.lune.bot.input.BotClientInput;
 import com.etka.lune.bot.input.BotInput;
+import com.etka.lune.bot.input.Handover;
+import com.etka.lune.bot.input.HeldKeys;
 import com.etka.lune.bot.input.LookController;
 import com.etka.lune.bot.learning.AutomaticApproval;
 import com.etka.lune.bot.learning.LearningContext;
@@ -11,6 +13,7 @@ import com.etka.lune.bot.learning.LearningStore;
 import com.etka.lune.bot.learning.TaskLearning;
 import com.etka.lune.bot.util.Leash;
 import com.etka.lune.bot.util.Cheats;
+import com.etka.lune.bot.util.ServerAccess;
 import com.etka.lune.config.BotConfig;
 import com.etka.lune.config.Terms;
 import com.etka.lune.util.Alerts;
@@ -23,6 +26,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.network.chat.Component;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -55,6 +59,13 @@ public final class BotEngine {
     private LearningContext currentLearningContext = LearningContext.of("idle", "idle", "unknown");
 
     private Task current;
+    /**
+     * Whether the task in hand runs beside the player rather than in their place - see
+     * {@link com.etka.lune.task.TaskGraph#beside}. Asked of the task once, as it starts.
+     */
+    private boolean besideRun;
+    /** Who holds the controls while {@link #besideRun}, and the passing of them between the two. */
+    private final Handover handover = new Handover();
     /**
      * Where the bot stood when the current run began, for anything that measures "home". Taken once
      * per run and not per task, so a task of twenty nodes cannot inch away from it.
@@ -90,9 +101,30 @@ public final class BotEngine {
 
     // --- state ---------------------------------------------------------------
 
-    /** True when the bot should be driving the player instead of the keyboard. */
+    /**
+     * True when the bot should be driving the player instead of the keyboard.
+     *
+     * <p>For a run in the player's place, that is the whole run. For one beside the player, only
+     * while one of its cards has something to do: the rest of the time the keys are the player's,
+     * and {@link BotClientInput} passes them straight through.</p>
+     */
     public boolean isDriving() {
+        return isRunning() && (!besideRun || handover.lune());
+    }
+
+    /** A task in hand and not paused, whoever holds the keys. */
+    public boolean isRunning() {
         return current != null && !paused;
+    }
+
+    /** Whether the task in hand runs beside the player. */
+    public boolean isBesideRun() {
+        return current != null && besideRun;
+    }
+
+    /** Beside the player, running, and only watching: the player has the controls. */
+    public boolean isWatchingBeside() {
+        return isBesideRun() && !paused && !handover.lune();
     }
 
     public boolean isPaused() {
@@ -187,20 +219,29 @@ public final class BotEngine {
     // --- queue control -------------------------------------------------------
 
     public void enqueue(Task task) {
-        if (refusedByTerms()) {
+        if (refusedByTerms() || refusedByServer()) {
             return;
         }
         queue.addLast(task);
     }
 
-    /** Cancels whatever is running and starts this task immediately, keeping the rest of the queue. */
-    public void runNow(Task task) {
-        if (refusedByTerms()) {
-            return;
+    /**
+     * Cancels whatever is running and starts this task immediately, keeping the rest of the queue.
+     *
+     * @return false when the task was refused - the terms, or this server's rules - in which case
+     *         {@link #getLastMessage()} says why and nothing that was running has been touched
+     */
+    public boolean runNow(Task task) {
+        if (refusedByTerms() || refusedByServer()) {
+            return false;
         }
+        // Pressing Run while paused is a resume, so it leaves the pause the way the pause button
+        // does: a resume event in the journal, written before the cancel so it names the task that
+        // was paused; a sampler that forgets what the player walked meanwhile; the use key let go.
+        setPaused(false);
         cancelCurrent();
         queue.addFirst(task);
-        paused = false;
+        return true;
     }
 
     /**
@@ -223,6 +264,46 @@ public final class BotEngine {
     }
 
     /**
+     * Refuses to take work the server this player is on does not allow, and says why.
+     *
+     * <p>The same kind of lock as the terms, and here for the same reason: every way a task can be
+     * started ends in this class, so a server's rule kept here is kept for the Run button, the
+     * task keys and anything written later alike. It decides nothing about the world. What the
+     * server allows is {@link ServerAccess}'s to know; this only keeps the queue shut.</p>
+     */
+    private boolean refusedByServer() {
+        String refusal = ServerAccess.refusal(Minecraft.getInstance());
+        if (refusal == null) {
+            return false;
+        }
+        lastMessage = refusal;
+        lastMessageSignal = StatusSignal.BLOCKED;
+        Constants.LOG.info("Refused to start a task: this server's rules do not allow it ({})",
+                ServerAccess.state());
+        return true;
+    }
+
+    /**
+     * Ends the run when the server stops allowing it: the rules were changed, the player was
+     * deopped, or the answer from a server that runs Lune has not arrived.
+     *
+     * <p>Stopping is not a behaviour; it is every behaviour ceasing, as the stop key does. The
+     * player is told once, in chat, where they will see it after the fact.</p>
+     */
+    private void stopIfServerForbids(Minecraft mc) {
+        if (isIdle() || ServerAccess.mayRun(mc)) {
+            return;
+        }
+        String refusal = ServerAccess.refusal(mc);
+        stopAll(Lang.get("lune.engine.stopped_by_server"));
+        lastMessage = Lang.get("lune.server.stopped", refusal);
+        lastMessageSignal = StatusSignal.BLOCKED;
+        if (mc.player != null) {
+            mc.player.sendSystemMessage(Component.literal(Lang.get("lune.gui.bot_context.lune", lastMessage)));
+        }
+    }
+
+    /**
      * Pauses or resumes, and says so in the journal.
      * <p>
      * A run where the player took over mid-way is otherwise unreadable afterwards: the trace shows
@@ -238,7 +319,11 @@ public final class BotEngine {
         // Whatever happened while the player had the controls is theirs, not the run's. Without
         // this the first tick back credits the bot with every block the player walked meanwhile.
         sampler.reset();
-        if (!paused) {
+        if (paused) {
+            // Beside the player this is the override: whatever card had the keys, they are the
+            // player's again at once, with the hotbar slot they had.
+            handBack();
+        } else {
             releaseUseKey();
         }
         Minecraft mc = Minecraft.getInstance();
@@ -269,6 +354,7 @@ public final class BotEngine {
         cancelCurrent();
         queue.clear();
         paused = false;
+        besideRun = false;
         input.reset();
         releaseUseKey();
         lastMessage = Lang.get("lune.engine.stopped");
@@ -282,12 +368,14 @@ public final class BotEngine {
     /**
      * The use key is a global that {@link com.etka.lune.bot.task.EatTask} holds down, so the stop
      * button has to clear it too. A task that is cancelled between holding and releasing would
-     * otherwise leave the player right-clicking the world for as long as the client runs.
+     * otherwise leave the player right-clicking the world for as long as the client runs - which is
+     * also what a plain {@code setDown(false)} did under Toggle Use, so it goes through
+     * {@link HeldKeys}.
      */
     private void releaseUseKey() {
         Minecraft mc = Minecraft.getInstance();
         if (mc != null && mc.options != null) {
-            mc.options.keyUse.setDown(false);
+            HeldKeys.set(mc.options.keyUse, false);
         }
     }
 
@@ -304,6 +392,39 @@ public final class BotEngine {
         }
         current = null;
         input.reset();
+        handBack();
+    }
+
+    /**
+     * Gives the player back the controls, if Lune has them: their hotbar slot, the use key let go,
+     * and nothing she was in the middle of carried into the player's own tick.
+     */
+    private void handBack() {
+        if (handover.lune()) {
+            returnControls();
+        }
+    }
+
+    private void returnControls() {
+        handover.giveBack(Minecraft.getInstance());
+        input.reset();
+        look.relax();
+        sampler.reset();
+    }
+
+    /**
+     * The start of a client tick, before the game reads the keys and the mouse.
+     *
+     * <p>The bot takes its own tick at the end of the client tick, which is too late to stop a
+     * click: the game has acted on it by then. So in a run beside the player, while Lune has the
+     * controls, this puts back whatever the player did with them since her last tick - the camera,
+     * the hotbar slot, attack and use - before the game sees it. See {@link Handover}.</p>
+     */
+    public void beforeTick(Minecraft mc) {
+        if (!besideRun || paused || current == null || !handover.lune()) {
+            return;
+        }
+        handover.reassert(mc);
     }
 
     /**
@@ -351,14 +472,20 @@ public final class BotEngine {
         // Before tickInternal, which returns immediately without a player: leaving a world is
         // exactly when the cheat switches have to be dropped, and there is no player by then.
         Cheats.enforce(mc);
+        // Before tickInternal for the same reason: the server's answer belongs to the connection,
+        // not the player, and a run it no longer allows ends before it takes another step.
+        ServerAccess.tick(mc);
+        stopIfServerForbids(mc);
         // Before tickInternal, which returns immediately without a player - and a test run that has
         // to build its own world has no player yet.
         AutoRun.beforeWorld(mc);
         tickInternal(mc);
         // Runs after the task tick so the overlay shows the keys actually pressed this tick.
         updateDebug();
+        // Handed the flag itself rather than left to follow the pause events, so the journal's
+        // billing cannot drift from the engine whichever way a pause ends.
         if (runTrace != null && mc.player != null && mc.level != null) {
-            runTrace.tick(botTicks, debug, mc.player, mc.level);
+            runTrace.tick(botTicks, debug, mc.player, mc.level, paused, isWatchingBeside());
         }
     }
 
@@ -378,6 +505,9 @@ public final class BotEngine {
             closeRunTrace(Lang.get("lune.engine.left_world"));
             learning.flush();
             Leash.get().release();
+            // There is no player left to hand anything back to.
+            handover.forget();
+            besideRun = false;
             AutoRun.runInterrupted(mc, Lang.get("lune.engine.world_went_away"));
             return;
         }
@@ -460,6 +590,13 @@ public final class BotEngine {
             // and the 28 rows shipped under the old English wording became unreachable.
             currentLearningContext = LearningContext.mission(current,
                     mc.level.dimension().identifier().toString());
+            // Asked once, as the task starts, and told before it starts so every card it builds
+            // knows from its first tick. A task run from inside another is told by that one.
+            besideRun = current.wantsBesidePlayer();
+            handover.forget();
+            if (besideRun) {
+                current.runBesidePlayer();
+            }
             current.start(startCtx);
             debug.taskName = current.name();
             debug.taskId = current.learningId();
@@ -471,8 +608,18 @@ public final class BotEngine {
 
         BotContext ctx = buildContext(mc, player, mc.level);
         debug.taskTicks++;
-        debug.workedTicks++;
-        sampler.tick(player, input, debug, runAnchor);
+        // Beside the player, a tick the player had the keys for is the player's: the distance they
+        // walked and the damage they took are not the bot's work, as with a pause.
+        if (!besideRun || handover.lune()) {
+            debug.workedTicks++;
+            sampler.tick(player, input, debug, runAnchor);
+        } else {
+            sampler.reset();
+        }
+        // What the player had in hand before the card ticked, for the moment it takes the keys:
+        // the card may already have chosen a tool, and the player's own choice is what goes back.
+        int slotBefore = player.getInventory().getSelectedSlot();
+        boolean useBefore = mc.options.keyUse.isDown();
 
         TaskStatus status;
         try {
@@ -560,6 +707,41 @@ public final class BotEngine {
                 finishLearningSession(Lang.get("lune.engine.task_failed"), false);
                 closeRunTrace(Lang.get("lune.engine.task_failed"));
                 finishRunStatistics();
+            }
+        }
+        passTheControls(mc, slotBefore, useBefore);
+    }
+
+    /**
+     * Beside the player, decides after the tick who holds the keys until the next one: Lune from
+     * the tick a card has something to do, the player once nothing has for a few ticks. A task
+     * that has just ended hands them back at once.
+     */
+    private void passTheControls(Minecraft mc, int slotBefore, boolean useBefore) {
+        if (!besideRun) {
+            return;
+        }
+        if (current == null) {
+            handBack();
+            besideRun = false;
+            return;
+        }
+        switch (handover.update(current.holdsControls())) {
+            case TAKE -> {
+                handover.takeOver(mc, slotBefore, useBefore);
+                // The player's own walking up to here is theirs; her ticks are counted from now.
+                sampler.reset();
+                debug.decide("beside: a card has work in view; taking the controls");
+            }
+            case GIVE -> {
+                // The handover has already let go; what is left is giving the player their hand.
+                returnControls();
+                debug.decide("beside: nothing left to do; handing the controls back");
+            }
+            case NONE -> {
+                if (handover.lune()) {
+                    handover.remember(mc);
+                }
             }
         }
     }

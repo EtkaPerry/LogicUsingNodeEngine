@@ -16,7 +16,6 @@ import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.components.MultiLineTextWidget;
 import net.minecraft.client.gui.components.StringWidget;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -240,8 +239,8 @@ public class TermsScreen extends ScaledScreen {
     }
 
     private Button tool(Component label, String tipKey, Button.OnPress onPress) {
-        Button button = Button.builder(label, onPress).size(STEP_WIDTH, TOOL_HEIGHT).build();
-        button.setTooltip(Tooltip.create(Accessibility.text(Lang.get(tipKey))));
+        Button button = ScaledTooltips.set(Button.builder(label, onPress).size(STEP_WIDTH, TOOL_HEIGHT)
+                .build(), Accessibility.text(Lang.get(tipKey)));
         addWidget(button);
         pinned.add(button);
         tools.add(button);
@@ -450,9 +449,8 @@ public class TermsScreen extends ScaledScreen {
 
     private void updateAcceptButton() {
         acceptButton.active = boxes.stream().allMatch(Checkbox::selected);
-        acceptButton.setTooltip(acceptButton.active ? null
-                : Tooltip.create(Accessibility.text(
-                        Lang.get("lune.gui.terms.tick_every_box_continue"))));
+        ScaledTooltips.set(acceptButton, acceptButton.active ? null
+                : Accessibility.text(Lang.get("lune.gui.terms.tick_every_box_continue")));
     }
 
     /**
@@ -469,7 +467,8 @@ public class TermsScreen extends ScaledScreen {
      */
     @Override
     public boolean isPauseScreen() {
-        return !BotEngine.get().isDriving();
+        // Running, not driving: beside the player the run is on even while the keys are theirs.
+        return !BotEngine.get().isRunning();
     }
 
     private void accept() {

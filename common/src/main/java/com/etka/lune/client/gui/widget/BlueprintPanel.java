@@ -56,7 +56,8 @@ import java.util.function.Consumer;
  *
  * <p>The canvas is deliberately only another view over {@link TaskNode}. Success and failure
  * wires write the model's existing {@code onSuccess}/{@code onFailure} fields, so the runner, old
- * JSON and the legacy list editor all continue to work exactly as before.</p>
+ * JSON and the legacy list editor all continue to work exactly as before. A card showing one Done
+ * pin is the same again: its cable writes both fields.</p>
  */
 public final class BlueprintPanel extends AbstractWidget {
 
@@ -67,6 +68,8 @@ public final class BlueprintPanel extends AbstractWidget {
     private static final int HEADER_H = 16;
     private static final int GRID = 20;
     private static final int PIN_RADIUS = 6;
+    /** From the end of an output pin's name to the pin, the same as from the In pin to "In". */
+    private static final int OUTPUT_LABEL_GAP = 8;
     private static final int STEP_X = 154;
     private static final int LAYOUT_COLUMNS = 6;
     private static final int LAYOUT_ROW_GAP = 118;
@@ -111,6 +114,8 @@ public final class BlueprintPanel extends AbstractWidget {
     private static final int WIRE_WHILE = 2;
     private static final int WIRE_DATA = 3;
     private static final int WIRE_SIGNAL = 4;
+    /** A joined card's Done pin, which writes Success and Fail together. */
+    private static final int WIRE_DONE = 5;
     private static final float MIN_ZOOM = 0.50f;
     private static final float MAX_ZOOM = 2.00f;
     private static final float ZOOM_STEP = 1.10f;
@@ -190,6 +195,7 @@ public final class BlueprintPanel extends AbstractWidget {
     private int pinSignal;
     private int pinObserve;
     private int pinData;
+    private int pinDone;
 
     // --- find ---------------------------------------------------------------
     /** The find bar, its answer, and which answer the view is currently sitting on. */
@@ -258,6 +264,18 @@ public final class BlueprintPanel extends AbstractWidget {
         previewSpark = trainingPreview == null ? power.wireProgress(from, kind, port, to) : trainingPreview.wireProgress(
                 from, kind, port, to, System.currentTimeMillis() - previewStarted);
         return trainingPreview == null ? power.isLiveWire(from, kind, port, to) : previewSpark >= 0;
+    }
+
+    /**
+     * A Done cable is both of the card's edges drawn as one, so a signal down either lights it.
+     * The runner still names the edge it took; only the canvas stops telling the two apart.
+     */
+    private boolean liveDoneWire(TaskNode from, TaskNode to) {
+        boolean success = liveWire(from, TaskPower.SUCCESS, 0, to);
+        double successSpark = previewSpark;
+        boolean failure = liveWire(from, TaskPower.FAILURE, 0, to);
+        previewSpark = Math.max(successSpark, previewSpark);
+        return success || failure;
     }
 
     public void setTask(TaskGraph task) {
@@ -552,6 +570,7 @@ public final class BlueprintPanel extends AbstractWidget {
         pinSignal = pins.signal();
         pinObserve = pins.observe();
         pinData = pins.data();
+        pinDone = pins.done();
         extractor.enableScissor(getX(), getY(), getX() + getWidth(), getY() + getHeight());
         // Keep the marquee behind the cards so selected-card borders and labels stay readable.
         if (selecting) {
@@ -611,14 +630,16 @@ public final class BlueprintPanel extends AbstractWidget {
             }
             TaskNode successTarget = task.nodeById(source.onSuccess);
             if (successTarget != null) {
+                boolean done = source.showsDone();
                 drawNodeWire(extractor, source, outputX(source), successY(source),
                         successTarget, inputX(successTarget),
                         targetInputY(successTarget, successTarget.isPulseNode()
-                                ? source.successInputPort : -1), pinSuccess,
-                        liveWire(source, TaskPower.SUCCESS, 0, successTarget),
+                                ? source.successInputPort : -1), done ? pinDone : pinSuccess,
+                        done ? liveDoneWire(source, successTarget)
+                                : liveWire(source, TaskPower.SUCCESS, 0, successTarget),
                         TaskCableAnchor.key("success", source.id, successTarget.id));
             }
-            TaskNode failureTarget = task.nodeById(source.onFailure);
+            TaskNode failureTarget = source.showsDone() ? null : task.nodeById(source.onFailure);
             if (failureTarget != null) {
                 drawNodeWire(extractor, source, outputX(source), failureY(source),
                         failureTarget, inputX(failureTarget),
@@ -1883,15 +1904,28 @@ public final class BlueprintPanel extends AbstractWidget {
         int footerY = y + height - 14 - (stats == null ? 0 : STATS_ROW_HEIGHT);
         text.accept(x + 8, footerY,
                 Component.literal(node.describeRepeat()).withColor(LuneScreen.TEXT_DIM));
-        text.accept(x + NODE_W - 46, y + 25, Component.literal(Lang.get("lune.gui.blueprint.success")).withColor(pinSuccess));
-        text.accept(x + NODE_W - 31, y + 40, Component.literal(Lang.get("lune.gui.blueprint.fail")).withColor(pinFailure));
+        boolean done = node.showsDone();
+        if (done) {
+            drawOutputLabel(extractor, node, Lang.get("lune.gui.blueprint.done"),
+                    successY(node), pinDone);
+        } else {
+            drawOutputLabel(extractor, node, Lang.get("lune.gui.blueprint.success"),
+                    successY(node), pinSuccess);
+            drawOutputLabel(extractor, node, Lang.get("lune.gui.blueprint.fail"),
+                    failureY(node), pinFailure);
+        }
         if (node.whileVisible) {
-            text.accept(x + NODE_W - 38, y + 55, Component.literal(Lang.get("lune.gui.blueprint.while")).withColor(pinWhile));
+            drawOutputLabel(extractor, node, Lang.get("lune.gui.blueprint.while"),
+                    whileY(node), pinWhile);
         }
 
         drawPin(extractor, inputX(node), inputY(node), pinExec);
-        drawPin(extractor, outputX(node), successY(node), pinSuccess);
-        drawPin(extractor, outputX(node), failureY(node), pinFailure);
+        if (done) {
+            drawPin(extractor, outputX(node), successY(node), pinDone);
+        } else {
+            drawPin(extractor, outputX(node), successY(node), pinSuccess);
+            drawPin(extractor, outputX(node), failureY(node), pinFailure);
+        }
         if (node.whileVisible) {
             drawPin(extractor, outputX(node), whileY(node), pinWhile);
         }
@@ -1917,6 +1951,19 @@ public final class BlueprintPanel extends AbstractWidget {
         if (contains(node, mouseX, mouseY) && !selectedNodes.contains(node)) {
             extractor.fill(x + 1, y + 1, x + NODE_W - 1, y + height - 1, 0x10FFFFFF);
         }
+    }
+
+    /**
+     * The name beside an output pin, ending as far from its pin as In starts from its own.
+     *
+     * <p>Measured rather than placed at a fixed offset. The offsets were chosen for the English
+     * words, and "Başarısız" and "Çalışırken" ran off the card and across their own pins.</p>
+     */
+    private void drawOutputLabel(GuiGraphicsExtractor extractor, TaskNode node, String label,
+                                 int pinY, int colour) {
+        extractor.textRenderer().accept(
+                outputX(node) - OUTPUT_LABEL_GAP - Minecraft.getInstance().font.width(label),
+                pinY - 4, Component.literal(label).withColor(colour));
     }
 
     /** Always and Pulse share a shape: a clock with a fan-out pin. Only the rate differs. */
@@ -2118,9 +2165,16 @@ public final class BlueprintPanel extends AbstractWidget {
                 : node.isSignalRelayNode()
                 ? Lang.get("lune.gui.blueprint.forward_pulse_arriving_any_input_through")
                 : logicDescription(node);
-        extractor.setComponentTooltipForNextFrame(Minecraft.getInstance().font,
-                List.of(Component.literal(Lang.get("lune.gui.param.logic")).withColor(LuneScreen.ACCENT),
-                        Component.literal(logic).withColor(LuneScreen.TEXT)),
+        List<Component> lines = new ArrayList<>(List.of(
+                Component.literal(Lang.get("lune.gui.param.logic")).withColor(LuneScreen.ACCENT),
+                Component.literal(logic).withColor(LuneScreen.TEXT)));
+        if (node.showsDone()) {
+            // The card still succeeds or fails exactly as the line above says; Done is only where
+            // it goes next, and a player reading "gives Success when..." deserves to know that.
+            lines.add(Component.literal(Lang.get("lune.gui.blueprint.done_logic"))
+                    .withColor(pinDone));
+        }
+        extractor.setComponentTooltipForNextFrame(Minecraft.getInstance().font, lines,
                 UiScale.toGamePixels(pointerX), UiScale.toGamePixels(pointerY));
     }
 
@@ -2389,8 +2443,16 @@ public final class BlueprintPanel extends AbstractWidget {
     private static final int CHIP_EDIT = 0xF0203A56;
     private static final int CONTEXT_ROW_H = 18;
     private static final int CONTEXT_MAIN_H = CONTEXT_ROW_H * 3;
+    /** The narrowest the two menus are drawn; a longer label in the player's language widens them. */
     private static final int CONTEXT_MAIN_W = 74;
     private static final int CONTEXT_SUB_W = 72;
+    /** Show's rows: the While pin, then whether Success and Fail are two pins or one Done pin. */
+    private static final int CONTEXT_SUB_WHILE = 0;
+    private static final int CONTEXT_SUB_OUTCOMES = 1;
+    private static final int CONTEXT_SUB_ROWS = 2;
+    /** Where a label starts, and the room kept after the longest for a tick or an arrow. */
+    private static final int CONTEXT_TEXT_X = 7;
+    private static final int CONTEXT_MARK_ROOM = 18;
     private static final int CONTEXT_GAP = 2;
     private static final int CONTEXT_BG = 0xF01A1A20;
     private static final int CONTEXT_HOVER = 0xF0C86400;
@@ -2431,6 +2493,13 @@ public final class BlueprintPanel extends AbstractWidget {
     private int contextMenuX;
     private int contextMenuY;
     private boolean contextSubmenuOpen;
+    /**
+     * How wide each menu was last drawn. Measured while drawing, because that is where there is a
+     * font to measure with; a click can only land on a menu that has been drawn, so it is always
+     * tested against the width the player saw.
+     */
+    private int contextMainW = CONTEXT_MAIN_W;
+    private int contextSubW = CONTEXT_SUB_W;
 
     private void refreshToolbarNodes(int canvasMouseX, int canvasMouseY) {
         if (task == null || wireSource != null || dragged != null || draggedCableKey != null || selecting) {
@@ -2709,7 +2778,7 @@ public final class BlueprintPanel extends AbstractWidget {
         contextNode = node;
         contextSubmenuOpen = false;
         contextMenuX = Math.clamp((int) Math.round(screenX), getX() + 2,
-                getX() + getWidth() - CONTEXT_MAIN_W - 2);
+                getX() + getWidth() - contextMainW - 2);
         contextMenuY = Math.clamp((int) Math.round(screenY), getY() + 2,
                 getY() + getHeight() - CONTEXT_MAIN_H - 2);
     }
@@ -2720,34 +2789,38 @@ public final class BlueprintPanel extends AbstractWidget {
     }
 
     private int contextSubmenuX() {
-        int right = contextMenuX + CONTEXT_MAIN_W + CONTEXT_GAP;
-        return right + CONTEXT_SUB_W <= getX() + getWidth() - 2
-                ? right : contextMenuX - CONTEXT_GAP - CONTEXT_SUB_W;
+        int right = contextMenuX + contextMainW + CONTEXT_GAP;
+        return right + contextSubW <= getX() + getWidth() - 2
+                ? right : contextMenuX - CONTEXT_GAP - contextSubW;
     }
 
     private boolean contextShowContains(double x, double y) {
-        return x >= contextMenuX && x < contextMenuX + CONTEXT_MAIN_W
+        return x >= contextMenuX && x < contextMenuX + contextMainW
                 && y >= contextMenuY && y < contextMenuY + CONTEXT_ROW_H;
     }
 
     private boolean contextBreakpointContains(double x, double y) {
-        return x >= contextMenuX && x < contextMenuX + CONTEXT_MAIN_W
+        return x >= contextMenuX && x < contextMenuX + contextMainW
                 && y >= contextMenuY + CONTEXT_ROW_H && y < contextMenuY + CONTEXT_ROW_H * 2;
     }
 
     private boolean contextDeleteContains(double x, double y) {
-        return x >= contextMenuX && x < contextMenuX + CONTEXT_MAIN_W
+        return x >= contextMenuX && x < contextMenuX + contextMainW
                 && y >= contextMenuY + CONTEXT_ROW_H * 2 && y < contextMenuY + CONTEXT_MAIN_H;
     }
 
-    private boolean contextSubmenuContains(double x, double y) {
+    /** Which of Show's rows a point is on, or -1 when it is on neither. */
+    private int contextSubmenuRow(double x, double y) {
         int left = contextSubmenuX();
-        return x >= left && x < left + CONTEXT_SUB_W
-                && y >= contextMenuY && y < contextMenuY + CONTEXT_ROW_H;
+        if (x < left || x >= left + contextSubW || y < contextMenuY
+                || y >= contextMenuY + CONTEXT_ROW_H * CONTEXT_SUB_ROWS) {
+            return -1;
+        }
+        return (int) ((y - contextMenuY) / CONTEXT_ROW_H);
     }
 
     private boolean supportsWhilePort(TaskNode node) {
-        return node != null && !node.isStartNode() && !node.isClockNode() && !node.isPulseNode();
+        return node != null && node.hasOutcomes();
     }
 
     private boolean handleContextMenuClick(double x, double y) {
@@ -2758,7 +2831,10 @@ public final class BlueprintPanel extends AbstractWidget {
             closeContextMenu();
             return true;
         }
-        if (contextSubmenuContains(x, y)) {
+        // Only a submenu on screen takes a click. Show has two rows now, and the second sits beside
+        // Breakpoint, where a click on the empty canvas next to the menu used to land on it unseen.
+        int submenuRow = contextSubmenuOpen ? contextSubmenuRow(x, y) : -1;
+        if (submenuRow == CONTEXT_SUB_WHILE) {
             if (supportsWhilePort(contextNode)) {
                 contextNode.whileVisible = !contextNode.whileVisible;
                 onChanged.run();
@@ -2766,6 +2842,11 @@ public final class BlueprintPanel extends AbstractWidget {
                         ? Lang.get("lune.gui.blueprint.while_output_shown") : Lang.get("lune.gui.blueprint.while_output_hidden"))
                         + nodeName(contextNode));
             }
+            closeContextMenu();
+            return true;
+        }
+        if (submenuRow == CONTEXT_SUB_OUTCOMES) {
+            toggleOutcomes(contextNode);
             closeContextMenu();
             return true;
         }
@@ -2798,54 +2879,117 @@ public final class BlueprintPanel extends AbstractWidget {
         return true;
     }
 
+    /**
+     * Show ▸ Separate outcomes: Success and Fail as two pins, or as one Done pin for a card that
+     * carries on the same way whichever way it ends. Ticked - two pins - is where every card
+     * starts; the rules about what joining may and may not do to the wires are in
+     * {@link TaskWiring#joinOutcomes}.
+     */
+    private void toggleOutcomes(TaskNode node) {
+        if (!node.hasOutcomes()) {
+            return;
+        }
+        if (node.showsDone()) {
+            TaskWiring.splitOutcomes(node);
+            onChanged.run();
+            onMessage.accept(Lang.get("lune.gui.blueprint.outcomes_split", nodeName(node)));
+            return;
+        }
+        switch (TaskWiring.joinOutcomes(task, node)) {
+            case JOINED -> {
+                onChanged.run();
+                onMessage.accept(Lang.get("lune.gui.blueprint.outcomes_joined", nodeName(node)));
+            }
+            case LEAD_APART -> onMessage.accept(
+                    Lang.get("lune.gui.blueprint.outcomes_lead_apart", nodeName(node)));
+            case NO_OUTCOMES -> {
+            }
+        }
+    }
+
     private void drawContextMenu(GuiGraphicsExtractor extractor, int mouseX, int mouseY) {
         if (task == null || contextNode == null || !task.nodes.contains(contextNode)) {
             closeContextMenu();
             return;
         }
+        String show = Lang.get("lune.gui.blueprint.show");
+        String breakpoint = Lang.get("lune.gui.blueprint.breakpoint");
+        String delete = Lang.get("lune.gui.tasks.delete_2");
+        String whileLabel = Lang.get("lune.gui.blueprint.while");
+        String outcomes = Lang.get("lune.gui.blueprint.separate_outcomes");
+        var font = Minecraft.getInstance().font;
+        contextMainW = Math.max(CONTEXT_MAIN_W, CONTEXT_TEXT_X + CONTEXT_MARK_ROOM
+                + Math.max(font.width(show), Math.max(font.width(breakpoint), font.width(delete))));
+        contextSubW = Math.max(CONTEXT_SUB_W, CONTEXT_TEXT_X + CONTEXT_MARK_ROOM
+                + Math.max(font.width(whileLabel), font.width(outcomes)));
+        // Measured just now, so keep the menu on the canvas at the width it has just become.
+        contextMenuX = Math.max(getX() + 2,
+                Math.min(contextMenuX, getX() + getWidth() - contextMainW - 2));
+
         boolean showHovered = contextShowContains(mouseX, mouseY);
         boolean breakHovered = contextBreakpointContains(mouseX, mouseY);
         boolean deleteHovered = contextDeleteContains(mouseX, mouseY);
-        boolean submenuHovered = contextSubmenuContains(mouseX, mouseY);
-        if (showHovered || submenuHovered) {
+        int submenuRow = contextSubmenuRow(mouseX, mouseY);
+        if (showHovered || submenuRow >= 0) {
             contextSubmenuOpen = true;
         } else if (!deleteHovered && !breakHovered) {
             contextSubmenuOpen = false;
         }
-        drawContextPanel(extractor, contextMenuX, contextMenuY, CONTEXT_MAIN_W, CONTEXT_MAIN_H);
-        drawContextRow(extractor, contextMenuX, contextMenuY, CONTEXT_MAIN_W, showHovered);
+        drawContextPanel(extractor, contextMenuX, contextMenuY, contextMainW, CONTEXT_MAIN_H);
+        drawContextRow(extractor, contextMenuX, contextMenuY, contextMainW, showHovered);
         drawContextRow(extractor, contextMenuX, contextMenuY + CONTEXT_ROW_H,
-                CONTEXT_MAIN_W, breakHovered);
+                contextMainW, breakHovered);
         drawContextRow(extractor, contextMenuX, contextMenuY + CONTEXT_ROW_H * 2,
-                CONTEXT_MAIN_W, deleteHovered);
+                contextMainW, deleteHovered);
         var text = extractor.textRenderer();
-        text.accept(contextMenuX + 7, contextMenuY + 5,
-                Component.literal(Lang.get("lune.gui.blueprint.show")).withColor(CONTEXT_TEXT));
-        text.accept(contextMenuX + CONTEXT_MAIN_W - 12, contextMenuY + 5,
+        text.accept(contextMenuX + CONTEXT_TEXT_X, contextMenuY + 5,
+                Component.literal(show).withColor(CONTEXT_TEXT));
+        text.accept(contextMenuX + contextMainW - 12, contextMenuY + 5,
                 Component.literal("> ").withColor(LuneScreen.TEXT_DIM));
-        text.accept(contextMenuX + 7, contextMenuY + CONTEXT_ROW_H + 5,
-                Component.literal(Lang.get("lune.gui.blueprint.breakpoint")).withColor(
+        text.accept(contextMenuX + CONTEXT_TEXT_X, contextMenuY + CONTEXT_ROW_H + 5,
+                Component.literal(breakpoint).withColor(
                         contextNode.isSourceNode() ? CONTEXT_DISABLED
                                 : contextNode.breakpoint ? BREAKPOINT : CONTEXT_TEXT));
         if (contextNode.breakpoint) {
-            text.accept(contextMenuX + CONTEXT_MAIN_W - 14, contextMenuY + CONTEXT_ROW_H + 5,
+            text.accept(contextMenuX + contextMainW - 14, contextMenuY + CONTEXT_ROW_H + 5,
                     Component.literal("✓").withColor(BREAKPOINT));
         }
-        text.accept(contextMenuX + 7, contextMenuY + CONTEXT_ROW_H * 2 + 5,
-                Component.literal(Lang.get("lune.gui.tasks.delete_2")).withColor(CONTEXT_DANGER));
+        text.accept(contextMenuX + CONTEXT_TEXT_X, contextMenuY + CONTEXT_ROW_H * 2 + 5,
+                Component.literal(delete).withColor(CONTEXT_DANGER));
 
         if (contextSubmenuOpen) {
             int x = contextSubmenuX();
-            drawContextPanel(extractor, x, contextMenuY, CONTEXT_SUB_W, CONTEXT_ROW_H);
-            drawContextRow(extractor, x, contextMenuY, CONTEXT_SUB_W, submenuHovered);
-            text.accept(x + 7, contextMenuY + 5,
-                    Component.literal(Lang.get("lune.gui.blueprint.while")).withColor(supportsWhilePort(contextNode)
-                            ? contextNode.whileVisible ? LuneScreen.ACCENT : CONTEXT_TEXT
-                            : CONTEXT_DISABLED));
-            if (contextNode.whileVisible && supportsWhilePort(contextNode)) {
-                text.accept(x + CONTEXT_SUB_W - 14, contextMenuY + 5,
-                        Component.literal("✓").withColor(LuneScreen.ACCENT));
-            }
+            boolean job = supportsWhilePort(contextNode);
+            drawContextPanel(extractor, x, contextMenuY, contextSubW,
+                    CONTEXT_ROW_H * CONTEXT_SUB_ROWS);
+            drawContextRow(extractor, x, contextMenuY, contextSubW,
+                    submenuRow == CONTEXT_SUB_WHILE);
+            drawContextRow(extractor, x, contextMenuY + CONTEXT_ROW_H, contextSubW,
+                    submenuRow == CONTEXT_SUB_OUTCOMES);
+            drawContextTick(extractor, x, contextMenuY, whileLabel, job,
+                    job && contextNode.whileVisible, submenuRow == CONTEXT_SUB_WHILE);
+            // Ticked means two pins, which is how every card starts; unticking asks for Done.
+            drawContextTick(extractor, x, contextMenuY + CONTEXT_ROW_H, outcomes, job,
+                    job && !contextNode.showsDone(), submenuRow == CONTEXT_SUB_OUTCOMES);
+        }
+    }
+
+    /**
+     * One of Show's rows: its label, greyed on a card it does not apply to, and a tick when on.
+     *
+     * <p>A ticked row is written in the accent, and so is the hover under it, so the row under the
+     * pointer is written in the menu's own light text instead. Separate outcomes starts ticked, so
+     * without that the row would be orange on orange nearly every time it was pointed at.</p>
+     */
+    private void drawContextTick(GuiGraphicsExtractor extractor, int x, int y, String label,
+                                 boolean enabled, boolean ticked, boolean hovered) {
+        var text = extractor.textRenderer();
+        int ink = !enabled ? CONTEXT_DISABLED
+                : hovered ? CONTEXT_TEXT
+                : ticked ? LuneScreen.ACCENT : CONTEXT_TEXT;
+        text.accept(x + CONTEXT_TEXT_X, y + 5, Component.literal(label).withColor(ink));
+        if (ticked) {
+            text.accept(x + contextSubW - 14, y + 5, Component.literal("✓").withColor(ink));
         }
     }
 
@@ -3203,13 +3347,14 @@ public final class BlueprintPanel extends AbstractWidget {
                 continue;
             }
             if (near(canvasPointerX, canvasPointerY, outputX(node), successY(node))) {
-                beginWire(node, WIRE_SUCCESS);
+                beginWire(node, node.showsDone() ? WIRE_DONE : WIRE_SUCCESS);
                 return;
             }
-                if (near(canvasPointerX, canvasPointerY, outputX(node), failureY(node))) {
-                    beginWire(node, WIRE_FAILURE);
-                    return;
-                }
+            if (!node.showsDone()
+                    && near(canvasPointerX, canvasPointerY, outputX(node), failureY(node))) {
+                beginWire(node, WIRE_FAILURE);
+                return;
+            }
             if (node.whileVisible
                     && near(canvasPointerX, canvasPointerY, outputX(node), whileY(node))) {
                 beginWire(node, WIRE_WHILE);
@@ -3384,6 +3529,7 @@ public final class BlueprintPanel extends AbstractWidget {
                     }
                 }
             }
+            // A Done cable is the Success cable, drawn once: finding it here finds both edges.
             TaskNode successTarget = task.nodeById(source.onSuccess);
             String successKey = successTarget == null ? null
                     : TaskCableAnchor.key("success", source.id, successTarget.id);
@@ -3393,7 +3539,7 @@ public final class BlueprintPanel extends AbstractWidget {
             if (hit != null) {
                 return hit;
             }
-            TaskNode failureTarget = task.nodeById(source.onFailure);
+            TaskNode failureTarget = source.showsDone() ? null : task.nodeById(source.onFailure);
             String failureKey = failureTarget == null ? null
                     : TaskCableAnchor.key("failure", source.id, failureTarget.id);
             hit = failureTarget == null ? null : cableHit(failureKey, outputX(source), failureY(source),
@@ -3647,13 +3793,21 @@ public final class BlueprintPanel extends AbstractWidget {
                     inputX(successTarget), targetInputY(successTarget,
                             successTarget.isPulseNode() ? source.successInputPort : -1), x, y,
                     anchorFor(successKey))) {
+                if (source.showsDone()) {
+                    // One cable on the canvas, two edges underneath: cutting it cuts both, or a
+                    // failure would still travel down a wire the player has just seen go.
+                    TaskWiring.cutDone(task, source);
+                    onChanged.run();
+                    onMessage.accept(Lang.get("lune.gui.blueprint.done_wire_cut"));
+                    return true;
+                }
                 source.onSuccess = null;
                 removeCableAnchor(successKey);
                 onChanged.run();
                 onMessage.accept(Lang.get("lune.gui.blueprint.success_wire_cut"));
                 return true;
             }
-            TaskNode failureTarget = task.nodeById(source.onFailure);
+            TaskNode failureTarget = source.showsDone() ? null : task.nodeById(source.onFailure);
             String failureKey = failureTarget == null ? null
                     : TaskCableAnchor.key("failure", source.id, failureTarget.id);
             if (failureTarget != null && nearWire(outputX(source), failureY(source),
@@ -4119,7 +4273,9 @@ public final class BlueprintPanel extends AbstractWidget {
                 return;
             }
             if (wireType == WIRE_WHILE && target != null && target.isPulseNode()) {
-                onMessage.accept(Lang.get("lune.gui.blueprint.use_success_or_fail_send_pulse_into_node"));
+                onMessage.accept(Lang.get(wireSource.showsDone()
+                        ? "lune.gui.blueprint.use_done_send_pulse_into_node"
+                        : "lune.gui.blueprint.use_success_or_fail_send_pulse_into_node"));
                 wireSource = null;
                 wireDataPort = null;
                 wireSignalPort = -1;
@@ -4133,6 +4289,21 @@ public final class BlueprintPanel extends AbstractWidget {
                 // the gesture; cutting is deliberately the explicit right-click action shown in
                 // the canvas hint, so a click or an imprecise release cannot destroy a wire.
                 onMessage.accept(Lang.get("lune.gui.blueprint.cable_drag_cancelled_release_input"));
+                wireSource = null;
+                wireDataPort = null;
+                wireSignalPort = -1;
+                dragged = null;
+                moved = false;
+                panning = false;
+                return;
+            }
+            if (wireType == WIRE_DONE) {
+                // Both edges at once, so the card carries on to this one whichever way it ends.
+                if (TaskWiring.wireDone(task, wireSource, target, targetPort)) {
+                    onChanged.run();
+                    onMessage.accept(Lang.get("lune.gui.blueprint.connected",
+                            Lang.get("lune.gui.blueprint.done"), nodeName(target)));
+                }
                 wireSource = null;
                 wireDataPort = null;
                 wireSignalPort = -1;
@@ -4624,7 +4795,7 @@ public final class BlueprintPanel extends AbstractWidget {
     }
 
     private int failureY(TaskNode node) {
-        return nodeY(node) + TaskCanvas.FAILURE_OFFSET_Y;
+        return TaskCanvas.failureY(node);
     }
 
     private int whileY(TaskNode node) {
@@ -4656,8 +4827,18 @@ public final class BlueprintPanel extends AbstractWidget {
     }
 
     private int dataStartY(TaskNode node) {
-        return DATA_START_Y - (supportsWhilePort(node) && !node.whileVisible
+        return DATA_START_Y - (supportsWhilePort(node) && !hasThirdOutputRow(node)
                 ? WHILE_ROW_HEIGHT : 0);
+    }
+
+    /**
+     * Whether a card's pins on the right fill three rows - Success, Fail and While - and so need
+     * the tall card. Done fills one row where Success and Fail filled two, so a joined card with
+     * While showing is as short as a split one without it. Shorter than that it cannot go: the
+     * repeat count sits under the In row on the left.
+     */
+    private boolean hasThirdOutputRow(TaskNode node) {
+        return supportsWhilePort(node) && node.whileVisible && !node.showsDone();
     }
 
     private int nodeHeight(TaskNode node) {
@@ -4671,8 +4852,7 @@ public final class BlueprintPanel extends AbstractWidget {
             return NODE_H;
         }
         int rows = Math.max(exposedInputs(node).size(), exposedOutputs(node).size());
-        int baseHeight = supportsWhilePort(node) && node.whileVisible
-                ? NODE_H : NODE_H_WITHOUT_WHILE;
+        int baseHeight = hasThirdOutputRow(node) ? NODE_H : NODE_H_WITHOUT_WHILE;
         int height = rows == 0
                 ? baseHeight : dataStartY(node) + rows * DATA_ROW_HEIGHT + DATA_FOOTER_GAP;
         // A card with numbers to show grows a row for them at its foot, under everything that is
@@ -4847,11 +5027,11 @@ public final class BlueprintPanel extends AbstractWidget {
             }
             TaskNode successTarget = task.nodeById(source.onSuccess);
             drawMinimapEdge(extractor, bounds, scale, outputX(source), successY(source),
-                    successTarget, pinSuccess,
+                    successTarget, source.showsDone() ? pinDone : pinSuccess,
                     successTarget != null && successTarget.isPulseNode() ? source.successInputPort : -1,
                     successTarget == null ? null
                             : anchorFor(TaskCableAnchor.key("success", source.id, successTarget.id)));
-            TaskNode failureTarget = task.nodeById(source.onFailure);
+            TaskNode failureTarget = source.showsDone() ? null : task.nodeById(source.onFailure);
             drawMinimapEdge(extractor, bounds, scale, outputX(source), failureY(source),
                     failureTarget, pinFailure,
                     failureTarget != null && failureTarget.isPulseNode() ? source.failureInputPort : -1,
@@ -5087,6 +5267,7 @@ public final class BlueprintPanel extends AbstractWidget {
     private int wireColour(int type) {
         return type == WIRE_DATA ? pinData
                 : type == WIRE_SIGNAL ? pinSignal
+                : type == WIRE_DONE ? pinDone
                 : type == WIRE_FAILURE ? pinFailure : type == WIRE_WHILE ? pinWhile : pinSuccess;
     }
 

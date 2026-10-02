@@ -1,21 +1,26 @@
 package com.etka.lune.client;
 
 import com.etka.lune.Constants;
+import com.etka.lune.bot.util.ServerAccess;
 import com.etka.lune.client.command.LuneChatCommand;
 import com.etka.lune.client.gui.DebugOverlay;
+import com.etka.lune.net.RulesPayload;
 import com.etka.lune.platform.BuildFeatures;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
 /**
- * Client-only Fabric setup - registers the keybinds and {@code /lune}, pumps the bot's tick, and
- * draws the debug overlay. All of them delegate straight into {@code common}.
+ * Client-only Fabric setup - registers the keybinds and {@code /lune}, pumps the bot's tick, draws
+ * the debug overlay, and lets the client hear a server's rules. All of them delegate straight into
+ * {@code common}.
  */
 public class LuneFabricClient implements ClientModInitializer {
 
@@ -43,7 +48,26 @@ public class LuneFabricClient implements ClientModInitializer {
             KeyMappingHelper.registerKeyMapping(LuneKeybinds.LEARNING_BAD);
         }
 
+        // Start as well as end: a run beside the player keeps the player's clicks from the game while
+        // Lune has the controls, and the game reads them before the end of the tick.
+        ClientTickEvents.START_CLIENT_TICK.register(LuneKeybinds::clientTickStart);
         ClientTickEvents.END_CLIENT_TICK.register(LuneKeybinds::clientTick);
+
+        // A server's answer, and the way to ask it: see ServerAccess. The payload types themselves
+        // are registered by LuneFabric, which runs first on both sides.
+        ClientPlayNetworking.registerGlobalReceiver(RulesPayload.TYPE, (payload, context) ->
+                context.client().execute(() -> ServerAccess.receive(payload)));
+        ServerAccess.install(new ServerAccess.Link() {
+            @Override
+            public boolean canSend(CustomPacketPayload.Type<?> type) {
+                return ClientPlayNetworking.canSend(type);
+            }
+
+            @Override
+            public void send(CustomPacketPayload payload) {
+                ClientPlayNetworking.send(payload);
+            }
+        });
 
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) ->
                 dispatcher.register(LuneChatCommand.build(REPLY)));

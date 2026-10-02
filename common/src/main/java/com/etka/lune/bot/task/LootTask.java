@@ -1,6 +1,7 @@
 package com.etka.lune.bot.task;
 
 import com.etka.lune.util.Lang;
+import com.etka.lune.bot.Beside;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
@@ -12,6 +13,7 @@ import com.etka.lune.bot.path.Goal;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.util.InventoryHelper;
+import com.etka.lune.bot.util.Vision;
 import com.etka.lune.bot.util.WorkSite;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
@@ -86,6 +88,12 @@ public final class LootTask implements Task {
 
     /** Keeps the sweep working through one pile instead of zigzagging between the far ends of two. */
     private final WorkSite site = new WorkSite();
+    /**
+     * Beside the player, only drops the player can see, and nothing in sight is a wait rather than
+     * the end of the sweep. Only ever switched on for the Loot card itself: the sweeps other cards
+     * build after a block or a kill still finish when their drops are in.
+     */
+    private final Beside beside = new Beside();
 
     public LootTask(int radius) {
         this(radius, ATTEMPT_DEADLINE, stack -> true);
@@ -188,6 +196,16 @@ public final class LootTask implements Task {
     }
 
     @Override
+    public void runBesidePlayer() {
+        beside.enable();
+    }
+
+    @Override
+    public boolean holdsControls() {
+        return beside.holdsControls();
+    }
+
+    @Override
     public void onStart(BotContext ctx) {
         collectionStrategy = CollectionPolicy.DEFAULT;
         clearTarget(ctx);
@@ -200,6 +218,7 @@ public final class LootTask implements Task {
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
+        beside.tick();
         // Nothing can be collected into a full bag; spinning here would stall the whole task.
         if (InventoryHelper.isFull(ctx.player)) {
             status.set("lune.status.loot.inventory_full_collected", collected);
@@ -216,8 +235,14 @@ public final class LootTask implements Task {
         }
 
         if (target == null) {
+            if (!beside.mayStart(ctx)) {
+                return beside.watch(status, "lune.status.loot.watching_beside");
+            }
             target = findNearest(ctx);
             if (target == null) {
+                if (beside.on()) {
+                    return beside.watch(status, "lune.status.loot.watching_beside");
+                }
                 status.set("lune.status.loot.collected_nothing_left_within_blocks", collected, radius);
                 return TaskStatus.SUCCESS;
             }
@@ -397,7 +422,9 @@ public final class LootTask implements Task {
                         // standable pickup position is actually available beside it.
                         && (!MovementHelper.isLiquid(ctx.level, item.blockPosition())
                                 || hasDryPickupPosition(ctx, item.blockPosition()))
-                        && wanted.test(item.getItem()));
+                        && wanted.test(item.getItem())
+                        // Beside the player, a drop is this card's once it is in their view.
+                        && (!beside.on() || Vision.isEntityVisible(ctx, item)));
         BlockPos origin = CollectionPolicy.ranksFromPlayer(collectionStrategy)
                 ? ctx.player.blockPosition() : site.focus(ctx);
         Vec3 from = Vec3.atCenterOf(origin);

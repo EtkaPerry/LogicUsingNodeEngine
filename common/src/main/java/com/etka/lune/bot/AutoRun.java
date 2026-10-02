@@ -474,6 +474,11 @@ public final class AutoRun {
      * fishing[-small|-one]  a rod and a pool, in three target sizes.
      * ghast[-N]             a platform twenty blocks up, kept stocked with N Ghasts (default 1).
      * end-egg               the End, a dragon egg on a bedrock podium, no dragon, pickaxe and torches.
+     * eyes[-N]              N Eyes of Ender, two by default, for Find Stronghold.
+     * day                   the clock held at morning, for a walk longer than a day.
+     * peaceful              no hunger and nothing hostile, for a run about the way, not the fight.
+     * stronghold            the bot put a short walk from a stronghold under dry land.
+     * lake                  a walled channel of deep water south of the bot, for the swim.
      * </pre>
      *
      * <p>None of this is available outside the harness: the properties are set by the run harness
@@ -531,8 +536,14 @@ public final class AutoRun {
                 case "gap" -> digGap(serverPlayer);
                 case "obsidian" -> giveObsidian(serverPlayer);
                 case "end-egg" -> prepareEndEgg(mc, serverPlayer);
+                case "day" -> keepDaylight(mc);
+                case "peaceful" -> runCommands(mc, "peaceful", "difficulty peaceful");
+                case "stronghold" -> nearDryStronghold(serverPlayer);
+                case "lake" -> buildLake(serverPlayer);
                 default -> {
-                    if (!part.startsWith("fishing") && !part.startsWith("ghast")
+                    if (part.equals("eyes") || part.startsWith("eyes-")) {
+                        giveEyes(serverPlayer, part);
+                    } else if (!part.startsWith("fishing") && !part.startsWith("ghast")
                             && !ARENA_MOBS.containsKey(arenaMobKind(part))) {
                         Constants.LOG.warn("AutoRun: unknown fixture '{}'", part);
                     }
@@ -665,6 +676,175 @@ public final class AutoRun {
         give(serverPlayer, new ItemStack(Items.TORCH, 32));
         Constants.LOG.info("AutoRun: fixture end-egg - dragon egg on bedrock at {}, no dragon fight",
                 egg);
+    }
+
+    /**
+     * Eyes of Ender, two unless the part says otherwise ({@code eyes-5}).
+     *
+     * <p>Find Stronghold only throws what it is given, and earning an eye means blaze rods and
+     * pearls first - a run that would never reach the throw inside a budget. Two is the honest
+     * number to test with: one to read the line, one to settle a line that fits more than one
+     * place.</p>
+     */
+    private static void giveEyes(ServerPlayer player, String part) {
+        int count = 2;
+        if (part.startsWith("eyes-")) {
+            try {
+                count = Math.max(1, Math.min(64, Integer.parseInt(part.substring("eyes-".length()))));
+            } catch (NumberFormatException ignored) {
+                Constants.LOG.warn("AutoRun: '{}' is not a number of eyes, giving two", part);
+            }
+        }
+        give(player, new ItemStack(Items.ENDER_EYE, count));
+        Constants.LOG.info("AutoRun: fixture eyes x{}", count);
+    }
+
+    /**
+     * Stops the clock at morning, so a long walk measures the walking and not the night.
+     *
+     * <p>A stronghold is a thousand or more blocks off. Walking there takes most of a day, and the
+     * run that ends in a Zombie at dusk has said nothing about whether the bot knew the way.</p>
+     */
+    private static void keepDaylight(Minecraft mc) {
+        runCommands(mc, "day - the clock is held at morning", "time set day", "gamerule advance_time false");
+    }
+
+    /**
+     * A fixture that is nothing but commands. {@code peaceful} is one: no hunger and nothing
+     * hostile, for a run measuring whether the bot knows the way rather than whether it survives
+     * the walk - that is Self Preservation's test, and it has its own.
+     */
+    private static void runCommands(Minecraft mc, String what, String... commands) {
+        MinecraftServer server = mc.getSingleplayerServer();
+        if (server == null) {
+            return;
+        }
+        for (String command : commands) {
+            server.getCommands().performPrefixedCommand(
+                    server.createCommandSourceStack().withSuppressedOutput(), command);
+        }
+        Constants.LOG.info("AutoRun: fixture {}", what);
+    }
+
+    /** How far from the chosen stronghold the stronghold fixture puts the bot, in blocks. */
+    private static final int STRONGHOLD_APPROACH = 150;
+
+    /**
+     * Puts the bot a short walk from a stronghold that is under dry land.
+     *
+     * <p>Two things this is not. It is not the bot finding anything: the harness asks the server,
+     * which is exactly the knowledge the bot is not allowed, and the bot still has to throw an eye
+     * to learn what the harness already knows. And it is not a stronghold under the sea - the first
+     * measured runs walked two thousand blocks to one fifteen blocks under an ocean, which tests
+     * the walk and the water, not the portal room. The first stronghold on the innermost ring whose
+     * start is not under an ocean or a river is the one used; the bot is put a hundred and fifty
+     * blocks from it, towards the world's middle, on the first dry ground found round that spot.</p>
+     */
+    private static void nearDryStronghold(ServerPlayer player) {
+        ServerLevel level = (ServerLevel) player.level();
+        BlockPos chosen = null;
+        java.util.Set<BlockPos> seen = new java.util.HashSet<>();
+        for (int probe = 0; probe < 8 && chosen == null; probe++) {
+            double angle = probe * Math.PI / 4.0;
+            BlockPos from = BlockPos.containing(Math.cos(angle) * 2000.0, 64, Math.sin(angle) * 2000.0);
+            BlockPos corner = level.findNearestMapStructure(
+                    net.minecraft.tags.StructureTags.EYE_OF_ENDER_LOCATED, from, 100, false);
+            if (corner == null || !seen.add(corner)) {
+                continue;
+            }
+            BlockPos staircase = new BlockPos(corner.getX() + 4, level.getSeaLevel(), corner.getZ() + 4);
+            var biome = level.getBiome(staircase);
+            boolean wet = biome.is(net.minecraft.tags.BiomeTags.IS_OCEAN)
+                    || biome.is(net.minecraft.tags.BiomeTags.IS_RIVER);
+            Constants.LOG.info("AutoRun: stronghold at {} is under {}{}", corner,
+                    biome.unwrapKey().map(key -> key.identifier().toString()).orElse("?"),
+                    wet ? ", passed over" : "");
+            if (!wet) {
+                chosen = corner;
+            }
+        }
+        if (chosen == null) {
+            Constants.LOG.warn("AutoRun: no stronghold on dry land was found for the fixture");
+            return;
+        }
+        double toMiddle = Math.atan2(-chosen.getZ(), -chosen.getX());
+        for (int attempt = 0; attempt < 12; attempt++) {
+            double angle = toMiddle + attempt * (Math.PI / 6.0);
+            int x = chosen.getX() + (int) Math.round(Math.cos(angle) * STRONGHOLD_APPROACH);
+            int z = chosen.getZ() + (int) Math.round(Math.sin(angle) * STRONGHOLD_APPROACH);
+            level.getChunk(x >> 4, z >> 4);
+            int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+            BlockPos ground = new BlockPos(x, y - 1, z);
+            if (!level.getFluidState(ground).isEmpty() || !level.getFluidState(ground.above()).isEmpty()) {
+                continue;
+            }
+            player.teleportTo(level, x + 0.5, y, z + 0.5, java.util.Set.of(), 0.0F, 0.0F, true);
+            player.setDeltaMovement(Vec3.ZERO);
+            player.fallDistance = 0.0F;
+            Constants.LOG.info("AutoRun: fixture stronghold - start corner {}, bot put at {}, {}, {}",
+                    chosen, x, y, z);
+            return;
+        }
+        Constants.LOG.warn("AutoRun: no dry ground {} blocks from the stronghold at {}",
+                STRONGHOLD_APPROACH, chosen);
+    }
+
+    /** Blocks of open water between the lake fixture's two banks. */
+    private static final int LAKE_LENGTH = 60;
+    /** How deep the lake fixture's water is: room to dive, and a bed below the swim. */
+    private static final int LAKE_DEPTH = 6;
+    /** Water either side of the bot's line across the lake fixture. */
+    private static final int LAKE_HALF_WIDTH = 3;
+
+    /**
+     * A channel of deep water south of the bot, sixty blocks long, walled so the only way on is
+     * through it.
+     *
+     * <p>Walled because a lake in the open is walked round. The search prices a long swim well
+     * above a short walk, as it should, and a run that never gets its feet wet has said nothing
+     * about swimming. So the bot starts on stone with a wall behind it and on both sides, and the
+     * far bank is the only ground ahead: a Run card heading south has to dive, swim, and come up
+     * for a breath somewhere in the middle, because the air runs out before the far side does.</p>
+     *
+     * <p>Under glass, because the first one was built in a snowy biome and the top of it froze
+     * within the four seconds before the run began. The bot crossed half of it hopping between
+     * floes, which is a test of something, but not of swimming. Ice only forms on water with
+     * nothing over it.</p>
+     */
+    private static void buildLake(ServerPlayer player) {
+        ServerLevel level = (ServerLevel) player.level();
+        BlockPos feet = player.blockPosition();
+        int farBank = 4 + LAKE_LENGTH;
+        int endWall = farBank + 9;
+        int roof = 5;
+        BlockState stone = Blocks.STONE.defaultBlockState();
+        BlockState glass = Blocks.GLASS.defaultBlockState();
+        BlockState water = Blocks.WATER.defaultBlockState();
+        BlockState air = Blocks.AIR.defaultBlockState();
+        for (int forward = -3; forward <= endWall; forward++) {
+            for (int side = -LAKE_HALF_WIDTH - 1; side <= LAKE_HALF_WIDTH + 1; side++) {
+                boolean wall = Math.abs(side) > LAKE_HALF_WIDTH || forward == -3 || forward == endWall;
+                boolean lake = forward >= 4 && forward < farBank;
+                for (int dy = -LAKE_DEPTH - 1; dy <= roof; dy++) {
+                    BlockState state;
+                    if (dy == roof) {
+                        state = glass;
+                    } else if (wall || dy == -LAKE_DEPTH - 1) {
+                        state = stone;
+                    } else if (dy < 0) {
+                        state = lake ? water : stone;
+                    } else {
+                        state = air;
+                    }
+                    level.setBlock(feet.offset(side, dy, forward), state, Block.UPDATE_CLIENTS);
+                }
+            }
+        }
+        player.teleportTo(level, feet.getX() + 0.5, feet.getY(), feet.getZ() + 0.5,
+                java.util.Set.of(), 0.0F, 0.0F, true);
+        player.setDeltaMovement(Vec3.ZERO);
+        Constants.LOG.info("AutoRun: fixture lake - {} blocks of water {} deep, from {} south",
+                LAKE_LENGTH, LAKE_DEPTH, feet.offset(0, 0, 4));
     }
 
     private static void giveObsidian(ServerPlayer player) {

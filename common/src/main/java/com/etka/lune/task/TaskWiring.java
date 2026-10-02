@@ -318,6 +318,17 @@ public final class TaskWiring {
         if (target.onSuccess != null && formerSuccess != null) {
             removeCableAnchor(task, TaskCableAnchor.key("success", target.id, formerSuccess.id));
         }
+        if (target.showsDone()) {
+            // A card that carries on either way has one wire out of it, and the new step goes on
+            // that wire. Moving only Success would leave Fail behind on the old card, split the
+            // pin the player joined, and send a failure somewhere the canvas no longer showed.
+            if (target.onFailure != null) {
+                removeCableAnchor(task,
+                        TaskCableAnchor.key("failure", target.id, target.onFailure));
+            }
+            target.onFailure = inserted.id;
+            target.failureInputPort = target.successInputPort;
+        }
         target.onSuccess = inserted.id;
 
         int targetIndex = task.indexOf(target);
@@ -329,6 +340,148 @@ public final class TaskWiring {
     private static void removeCableAnchor(TaskGraph task, String key) {
         if (task != null && task.cableAnchors != null) {
             task.cableAnchors.remove(key);
+        }
+    }
+
+    // --- Success and Fail as one Done pin ------------------------------------------------------
+    //
+    // A card that carries on the same way however it ends is wired with both edges pointing at the
+    // same card; that is what "either way" has always looked like in a saved task. Joining only
+    // changes how the canvas draws it - one Done pin and one cable - so these rules exist to keep
+    // the two edges together while the pin is joined. The cable is the Success cable: same key,
+    // same routing points, so a joined card keeps the shape its Success cable was given.
+
+    /** What asking to join a card's Success and Fail came to. */
+    public enum JoinResult {
+        /** The card now shows one Done pin. */
+        JOINED,
+        /** Success and Fail lead to different cards, so nothing changed. */
+        LEAD_APART,
+        /** A START, a clock or a pulse card: there is no Success and Fail to join. */
+        NO_OUTCOMES
+    }
+
+    /**
+     * Draws a card's Success and Fail as one Done pin.
+     *
+     * <p>Only a join that loses nothing is made. Two unwired pins join as they are, and one wired
+     * pin lends its wire to the other, because "carry on to that card whichever way it ends" is
+     * what the player asked for. Two pins wired to different cards are refused rather than settled
+     * by dropping one: that would delete a wire the player drew, as a side effect of a tick in a
+     * menu.</p>
+     */
+    public static JoinResult joinOutcomes(TaskGraph task, TaskNode node) {
+        if (node == null || !node.hasOutcomes()) {
+            return JoinResult.NO_OUTCOMES;
+        }
+        if (node.onSuccess == null && node.onFailure != null) {
+            // The Done cable is the Success cable, so the shape the Fail cable was given goes
+            // with its wire.
+            moveCableRoute(task, TaskCableAnchor.key("failure", node.id, node.onFailure),
+                    TaskCableAnchor.key("success", node.id, node.onFailure));
+            node.onSuccess = node.onFailure;
+            node.successInputPort = node.failureInputPort;
+        } else if (node.onFailure == null && node.onSuccess != null) {
+            node.onFailure = node.onSuccess;
+        } else if (!java.util.Objects.equals(node.onSuccess, node.onFailure)) {
+            // Also clears a switch left on by hand, so it cannot join the card later, on its own,
+            // the moment the two wires happen to meet.
+            node.outcomesJoined = false;
+            return JoinResult.LEAD_APART;
+        }
+        // Relay inputs are all alike, so the one the Success wire uses serves both.
+        node.failureInputPort = node.successInputPort;
+        node.outcomesJoined = true;
+        return JoinResult.JOINED;
+    }
+
+    /**
+     * Gives the card its Success and Fail pins back. Both keep the card the Done pin led to, so
+     * nothing runs differently until one of them is rewired.
+     *
+     * @return whether the card had been joined
+     */
+    public static boolean splitOutcomes(TaskNode node) {
+        if (node == null || !node.outcomesJoined) {
+            return false;
+        }
+        node.outcomesJoined = false;
+        return true;
+    }
+
+    /**
+     * Wires a joined card's Done pin to a card: both edges, and both ports when it lands on a
+     * relay, so the card carries on there whichever way it ends.
+     *
+     * @param relayPort the input the cable landed on, used only when {@code target} is a relay
+     * @return whether anything changed
+     */
+    public static boolean wireDone(TaskGraph task, TaskNode node, TaskNode target, int relayPort) {
+        if (node == null || target == null || target.id == null) {
+            return false;
+        }
+        boolean changed = !target.id.equals(node.onSuccess) || !target.id.equals(node.onFailure);
+        if (node.onSuccess != null && !node.onSuccess.equals(target.id)) {
+            removeCableAnchor(task, TaskCableAnchor.key("success", node.id, node.onSuccess));
+        }
+        if (node.onFailure != null && !node.onFailure.equals(target.id)) {
+            removeCableAnchor(task, TaskCableAnchor.key("failure", node.id, node.onFailure));
+        }
+        node.onSuccess = target.id;
+        node.onFailure = target.id;
+        if (target.isSignalRelayNode()) {
+            changed |= node.successInputPort != relayPort;
+            node.successInputPort = relayPort;
+        }
+        node.failureInputPort = node.successInputPort;
+        return changed;
+    }
+
+    /**
+     * Cuts a joined card's Done cable, which is both of its edges.
+     *
+     * @return whether there was a cable to cut
+     */
+    public static boolean cutDone(TaskGraph task, TaskNode node) {
+        if (node == null || node.onSuccess == null && node.onFailure == null) {
+            return false;
+        }
+        if (node.onSuccess != null) {
+            removeCableAnchor(task, TaskCableAnchor.key("success", node.id, node.onSuccess));
+        }
+        if (node.onFailure != null) {
+            removeCableAnchor(task, TaskCableAnchor.key("failure", node.id, node.onFailure));
+        }
+        node.onSuccess = null;
+        node.onFailure = null;
+        return true;
+    }
+
+    /**
+     * Makes a loaded card's Done pin agree with its wiring.
+     *
+     * <p>Only reachable by hand - a shared file edited in a text editor, or a card that has since
+     * become a pulse card. A joined card whose edges disagree is split rather than mended by
+     * dropping one of them, because the edges are what runs and the pin is only how they look.</p>
+     */
+    public static void normalizeOutcomes(TaskNode node) {
+        if (node == null || !node.outcomesJoined) {
+            return;
+        }
+        if (node.showsDone()) {
+            node.failureInputPort = node.successInputPort;
+        } else {
+            node.outcomesJoined = false;
+        }
+    }
+
+    private static void moveCableRoute(TaskGraph task, String fromKey, String toKey) {
+        if (task == null || task.cableAnchors == null) {
+            return;
+        }
+        TaskCableRoute route = task.cableAnchors.remove(fromKey);
+        if (route != null) {
+            task.cableAnchors.putIfAbsent(toKey, route);
         }
     }
 
@@ -514,6 +667,7 @@ public final class TaskWiring {
         target.onFailure = source.onFailure;
         target.onWhile = source.onWhile;
         target.whileVisible = source.whileVisible;
+        target.outcomesJoined = source.outcomesJoined;
         target.alwaysTargets = source.alwaysTargets == null ? new LinkedHashSet<>()
                 : new LinkedHashSet<>(source.alwaysTargets);
         target.signalInputCount = source.signalInputCount;

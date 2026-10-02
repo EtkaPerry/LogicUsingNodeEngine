@@ -7,9 +7,7 @@ import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.path.Goals;
-import com.etka.lune.bot.util.BlockBreaker;
 import com.etka.lune.bot.util.BlockPlacer;
-import com.etka.lune.bot.util.BlockScanner;
 import com.etka.lune.bot.util.InventoryHelper;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
@@ -32,7 +30,6 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.function.BiPredicate;
 
 /**
  * Uses the player's current gear to reach and kill the Ender Dragon.
@@ -198,7 +195,9 @@ public final class CompleteGameTask implements Task {
     private Task createTask(BotContext ctx) {
         return switch (state) {
             case TRAVEL -> new EnderEyeTask();
-            case DIG -> new DigDownTask(strongholdPos);
+            // The same two cards a player wires up themselves: read the eye, then go down and
+            // look. Digging straight down until a frame showed up within 64 blocks was an X-ray.
+            case DIG -> new PortalRoomTask(strongholdPos);
             case PORTAL -> new FillPortalTask();
             case ENTER -> new EnterEndTask();
             case FIGHT -> new FightDragonTask();
@@ -210,10 +209,8 @@ public final class CompleteGameTask implements Task {
     private TaskStatus finishPhase(BotContext ctx, Task finished) {
         switch (state) {
             case TRAVEL -> {
+                // Were this ever null, the portal room card falls back on the remembered one.
                 strongholdPos = ((EnderEyeTask) finished).strongholdPos();
-                if (strongholdPos == null) {
-                    strongholdPos = ctx.player.blockPosition();
-                }
                 state = State.DIG;
             }
             case DIG -> state = State.PORTAL;
@@ -238,120 +235,37 @@ public final class CompleteGameTask implements Task {
         };
     }
 
-    private static final class DigDownTask implements Task {
-
-        private final BlockPos surface;
-        private GotoTask approach;
-        private final BlockBreaker breaker = new BlockBreaker();
-        private BlockPos target;
-        private int ticks;
-        private final StatusText status = new StatusText();
-
-        DigDownTask(BlockPos surface) {
-            this.surface = surface;
-        }
-
-        @Override
-        public String name() {
-            return Lang.get("lune.status.complete_game.dig_stronghold");
-        }
-
-        @Override
-        public StatusText statusLine() {
-        return status;
-    }
-
-        @Override
-        public TaskStatus onTick(BotContext ctx) {
-            BlockPos feet = ctx.player.blockPosition();
-
-            if (approach != null) {
-                TaskStatus r = approach.tick(ctx);
-                if (r == TaskStatus.RUNNING) {
-                    status.set("lune.status.complete_game.walking_landing_site");
-                } else {
-                    status.set(approach.statusLine());
-                }
-                if (r == TaskStatus.SUCCESS) {
-                    approach.stop(ctx);
-                    approach = null;
-                } else if (r == TaskStatus.FAILED) {
-                    approach.stop(ctx);
-                    approach = null;
-                    status.set("lune.status.complete_game.cannot_reach_landing_site");
-                    return TaskStatus.FAILED;
-                }
-                return TaskStatus.RUNNING;
-            }
-
-            if (feet.getX() != surface.getX() || feet.getZ() != surface.getZ()) {
-                approach = new GotoTask(new Goals.XZ(surface.getX(), surface.getZ()), true, false);
-                approach.start(ctx);
-                return TaskStatus.RUNNING;
-            }
-
-            BlockPos frame = BlockScanner.findNearest(ctx.level, ctx.player.blockPosition(),
-                    Set.of(Blocks.END_PORTAL_FRAME), 64, ctx.level.getMinY(), ctx.level.getMaxY());
-            if (frame != null) {
-                status.set("lune.status.complete_game.reached_stronghold");
-                return TaskStatus.SUCCESS;
-            }
-
-            if (target == null
-                    || ctx.level.getBlockState(target).isAir()
-                    || breaker.isOutOfReach(ctx, target)) {
-                target = feet.below();
-            }
-
-            if (target.getY() < ctx.level.getMinY()) {
-                status.set("lune.status.complete_game.reached_bottom_with_no_portal");
-                return TaskStatus.FAILED;
-            }
-
-            BlockState state = ctx.level.getBlockState(target);
-            if (state.is(Blocks.END_PORTAL) || state.is(Blocks.END_PORTAL_FRAME)) {
-                status.set("lune.status.complete_game.reached_portal");
-                return TaskStatus.SUCCESS;
-            }
-
-            BlockBreaker.Progress p = breaker.tick(ctx, target);
-            if (p == BlockBreaker.Progress.NO_TOOL) {
-                status.set("lune.status.complete_game.need_tool");
-                return TaskStatus.FAILED;
-            }
-            if (p == BlockBreaker.Progress.HAZARD) {
-                status.set(breaker.getFailureReason());
-                return TaskStatus.FAILED;
-            }
-            if (p == BlockBreaker.Progress.FINISHED) {
-                target = null;
-            }
-
-            ticks++;
-            status.set("lune.status.complete_game.digging_stronghold");
-            return TaskStatus.RUNNING;
-        }
-
-        @Override
-        public void onStop(BotContext ctx) {
-            if (approach != null) {
-                approach.stop(ctx);
-                approach = null;
-            }
-            breaker.stop(ctx);
-            ctx.input.reset();
-        }
-    }
-
+    /**
+     * Puts an eye in every empty frame, and only ever in one it has seen.
+     *
+     * <p>A frame hidden behind the platform is walked toward until it is in sight, never clicked
+     * at from where it cannot be: the click would be refused, and a step that keeps asking stands
+     * there for good. Done is no empty frame left, which is also the moment the portal lights.</p>
+     */
     private static final class FillPortalTask implements Task {
 
         private static final double FILL_REACH = 4.5;
+        /** The second stand, when the first could not see the frame or click it: beside it. */
+        private static final double CLOSE_REACH = 2.5;
+        private static final int SEARCH_RADIUS = 64;
+        private static final int MAX_FAILURES = 4;
+        private static final SightSearch.Stand STAND = (pos, closer) ->
+                new Goals.Adjacent(pos, closer ? CLOSE_REACH : FILL_REACH - 0.5);
 
+        private final SightSearch sight = new SightSearch(Set.of(Blocks.END_PORTAL_FRAME),
+                FillPortalTask::empty, SEARCH_RADIUS, STAND);
         private GotoTask approach;
+        /** The frame being filled: always one the eyes found. */
         private BlockPos frame;
+        /** Whether the walk to it is the second, closer one. */
+        private boolean closer;
         private int useCooldown;
         private int failCount;
         private final StatusText status = new StatusText();
+
+        private static boolean empty(BlockState state) {
+            return state.is(Blocks.END_PORTAL_FRAME) && !state.getValue(EndPortalFrameBlock.HAS_EYE);
+        }
 
         @Override
         public String name() { return Lang.get("lune.task.nested.fill_end_portal"); }
@@ -370,57 +284,32 @@ public final class CompleteGameTask implements Task {
                 useCooldown--;
             }
 
-            if (frame != null && useCooldown == 0) {
-                BlockState state = ctx.level.getBlockState(frame);
-                if (state.is(Blocks.END_PORTAL_FRAME) && Boolean.TRUE.equals(state.getValue(EndPortalFrameBlock.HAS_EYE))) {
-                    frame = null;
-                    approach = null;
-                }
+            if (frame != null && !empty(ctx.level.getBlockState(frame))) {
+                // The eye is in, or the frame is gone. Either way it is done with.
+                frame = null;
+                closer = false;
+                stopApproach(ctx);
             }
 
             if (frame == null) {
-                BiPredicate<BlockPos, BlockState> filter = (pos, state) ->
-                        state.is(Blocks.END_PORTAL_FRAME) && !state.getValue(EndPortalFrameBlock.HAS_EYE);
-                frame = BlockScanner.findNearest(ctx.level, ctx.player.blockPosition(),
-                        Set.of(Blocks.END_PORTAL_FRAME), 64, ctx.level.getMinY(), ctx.level.getMaxY(),
-                        Set.of(), filter);
+                frame = sight.seen(ctx);
                 if (frame == null) {
-                    status.set("lune.status.complete_game.portal_filled");
-                    return TaskStatus.SUCCESS;
+                    return lookForFrames(ctx);
                 }
-                if (approach != null) {
-                    approach.stop(ctx);
-                }
-                approach = new GotoTask(new Goals.Adjacent(frame, FILL_REACH - 0.5), true, false);
-                approach.start(ctx);
             }
 
-            if (approach != null) {
-                TaskStatus r = approach.tick(ctx);
-                if (r == TaskStatus.RUNNING) {
-                    status.set("lune.status.complete_game.walking_frame");
-                    return TaskStatus.RUNNING;
-                }
-                approach.stop(ctx);
-                approach = null;
-                if (r == TaskStatus.FAILED) {
-                    failCount++;
-                    if (failCount > 4) {
-                        status.set("lune.status.complete_game.cannot_reach_portal_frames");
-                        return TaskStatus.FAILED;
-                    }
-                    frame = null;
-                    return TaskStatus.RUNNING;
-                }
+            // In sight. Now near enough to click it, with nothing in the way of the click.
+            if (!BlockPlacer.hasLineOfSight(ctx, frame)) {
+                return walkToFrame(ctx);
             }
+            stopApproach(ctx);
 
             if (InventoryHelper.equip(ctx, stack -> stack.is(Items.ENDER_EYE)) < 0) {
                 status.set("lune.status.ender_eye.out_eyes_ender");
                 return TaskStatus.FAILED;
             }
 
-            boolean used = BlockPlacer.use(ctx, frame);
-            if (used) {
+            if (useCooldown == 0 && BlockPlacer.use(ctx, frame)) {
                 useCooldown = 5;
             }
 
@@ -428,22 +317,73 @@ public final class CompleteGameTask implements Task {
             return TaskStatus.RUNNING;
         }
 
-        @Override
-        public void onStop(BotContext ctx) {
+        /** No empty frame in sight: turn, or go round the portal, until one is. */
+        private TaskStatus lookForFrames(BotContext ctx) {
+            if (!sight.anyLeft(ctx)) {
+                status.set("lune.status.complete_game.portal_filled");
+                return TaskStatus.SUCCESS;
+            }
+            if (sight.goSee(ctx) == TaskStatus.FAILED) {
+                status.set("lune.status.complete_game.cannot_reach_portal_frames");
+                return TaskStatus.FAILED;
+            }
+            status.set(sight.statusLine());
+            return TaskStatus.RUNNING;
+        }
+
+        private TaskStatus walkToFrame(BotContext ctx) {
+            if (approach == null) {
+                approach = new GotoTask(STAND.toSee(frame, closer), true, false);
+                approach.start(ctx);
+            }
+            TaskStatus r = approach.tick(ctx);
+            if (r == TaskStatus.RUNNING) {
+                status.set("lune.status.complete_game.walking_frame");
+                return TaskStatus.RUNNING;
+            }
+            stopApproach(ctx);
+            if (r == TaskStatus.SUCCESS && !closer) {
+                // Where the route stopped, something is still in the way of the click: beside it.
+                closer = true;
+                return TaskStatus.RUNNING;
+            }
+            sight.giveUp(frame);
+            frame = null;
+            closer = false;
+            if (++failCount > MAX_FAILURES) {
+                status.set("lune.status.complete_game.cannot_reach_portal_frames");
+                return TaskStatus.FAILED;
+            }
+            return TaskStatus.RUNNING;
+        }
+
+        private void stopApproach(BotContext ctx) {
             if (approach != null) {
                 approach.stop(ctx);
                 approach = null;
             }
+        }
+
+        @Override
+        public void onStop(BotContext ctx) {
+            stopApproach(ctx);
+            sight.stop(ctx);
             ctx.input.reset();
         }
     }
 
+    /** Steps into the portal the frames just lit, walking only at a block of it the eyes found. */
     private static final class EnterEndTask implements Task {
 
         private static final int TIMEOUT = 300;
+        private static final int SEARCH_RADIUS = 64;
 
+        private final SightSearch sight = new SightSearch(Set.of(Blocks.END_PORTAL), state -> true,
+                SEARCH_RADIUS, (pos, closer) -> new Goals.Near(pos, closer ? 1 : 3));
         private GotoTask approach;
+        /** The portal block being walked into: always one the eyes found. */
         private BlockPos portal;
+        private boolean lookedAgain;
         private int ticks;
         private final StatusText status = new StatusText();
 
@@ -465,11 +405,9 @@ public final class CompleteGameTask implements Task {
             }
 
             if (portal == null) {
-                portal = BlockScanner.findNearest(ctx.level, ctx.player.blockPosition(),
-                        Set.of(Blocks.END_PORTAL), 64, ctx.level.getMinY(), ctx.level.getMaxY());
+                portal = sight.seen(ctx);
                 if (portal == null) {
-                    status.set("lune.status.complete_game.no_end_portal_found");
-                    return TaskStatus.FAILED;
+                    return lookForPortal(ctx);
                 }
                 approach = new GotoTask(new Goals.Near(portal, 3), true, false);
                 approach.start(ctx);
@@ -503,12 +441,33 @@ public final class CompleteGameTask implements Task {
             return TaskStatus.RUNNING;
         }
 
+        /** Lit, but not in sight: turn, or go round the frames, until it is. */
+        private TaskStatus lookForPortal(BotContext ctx) {
+            if (!sight.anyLeft(ctx)) {
+                if (!lookedAgain) {
+                    // It lit a moment ago, perhaps after the index was taken: take it once more.
+                    lookedAgain = true;
+                    sight.reset(ctx);
+                    return TaskStatus.RUNNING;
+                }
+                status.set("lune.status.complete_game.no_end_portal_found");
+                return TaskStatus.FAILED;
+            }
+            if (sight.goSee(ctx) == TaskStatus.FAILED) {
+                status.set("lune.status.complete_game.cannot_reach_portal");
+                return TaskStatus.FAILED;
+            }
+            status.set(sight.statusLine());
+            return TaskStatus.RUNNING;
+        }
+
         @Override
         public void onStop(BotContext ctx) {
             if (approach != null) {
                 approach.stop(ctx);
                 approach = null;
             }
+            sight.stop(ctx);
             ctx.input.reset();
         }
     }
@@ -694,14 +653,29 @@ public final class CompleteGameTask implements Task {
         }
     }
 
+    /**
+     * Leaves the End by its exit portal, found the way a player finds it: by walking to the middle
+     * of the island, where the game always builds it, and looking.
+     */
     private static final class ExitEndTask implements Task {
 
-        private static final BlockPos ORIGIN = new BlockPos(0, 0, 0);
-        private static final int SEARCH_RADIUS = 24;
+        /** The portal is built round the world's origin; this close, its bowl can be looked into. */
+        private static final int CENTRE_RADIUS = 8;
+        private static final int SEARCH_RADIUS = 32;
         private static final int TIMEOUT = 400;
+        /**
+         * Looks round the middle before admitting there is no portal there. It only opens once the
+         * dragon's death is over, ten seconds after the fight has ended, so a first look can be early.
+         */
+        private static final int MAX_EMPTY_LOOKS = 3;
 
+        private final SightSearch sight = new SightSearch(Set.of(Blocks.END_PORTAL), state -> true,
+                SEARCH_RADIUS, (pos, closer) -> new Goals.Near(pos, closer ? 1 : 2));
         private GotoTask approach;
+        /** The portal block being walked into: always one the eyes found. */
         private BlockPos portal;
+        private boolean atCentre;
+        private int emptyLooks;
         private int ticks;
         private final StatusText status = new StatusText();
 
@@ -723,52 +697,28 @@ public final class CompleteGameTask implements Task {
             }
 
             if (portal == null) {
-                portal = BlockScanner.findNearest(ctx.level, ORIGIN,
-                        Set.of(Blocks.END_PORTAL), SEARCH_RADIUS,
-                        ctx.level.getMinY(), ctx.level.getMaxY());
+                portal = sight.seen(ctx);
                 if (portal == null) {
-                    portal = BlockScanner.findNearest(ctx.level, ctx.player.blockPosition(),
-                            Set.of(Blocks.END_PORTAL), SEARCH_RADIUS,
-                            ctx.level.getMinY(), ctx.level.getMaxY());
+                    return lookForPortal(ctx);
                 }
-                if (portal != null && approach != null) {
-                    approach.stop(ctx);
-                    approach = null;
-                }
-            }
-
-            if (portal == null) {
-                if (approach == null) {
-                    approach = new GotoTask(new Goals.Near(ORIGIN, 8), true, false);
-                    approach.start(ctx);
-                }
-                TaskStatus r = approach.tick(ctx);
-                status.set("lune.status.complete_game.walking_center");
-                if (r == TaskStatus.FAILED) {
-                    status.set("lune.status.complete_game.cannot_reach_center");
-                    return TaskStatus.FAILED;
-                }
-                return TaskStatus.RUNNING;
-            }
-
-            if (approach == null) {
+                // Seen on the way to the middle, or from it: straight there.
+                stopApproach(ctx);
                 approach = new GotoTask(new Goals.Near(portal, 2), true, false);
                 approach.start(ctx);
             }
 
-            TaskStatus r = approach.tick(ctx);
-            if (r == TaskStatus.RUNNING) {
-                status.set("lune.status.complete_game.walking_exit_portal");
-                return TaskStatus.RUNNING;
+            if (approach != null) {
+                TaskStatus r = approach.tick(ctx);
+                if (r == TaskStatus.RUNNING) {
+                    status.set("lune.status.complete_game.walking_exit_portal");
+                    return TaskStatus.RUNNING;
+                }
+                stopApproach(ctx);
+                if (r == TaskStatus.FAILED) {
+                    status.set("lune.status.complete_game.cannot_reach_exit_portal");
+                    return TaskStatus.FAILED;
+                }
             }
-
-            if (r == TaskStatus.FAILED) {
-                status.set("lune.status.complete_game.cannot_reach_exit_portal");
-                return TaskStatus.FAILED;
-            }
-
-            approach.stop(ctx);
-            approach = null;
 
             Vec3 centre = Vec3.atCenterOf(portal);
             ctx.look.lookAt(ctx.player, centre);
@@ -784,12 +734,65 @@ public final class CompleteGameTask implements Task {
             return TaskStatus.RUNNING;
         }
 
-        @Override
-        public void onStop(BotContext ctx) {
+        /** Not in sight: to the middle, looking all the way, then round from there. */
+        private TaskStatus lookForPortal(BotContext ctx) {
+            if (!atCentre) {
+                if (approach == null) {
+                    approach = new GotoTask(new Goals.NearXZ(0, 0, CENTRE_RADIUS), true, false);
+                    approach.start(ctx);
+                }
+                TaskStatus r = approach.tick(ctx);
+                if (r == TaskStatus.RUNNING) {
+                    status.set("lune.status.complete_game.walking_center");
+                    return TaskStatus.RUNNING;
+                }
+                stopApproach(ctx);
+                if (r == TaskStatus.FAILED) {
+                    status.set("lune.status.complete_game.cannot_reach_center");
+                    return TaskStatus.FAILED;
+                }
+                atCentre = true;
+                sight.reset(ctx);
+            }
+            if (!sight.isWalking()) {
+                if (sight.turnToward(ctx)) {
+                    status.set(sight.statusLine());
+                    return TaskStatus.RUNNING;
+                }
+                if (sight.lookRound(ctx)) {
+                    status.set("lune.status.complete_game.looking_round_center", sight.statusLine());
+                    return TaskStatus.RUNNING;
+                }
+                if (!sight.anyLeft(ctx)) {
+                    if (++emptyLooks >= MAX_EMPTY_LOOKS) {
+                        status.set("lune.status.complete_game.no_exit_portal");
+                        return TaskStatus.FAILED;
+                    }
+                    // Nothing lit round the fountain yet: take the index again and look again.
+                    sight.reset(ctx);
+                    return TaskStatus.RUNNING;
+                }
+            }
+            // Lit, but down in the bowl where no look from here reaches: go to its rim.
+            if (sight.goSee(ctx) == TaskStatus.FAILED) {
+                status.set("lune.status.complete_game.cannot_reach_exit_portal");
+                return TaskStatus.FAILED;
+            }
+            status.set(sight.statusLine());
+            return TaskStatus.RUNNING;
+        }
+
+        private void stopApproach(BotContext ctx) {
             if (approach != null) {
                 approach.stop(ctx);
                 approach = null;
             }
+        }
+
+        @Override
+        public void onStop(BotContext ctx) {
+            stopApproach(ctx);
+            sight.stop(ctx);
             ctx.input.reset();
         }
     }

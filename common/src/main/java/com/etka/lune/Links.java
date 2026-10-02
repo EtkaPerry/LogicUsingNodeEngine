@@ -17,6 +17,11 @@ public final class Links {
      */
     public static final String LICENSE = REPOSITORY + "/blob/main/LICENSE";
     public static final String ISSUES = REPOSITORY + "/issues";
+    /**
+     * Where shared tasks are kept and drawn: the share site. Every share link ever handed out
+     * starts with it, so unlike the others it can never move.
+     */
+    public static final String SHARE = "https://lunode.etka.co.uk";
 
     private Links() {}
 }

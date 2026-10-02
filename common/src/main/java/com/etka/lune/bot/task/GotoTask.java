@@ -9,10 +9,13 @@ import com.etka.lune.bot.catalog.BlockCatalog;
 import com.etka.lune.bot.learning.LearningContext;
 import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.AStarPathfinder;
+import com.etka.lune.bot.path.DoorKeeper;
+import com.etka.lune.bot.path.Doorways;
 import com.etka.lune.bot.path.Goal;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.path.PathExecutor;
 import com.etka.lune.bot.path.WaterEscape;
+import com.etka.lune.bot.util.ToolSelector;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Block;
@@ -97,6 +100,16 @@ public final class GotoTask implements Task {
      * {@link #repath}, which will still swim when the dry search has run out of land.
      */
     private final boolean allowSwim;
+    /**
+     * Never plan a route through water, not even as the fallback once dry land has run out.
+     *
+     * <p>For a route that must stay underground. Digging down to a stronghold from the shore of the
+     * lake over it, the dry search fails - the goal is under rock - and the swimming tier that
+     * would normally come next swam out over the lake towards the goal's column instead of letting
+     * the digging tier tunnel under it. From the middle of the lake nothing could dig, and the
+     * card failed. See {@link #keepDry()}.</p>
+     */
+    private boolean keepDry;
 
     private PathExecutor executor;
     /** False when the current route came from the preferred open walking/swimming search. */
@@ -115,6 +128,14 @@ public final class GotoTask implements Task {
     private int consecutiveStucks;
     /** Armed by a repeated stall, consumed by the next search; never latched. */
     private boolean escalateToDigging;
+    /**
+     * What the last search could not dig through for want of a tool, or null. Only ever set when a
+     * route that may dig found nowhere to go and one planned as if any tool were carried did; see
+     * {@link #blockNeedingTool}.
+     */
+    private Block missingTool;
+    /** Opens the doors on the way and shuts them behind; kept here because routes are rebuilt. */
+    private final DoorKeeper doors = new DoorKeeper();
     private int waterRecoveryTicks;
     private int repaths;
     private double bestGoalHeuristic = Double.POSITIVE_INFINITY;
@@ -163,6 +184,32 @@ public final class GotoTask implements Task {
         this.allowSwim = allowSwim;
         this.allowRecovery = allowRecovery;
         this.allowJump = allowJump;
+    }
+
+    /**
+     * A walk to a place somebody named - a waypoint, coordinates typed into a card, where the player
+     * died - which digs where walking cannot get there.
+     *
+     * <p>A named place is wherever the player was, and players spend a good part of their time
+     * underground: in a mine, in a cave, at the bottom of a ravine, which is also where most of
+     * them die. Ordinary travel never breaks a block, which is right for a bot choosing its own way
+     * across the country and wrong for a place that is only there under the ground. Go to it on a
+     * death 111 blocks under a snowy plain walked the 220 blocks to the spot right above it, found
+     * nowhere left to walk, and gave up standing on top of it: "no route found".</p>
+     *
+     * <p>Every search still tries the open walking route first, so a place on the surface is walked
+     * to exactly as before, and digging is planned only from where walking has run out. With
+     * nothing to dig with that does not get far, and the walk says so; see
+     * {@link #blockNeedingTool}.</p>
+     */
+    public static GotoTask toPlace(Goal goal, boolean sprint) {
+        return new GotoTask(goal, sprint, true);
+    }
+
+    /** Plans no swimming at all for this route; see {@link #keepDry}. */
+    public GotoTask keepDry() {
+        this.keepDry = true;
+        return this;
     }
 
     @Override
@@ -225,6 +272,8 @@ public final class GotoTask implements Task {
         goalNoProgressTicks = 0;
         ticksSinceClosest = 0;
         walledTicks = 0;
+        missingTool = null;
+        doors.reset();
         ctx.debug.goal = goal.describe();
         ctx.debug.clearPath();
         ctx.debug.goalNoProgressTicks = 0;
@@ -235,6 +284,16 @@ public final class GotoTask implements Task {
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
+        TaskStatus result = follow(ctx);
+        if (result == TaskStatus.FAILED && missingTool != null) {
+            // Whatever the step that gave up would have called it, the tool is the part the player
+            // can do something about.
+            status.set("lune.status.route.needs_better_tool", missingTool.getName().getString());
+        }
+        return result;
+    }
+
+    private TaskStatus follow(BotContext ctx) {
         BlockPos feet = MovementHelper.feetPosition(ctx.player);
         ctx.debug.goal = goal.describe();
         boolean goalStalled = !goal.isReached(feet) && updateGoalProgress(feet);
@@ -252,8 +311,7 @@ public final class GotoTask implements Task {
         }
         ctx.debug.giveUp = goalLimits();
         if (goal.isReached(feet)) {
-            ctx.debug.intent = "goal reached; returning to caller";
-            return TaskStatus.SUCCESS;
+            return arrived(ctx);
         }
 
         // Active bridge/scaffold: one step across water or a gap. On success we re-path from the
@@ -359,19 +417,23 @@ public final class GotoTask implements Task {
             executor = null;
             consecutiveStucks = 0;
         escalateToDigging = false;
-            return TaskStatus.SUCCESS;
+            return arrived(ctx);
         }
 
         switch (result) {
             case RUNNING -> {
-                status.set("lune.status.goto.blocks_left", executor.remainingNodes());
+                if (doors.isBusy()) {
+                    status.set(doors.status());
+                } else {
+                    status.set("lune.status.goto.blocks_left", executor.remainingNodes());
+                }
                 return TaskStatus.RUNNING;
             }
             case DONE -> {
                 consecutiveStucks = 0;
         escalateToDigging = false;
                 if (goal.isReached(MovementHelper.feetPosition(ctx.player))) {
-                    return TaskStatus.SUCCESS;
+                    return arrived(ctx);
                 }
                 // End of a partial path - keep going from here.
                 if (!repath(ctx, MovementHelper.feetPosition(ctx.player))) {
@@ -381,8 +443,10 @@ public final class GotoTask implements Task {
                 return TaskStatus.RUNNING;
             }
             case NO_TOOL -> {
-                // No amount of re-routing fixes a missing pickaxe; say so instead of thrashing.
-                status.set("lune.status.goto.break", executor.getBlockedBy());
+                // No amount of re-routing fixes a missing pickaxe; say so instead of thrashing. The
+                // executor's line already names the block, and wrapping it in a second "need a
+                // better tool" said so twice in one sentence.
+                status.set(executor.getBlockedBy());
                 return TaskStatus.FAILED;
             }
             case REPLAN -> {
@@ -440,6 +504,19 @@ public final class GotoTask implements Task {
             }
         }
         return TaskStatus.RUNNING;
+    }
+
+    /**
+     * At the goal. Shutting the door that was opened to get here comes first: arriving just inside
+     * one is the commonest way for a walk to end beside a door.
+     */
+    private TaskStatus arrived(BotContext ctx) {
+        if (doors.arrive(ctx) == DoorKeeper.Work.BUSY) {
+            status.set(doors.status());
+            return TaskStatus.RUNNING;
+        }
+        ctx.debug.intent = "goal reached; returning to caller";
+        return TaskStatus.SUCCESS;
     }
 
     @Override
@@ -522,10 +599,23 @@ public final class GotoTask implements Task {
         if (!MovementHelper.isPassable(ctx.level, feet.above(2))) {
             return false;
         }
+        if (upIsNoWayOut(feet)) {
+            return false;
+        }
         climb = new PillarUpTask(Math.min(CLIMB_STEP, MAX_CLIMB_BLOCKS - climbedBlocks));
         climb.start(ctx);
         status.set("lune.status.goto.walled_building_way_out");
         return true;
+    }
+
+    /**
+     * Whether gaining height is no way out: the way on needs a tool the pack lacks, and up is away
+     * from the goal. The pocket is usually the walk's own, dug by hand through the dirt until the
+     * stone stopped it, and from higher ground the next search plans the same dig straight back
+     * into it - over and over, until the climb allowance runs out.
+     */
+    private boolean upIsNoWayOut(BlockPos feet) {
+        return missingTool != null && goal.heuristic(feet.above()) > goal.heuristic(feet);
     }
 
     /**
@@ -556,7 +646,7 @@ public final class GotoTask implements Task {
         }
         BlockPos target = blockedBody(ctx);
         if (target == null) {
-            if (MovementHelper.isPassable(ctx.level, feet.above(2))) {
+            if (MovementHelper.isPassable(ctx.level, feet.above(2)) || upIsNoWayOut(feet)) {
                 return false;
             }
             target = feet.above(2);
@@ -792,10 +882,13 @@ public final class GotoTask implements Task {
         // Hanging on a ladder or a vine is not one of those cases. There is no floor under the
         // player and there is not supposed to be, and the search knows how to climb from exactly
         // where they are - so moving the start to some standable block a few metres away only
-        // hands the executor a first step the player is in no position to take.
+        // hands the executor a first step the player is in no position to take. Standing in a
+        // doorway is the same: the only way out of one is straight along it, and only a search
+        // that starts in it can plan that.
         BlockPos start = from;
         if (!MovementHelper.canStandAt(ctx.level, start)
-                && !MovementHelper.isClimbable(ctx.level, start)) {
+                && !MovementHelper.isClimbable(ctx.level, start)
+                && !Doorways.canStandIn(ctx.level, start)) {
             if (MovementHelper.canStandAt(ctx.level, start.below())) {
                 start = start.below();
             } else if (MovementHelper.canStandAt(ctx.level, start.above())) {
@@ -814,7 +907,7 @@ public final class GotoTask implements Task {
         // tunnels into the bank chasing a target it can never reach by land. Water is priced by
         // AStarPathfinder.WATER_ENTRY_COST, so a route still walks round a pond; it takes the
         // plunge only when going round is genuinely much longer, or impossible.
-        boolean swimAllowed = ctx.config.allowSwim;
+        boolean swimAllowed = ctx.config.allowSwim && !keepDry;
         boolean swimPreferred = allowSwim && swimAllowed;
 
         // A route the search likes but the body cannot walk is the signature of the cheap tier
@@ -823,15 +916,14 @@ public final class GotoTask implements Task {
         // identical "dry route" four times and giving up - with a pickaxe in its hand. So once
         // movement has stalled twice, skip straight past the tiers that already failed to work.
         AStarPathfinder.Result result;
+        missingTool = null;
         if (allowBreak && escalateToDigging) {
             // One shot, consumed here. Leaving it latched turns "this walk stalled twice" into
             // "dig everywhere from now on": the flag would then be true for every later repath,
             // including the task ones, and the bot tunnels its way across the world instead of
             // walking. Measured at 1351 escalations in a single run before this was one-shot.
             escalateToDigging = false;
-            result = AStarPathfinder.find(ctx.level, start, goal,
-                    tune(ctx.config.miningSettings()).withAllowSwim(swimAllowed)
-                            .withAllowJump(allowJump).withMiner(ctx.player));
+            result = digRoute(ctx, start, swimAllowed);
             executorAllowsBreak = true;
             executorAllowsSwim = swimAllowed;
             ctx.debug.decide("walking route stalled twice; planning one that can dig, once");
@@ -858,15 +950,49 @@ public final class GotoTask implements Task {
         }
 
         if (!usableRoute(result, ctx) && allowBreak) {
-            result = AStarPathfinder.find(ctx.level, start, goal,
-                    tune(ctx.config.miningSettings()).withAllowSwim(swimPreferred)
-                            .withAllowJump(allowJump).withMiner(ctx.player));
+            result = digRoute(ctx, start, swimPreferred);
             executorAllowsBreak = true;
             executorAllowsSwim = swimPreferred;
             ctx.debug.decide("no route on foot or through water; trying a route that can dig");
         }
 
         return finishRoute(ctx, result, goal, start);
+    }
+
+    /** Plans a route that may dig with what the pack holds; when it goes nowhere, asks why. */
+    private AStarPathfinder.Result digRoute(BotContext ctx, BlockPos start, boolean swim) {
+        AStarPathfinder.Settings digging = tune(ctx.config.miningSettings())
+                .withAllowSwim(swim).withAllowJump(allowJump);
+        AStarPathfinder.Result result = AStarPathfinder.find(ctx.level, start, goal,
+                digging.withMiner(ctx.player));
+        if (result.isEmpty()) {
+            missingTool = blockNeedingTool(ctx, start, digging);
+            if (missingTool != null) {
+                ctx.debug.decide("no route this pack can dig; "
+                        + missingTool.getName().getString() + " needs a better tool");
+            }
+        }
+        return result;
+    }
+
+    /**
+     * The block a missing tool stops this walk at, when that is why a route that may dig found
+     * nowhere to go: the search is run again as if any tool were carried, and the answer is the
+     * first block on that route which nothing in the pack can dig. Null when that route goes
+     * nowhere either, or needs nothing the pack lacks.
+     *
+     * <p>The search never plans through a block the bot cannot harvest, because breaking one
+     * destroys it. With an empty pack - which is what a respawn leaves - that is everything under
+     * the dirt, so a walk to a death far underground digs to the stone by hand and then has
+     * nowhere to go. "No route found" is true there, and it is not what the player needs to hear:
+     * they need a pickaxe.</p>
+     */
+    private Block blockNeedingTool(BotContext ctx, BlockPos start, AStarPathfinder.Settings digging) {
+        List<BlockPos> route = AStarPathfinder.find(ctx.level, start, goal,
+                digging.withMiner(null)).path();
+        BlockPos stuck = MovementHelper.firstUndiggable(ctx.level, route,
+                state -> ToolSelector.canHarvest(ctx.player, state));
+        return stuck == null ? null : ctx.level.getBlockState(stuck).getBlock();
     }
 
     private AStarPathfinder.Settings tune(AStarPathfinder.Settings settings) {
@@ -896,11 +1022,17 @@ public final class GotoTask implements Task {
             ctx.debug.count("path_empty");
             ctx.debug.lastEvent = "empty path x" + failedPaths;
             ctx.debug.giveUp = goalLimits();
+            // Searching again will not make a pickaxe, and with the goal below, climbing will not
+            // bring it nearer. With the goal above, a pillar out of the pit still might, so the
+            // usual tries and recoveries stand.
+            if (upIsNoWayOut(start)) {
+                return false;
+            }
             return failedPaths < MAX_FAILED_PATHS;
         }
 
         failedPaths = 0;
-        executor = new PathExecutor(result.path(), ctx.level, executorAllowsSwim, allowJump);
+        executor = new PathExecutor(result.path(), ctx.level, executorAllowsSwim, allowJump, doors);
         ctx.debug.nextDecision = executorAllowsBreak
                 ? "follow route and clear obstructions when safe"
                 : "follow route; avoid digging";

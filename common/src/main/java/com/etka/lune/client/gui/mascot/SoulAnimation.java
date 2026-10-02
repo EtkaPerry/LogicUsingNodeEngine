@@ -1,6 +1,7 @@
 package com.etka.lune.client.gui.mascot;
 
 import java.util.List;
+import java.util.Random;
 
 /**
  * Picks the row of the soul atlas that shows Lune's mood, and wipes one form into the next.
@@ -13,6 +14,11 @@ import java.util.List;
  * pool rises from the bottom to swallow the old one, and between two pools the surface itself
  * moves, sinking to a lower level or climbing to a higher one.</p>
  *
+ * <p>A few moods have more than one row. Farming, crafting and collecting are jobs a player can
+ * watch for an hour, so each has several forms, and one of them is picked at random whenever the
+ * mood comes up ({@link #rows}). The same form comes back while the mood lasts; it only changes
+ * when she stops that job and starts it again.</p>
+ *
  * <p>The forms follow one rule: a soul that moves is Lune doing something, and a soul that is
  * broken, drained or blown about is something being done to her. That is why fighting is a cut she
  * makes and being hurt is a crack she carries.</p>
@@ -22,7 +28,7 @@ import java.util.List;
 public final class SoulAnimation {
 
     public static final int FRAMES = 8;
-    public static final int ROWS = 32;
+    public static final int ROWS = 43;
 
     static final int ROW_IDLE = 0;
     static final int ROW_WORKING = 1;
@@ -56,6 +62,17 @@ public final class SoulAnimation {
     static final int ROW_SUCCESS = 29;
     static final int ROW_INVENTORY_FULL = 30;
     static final int ROW_MISSING_MATERIALS = 31;
+    static final int ROW_DIGGING = 32;
+    static final int ROW_FARMING_WHEAT = 33;
+    static final int ROW_FARMING_SPROUT = 34;
+    static final int ROW_FARMING_ROWS = 35;
+    static final int ROW_CRAFTING_GRID = 36;
+    static final int ROW_CRAFTING_ASSEMBLE = 37;
+    static final int ROW_SMELTING = 38;
+    static final int ROW_COLLECTING_FALL = 39;
+    static final int ROW_COLLECTING_PICKUP = 40;
+    static final int ROW_GEYSER = 41;
+    static final int ROW_GLIDING = 42;
 
     /** How long one form takes to give way to the next. */
     static final long WIPE_MILLIS = 320L;
@@ -70,11 +87,36 @@ public final class SoulAnimation {
         }
     }
 
+    private final Random random;
+    private MascotAdvisor.Mood shownMood;
     private int shownRow = -1;
     private int previousRow = -1;
     private long wipeStartedAt;
     private boolean wipeDown;
 
+    public SoulAnimation() {
+        this(new Random());
+    }
+
+    /** For tests, which need to know which of a mood's forms comes up. */
+    SoulAnimation(Random random) {
+        this.random = random;
+    }
+
+    /**
+     * Every row that shows this mood. Most moods have exactly one; the jobs a player watches for
+     * longest have a few, and {@link #layers} picks among them each time the mood comes up.
+     */
+    public static int[] rows(MascotAdvisor.Mood mood) {
+        return switch (mood) {
+            case FARMING -> new int[] {ROW_FARMING_WHEAT, ROW_FARMING_SPROUT, ROW_FARMING_ROWS};
+            case CRAFTING -> new int[] {ROW_CRAFTING_GRID, ROW_CRAFTING_ASSEMBLE};
+            case COLLECTING -> new int[] {ROW_COLLECTING_FALL, ROW_COLLECTING_PICKUP};
+            default -> new int[] {row(mood)};
+        };
+    }
+
+    /** The mood's first row, which is its only one for all but a few moods. */
     public static int row(MascotAdvisor.Mood mood) {
         return switch (mood) {
             case IDLE -> ROW_IDLE;
@@ -109,6 +151,13 @@ public final class SoulAnimation {
             case SUCCESS -> ROW_SUCCESS;
             case INVENTORY_FULL -> ROW_INVENTORY_FULL;
             case MISSING_MATERIALS -> ROW_MISSING_MATERIALS;
+            case DIGGING -> ROW_DIGGING;
+            case FARMING -> ROW_FARMING_WHEAT;
+            case CRAFTING -> ROW_CRAFTING_GRID;
+            case SMELTING -> ROW_SMELTING;
+            case COLLECTING -> ROW_COLLECTING_FALL;
+            case GEYSER -> ROW_GEYSER;
+            case GLIDING -> ROW_GLIDING;
         };
     }
 
@@ -121,7 +170,7 @@ public final class SoulAnimation {
     static boolean pool(int row) {
         return switch (row) {
             case ROW_ASKING, ROW_WAITING, ROW_LOADING, ROW_DIVING, ROW_BLOCKED, ROW_DANGER,
-                    ROW_DEAD, ROW_MISSING_MATERIALS -> false;
+                    ROW_DEAD, ROW_MISSING_MATERIALS, ROW_SMELTING, ROW_GLIDING -> false;
             default -> true;
         };
     }
@@ -132,6 +181,11 @@ public final class SoulAnimation {
      * {@link #pool(int)} holds, and it decides which way two pools wipe: a pool drains down to a
      * lower surface, because rising into one would eat the old pool from underneath and leave its
      * top hanging in the air until it vanished.
+     *
+     * <p>The job rows from {@link #ROW_DIGGING} on were measured by the soul's coverage - the first
+     * row where it fills 60% of the head's width - which is also exactly the level each one's pool
+     * was drawn at. Their props stand above the pool on both sides of the eye, so a measure of how
+     * far the soul reaches from side to side would put the surface at the top of a wheat stalk.</p>
      */
     static int surface(int row) {
         return switch (row) {
@@ -147,8 +201,13 @@ public final class SoulAnimation {
             case ROW_TRAVEL -> 63;
             case ROW_PAUSED, ROW_EFFECT -> 65;
             case ROW_STALLED -> 66;
+            case ROW_DIGGING, ROW_GEYSER -> 68;
+            case ROW_COLLECTING_FALL -> 69;
+            case ROW_FARMING_WHEAT, ROW_FARMING_SPROUT, ROW_FARMING_ROWS,
+                    ROW_COLLECTING_PICKUP -> 70;
             case ROW_HUNGRY -> 71;
-            case ROW_SEARCH, ROW_BRIDGING, ROW_FIGHT -> 72;
+            case ROW_SEARCH, ROW_BRIDGING, ROW_FIGHT, ROW_CRAFTING_GRID,
+                    ROW_CRAFTING_ASSEMBLE -> 72;
             case ROW_STAIRS -> 73;
             case ROW_LEARNING -> 74;
             case ROW_FLEE -> 75;
@@ -194,6 +253,15 @@ public final class SoulAnimation {
             case ROW_DEAD -> 900;
             case ROW_SUCCESS -> 260;
             case ROW_INVENTORY_FULL -> 500;
+            case ROW_DIGGING, ROW_COLLECTING_FALL, ROW_COLLECTING_PICKUP -> 220;
+            case ROW_FARMING_WHEAT -> 380;
+            case ROW_FARMING_SPROUT, ROW_FARMING_ROWS -> 320;
+            case ROW_CRAFTING_GRID, ROW_SMELTING -> 300;
+            case ROW_CRAFTING_ASSEMBLE -> 260;
+            case ROW_GEYSER -> 200;
+            // Slow on purpose: each ring takes three loops to pass, so a ring comes out from behind
+            // her eye every 1.4 s and drifts past - calm flight, not a warp tunnel.
+            case ROW_GLIDING -> 180;
             default -> 380;
         };
     }
@@ -204,15 +272,19 @@ public final class SoulAnimation {
 
     /** The cells to draw for this mood at this moment, bottom layer first. */
     public List<Layer> layers(MascotAdvisor.Mood mood, long now) {
-        int target = row(mood);
-        if (shownRow < 0) {
-            shownRow = target;
-        } else if (target != shownRow) {
-            previousRow = shownRow;
-            shownRow = target;
-            wipeStartedAt = now;
-            wipeDown = !pool(target)
-                    || (pool(previousRow) && surface(target) > surface(previousRow));
+        if (shownMood == null) {
+            shownMood = mood;
+            shownRow = pick(mood);
+        } else if (mood != shownMood) {
+            shownMood = mood;
+            int target = pick(mood);
+            if (target != shownRow) {
+                previousRow = shownRow;
+                shownRow = target;
+                wipeStartedAt = now;
+                wipeDown = !pool(target)
+                        || (pool(previousRow) && surface(target) > surface(previousRow));
+            }
         }
         float progress = previousRow < 0 ? 1f : (now - wipeStartedAt) / (float) WIPE_MILLIS;
         if (progress >= 1f) {
@@ -228,5 +300,11 @@ public final class SoulAnimation {
         return List.of(
                 new Layer(previousRow, frame(previousRow, now), 0f, 1f - line),
                 new Layer(shownRow, frame(shownRow, now), 1f - line, 1f));
+    }
+
+    /** One of the mood's forms: its only one, or one of several at random. */
+    private int pick(MascotAdvisor.Mood mood) {
+        int[] forms = rows(mood);
+        return forms.length == 1 ? forms[0] : forms[random.nextInt(forms.length)];
     }
 }

@@ -13,10 +13,12 @@ import java.util.Map;
  *
  * <p>They are a shelf in three tiers, read left to right like the game itself:</p>
  * <ul>
- *   <li><b>Demos, jobs 1 to 4.</b> A few minutes each, from an empty pack, and they end on their
- *       own. None of them owns an Always, Pulse, Observer or Button card, because any of those
- *       keeps a run alive after its last card - so their guard rides the While pins of the cards
- *       that work outdoors, and the run finishes and says so.</li>
+ *   <li><b>Demos, jobs 1 to 4.</b> A few minutes each, and they end on their own. None of them
+ *       owns an Always, Pulse, Observer or Button card, because any of those keeps a run alive
+ *       after its last card - so their guard rides the While pins of the cards that work outdoors,
+ *       and the run finishes and says so. Jobs 1 to 3 start from an empty pack; job 4 is the other
+ *       way to run a task, beside the player, and works with whatever pickaxe the player carries
+ *       while they play.</li>
  *   <li><b>Chores, jobs 5 to 9.</b> Hours of unattended work that stop by themselves. The long
  *       ones hold Self Preservation on an Always card for the whole shift, and a second Always card
  *       runs a Countdown that saves and leaves the world when the time is up; a full chest ends the
@@ -112,7 +114,6 @@ public final class DefaultTasks {
     private static final String QUARRY = "Quarry";
     private static final String FARM = "Homestead";
     private static final String POST = "Watch Post";
-    private static final String TUNNEL_MOUTH = "Tunnel Entrance";
     private static final String RECOVERY_START = "Recovery Start";
     private static final String NETHER_SIDE = "Nether Portal";
     private static final String VILLAGE = "Village";
@@ -129,7 +130,7 @@ public final class DefaultTasks {
     static final String CHOP_WOOD = "1. Chop Wood";
     static final String STONE_TOOLS = "2. Stone Tools from Scratch";
     static final String GO_FISHING = "3. Go Fishing";
-    static final String DIG_TUNNEL = "4. Dig a Tunnel";
+    static final String MINE_BESIDE = "4. Mine Ore Beside Me";
     static final String LUMBER_CAMP = "5. Lumber Camp";
     static final String STONE_QUARRY = "6. Stone Quarry";
     static final String HOMESTEAD = "7. Homestead, Every Day";
@@ -138,7 +139,7 @@ public final class DefaultTasks {
     static final String STUFF_BACK = "10. Get My Stuff Back";
     static final String LIT_PORTAL = "11. Stone Tools to a Lit Portal";
     static final String ENDER_DRAGON = "12. New World to Ender Dragon";
-    static final String NETHERITE = "13. Netherite from the Nether";
+    static final String NETHERITE = "13. Netherite, There and Back";
     static final String FIND_VILLAGE = "14. Find a Village";
     static final String CHERRY_TIMBER = "15. Cherry Grove Timber";
 
@@ -146,7 +147,7 @@ public final class DefaultTasks {
     static final String CHOP_WOOD_ID = "chop_wood";
     static final String STONE_TOOLS_ID = "stone_tools";
     static final String GO_FISHING_ID = "go_fishing";
-    static final String DIG_TUNNEL_ID = "dig_tunnel";
+    static final String MINE_BESIDE_ID = "mine_beside";
     static final String LUMBER_CAMP_ID = "lumber_camp";
     static final String STONE_QUARRY_ID = "stone_quarry";
     static final String HOMESTEAD_ID = "homestead_day";
@@ -155,7 +156,7 @@ public final class DefaultTasks {
     static final String STUFF_BACK_ID = "stuff_back";
     static final String LIT_PORTAL_ID = "lit_portal";
     static final String ENDER_DRAGON_ID = "ender_dragon";
-    static final String NETHERITE_ID = "netherite";
+    static final String NETHERITE_ID = "netherite_trip";
     static final String FIND_VILLAGE_ID = "find_village";
     static final String CHERRY_TIMBER_ID = "cherry_timber";
 
@@ -166,6 +167,15 @@ public final class DefaultTasks {
      * who has been running them still has them on disk, and matching the old name to its old id is
      * what keeps their titles translated. Their ids differ from every new one, so a restore adds the
      * new shelf beside them rather than deciding it is already there.</p>
+     *
+     * <p>The seventh is job 13 as it first shipped, whose way home could stop off to one side of
+     * the portal, where the frame hides it. The mended job took a new name as well as a new id,
+     * because a restore matches on either and would otherwise take the old copy for the new
+     * one.</p>
+     *
+     * <p>The eighth is job 4 as it first shipped, a tunnel dug straight ahead and walked back out
+     * of. Its place on the shelf went to the job that shows a task run beside the player; a player
+     * who has the tunnel still has it, under its own title, in their own language.</p>
      */
     static final Map<String, String> SEEDED_NAMES = Map.ofEntries(
             Map.entry("1. Chop 12 Logs", "logs"),
@@ -174,10 +184,12 @@ public final class DefaultTasks {
             Map.entry("4. Fish Till Dusk, Then Sleep", "nightfall"),
             Map.entry("5. Stone Tools to a Lit Portal", "portal"),
             Map.entry("6. New World to Ender Dragon", "dragon"),
+            Map.entry("13. Netherite from the Nether", "netherite"),
+            Map.entry("4. Dig a Tunnel", "dig_tunnel"),
             Map.entry(CHOP_WOOD, CHOP_WOOD_ID),
             Map.entry(STONE_TOOLS, STONE_TOOLS_ID),
             Map.entry(GO_FISHING, GO_FISHING_ID),
-            Map.entry(DIG_TUNNEL, DIG_TUNNEL_ID),
+            Map.entry(MINE_BESIDE, MINE_BESIDE_ID),
             Map.entry(LUMBER_CAMP, LUMBER_CAMP_ID),
             Map.entry(STONE_QUARRY, STONE_QUARRY_ID),
             Map.entry(HOMESTEAD, HOMESTEAD_ID),
@@ -202,7 +214,7 @@ public final class DefaultTasks {
     /** Fresh graphs, so editing a seeded job never mutates a later restore. */
     public static List<TaskGraph> create() {
         List<TaskGraph> tasks = List.of(
-                chopWood(), stoneTools(), goFishing(), digTunnel(),
+                chopWood(), stoneTools(), goFishing(), mineBeside(),
                 lumberCamp(), stoneQuarry(), homestead(), smeltery(), nightWatch(),
                 stuffBack(), litPortal(), enderDragon(), netherite(), findVillage(),
                 cherryTimber());
@@ -383,48 +395,71 @@ public final class DefaultTasks {
         return task;
     }
 
-    /** Job 4: a straight corridor into whatever the player is facing, and back out. */
-    private static TaskGraph digTunnel() {
-        TaskGraph task = seeded(DIG_TUNNEL, DIG_TUNNEL_ID);
-        task.nodes.add(start("pick"));
-        task.nodes.add(forge("pick", "Pickaxe", "Stone", "entrance", "no_pick"));
-        task.nodes.add(notify("no_pick", SOUND_PROBLEM, "stop_no_pick"));
-        task.nodes.add(end("stop_no_pick"));
-        task.nodes.add(saveWaypoint("entrance", TUNNEL_MOUTH, "dig"));
-        TaskNode dig = node("dig", "tunnel", Map.of(
-                "direction", "Facing",
-                "length", "32",
-                "height", "2"));
-        dig.onSuccess = "walk_out";
-        dig.onFailure = "walk_out";
-        task.nodes.add(dig);
-        task.nodes.add(goTo("walk_out", TUNNEL_MOUTH, 2, "done"));
+    /**
+     * Job 4: the other way to run a task. The player plays; Lune mines the iron and diamond ore they
+     * walk past - ten of them - and gives the keys back after each.
+     */
+    private static TaskGraph mineBeside() {
+        TaskGraph task = seeded(MINE_BESIDE, MINE_BESIDE_ID);
+        // The one thing about this job that is not a card. Power flows exactly as in every other
+        // job on the shelf; what changes is that the keys stay the player's until a card has
+        // work in sight.
+        task.beside = true;
+        task.nodes.add(start("hello"));
+        task.nodes.add(notify("hello", SOUND_START, "ore"));
+
+        // Beside the player, Mine does not search, walk back to remembered ore or fetch a tool: it
+        // waits for ore to come into the player's view, and takes only what the pack can mine.
+        // The parameters say so as well, so the card reads the same run in someone's place.
+        TaskNode ore = node("ore", "mine", Map.of(
+                "targets", IRON_ORES + "," + DIAMOND_ORES,
+                "radius", "24",
+                "y_min", "-64",
+                "y_max", "320",
+                "limit", "10",
+                "auto_tool", "false",
+                "prospect", "false",
+                "check_around", "false"));
+        ore.onSuccess = "done";
+        ore.onFailure = "no_ore";
+        task.nodes.add(ore);
+        task.nodes.add(notify("no_ore", SOUND_PROBLEM, "stop_no_ore"));
+        task.nodes.add(end("stop_no_ore"));
         task.nodes.add(notify("done", SOUND_DONE, "end"));
         task.nodes.add(end("end"));
-        task.nodes.add(guardOnPins(task, "pick", "dig", "walk_out"));
+
+        // Mine is powered from the first tick to the tenth ore, so the guard on its While pin
+        // watches the whole run. It steps in for a mob only at arm's length and builds no walls
+        // round somebody who is playing: a fight the player is in is theirs until it is about to
+        // hurt them.
+        TaskNode guard = guardOnPins(task, "ore");
+        guard.params.put("monster_distance", "4");
+        guard.params.put("build_cover", "false");
+        task.nodes.add(guard);
 
         Lane lane = new Lane(task);
-        lane.plain("start", null);
-        lane.band("tools", "Tools", BLUE, cards("pick"), under("pick", 1, "no_pick"),
-                under("pick", 2, "stop_no_pick"));
-        lane.band("tunnel", "The tunnel", SLATE, cards("entrance", "dig", "walk_out"));
+        lane.plain("start", null, "hello");
+        lane.band("ore_in_sight", "Ore in sight", SLATE, cards("ore"), under("ore", 1, "no_ore"),
+                under("ore", 2, "stop_no_ore"));
         lane.plain("done", "end");
-        lane.support("safety", "Safety", RED, 3, lane.start("tunnel"), "guard");
+        lane.support("safety", "Safety", RED, 3, lane.start("ore_in_sight"), "guard");
 
         caption(task, "intro", 0, 2, AMBER,
-                "Face the way you want to dig, then press Run. Lune makes a stone pickaxe if she "
-                        + "has none, digs a tunnel thirty-two blocks long and two high, and walks "
-                        + "back out.");
-        caption(task, "pickaxe", lane.start("tools"), 1, BLUE,
-                "Get Tools makes a stone pickaxe from nothing if needed. If it cannot, a low note "
-                        + "and the job stops.");
-        caption(task, "dig", lane.start("tunnel"), 3, SLATE,
-                "Save Waypoint remembers the entrance before digging starts. Tunnel clears each "
-                        + "column before stepping into it, so the tunnel stays straight. Go to "
-                        + "Waypoint walks back out, even when the tunnel stopped early.");
-        rowNote(task, "guard", lane.start("tunnel") + 1, 3, 2, RED,
-                "A tunnel is dark, and dark is where monsters spawn. Self Preservation rides the "
-                        + "While pins of the three cards that do the work.");
+                "Press Run, then keep playing. This job runs beside you: the keys stay yours, "
+                        + "and Lune takes them only when one of her cards has work in sight. Ten "
+                        + "ores, and it finishes.");
+        caption(task, "ore", lane.start("ore_in_sight") - 1, 2, SLATE,
+                "Mine waits for iron or diamond ore to come into your view, and only ore your "
+                        + "pack can mine. She walks over, mines it, picks it up and hands the "
+                        + "keys back.");
+        caption(task, "finish", lane.column("done"), 2, AMBER,
+                "The switch beside a task's name makes any task run beside you; the blue mark in "
+                        + "the lists shows which do. Cards that look for work wait until it is "
+                        + "in your view.");
+        rowNote(task, "guard", lane.start("ore_in_sight") + 1, 3, 2, RED,
+                "Self Preservation watches for as long as Mine is powered: here, the whole run. "
+                        + "Lava, a fall, a fireball - she takes the keys, answers it and gives "
+                        + "them back.");
         lane.finish();
         return task;
     }
@@ -1311,7 +1346,22 @@ public final class DefaultTasks {
     private static TaskGraph netherite() {
         TaskGraph task = seeded(NETHERITE, NETHERITE_ID);
         task.nodes.add(start("where"));
-        task.nodes.add(dimensionIs("where", "Nether", "n_mark", "cross"));
+        // Starting in the Nether can be starting again: after a rejoin, or after a stop halfway
+        // through the trip. The portal saved on the way in is still the way home then, so one
+        // saved within reach of the digging below is kept: the staircase down to the debris from
+        // under the Nether's roof and both strip-mine passes, end to end, come to about two
+        // hundred blocks. Only with none that near is the spot she starts on taken for the portal.
+        task.nodes.add(dimensionIs("where", "Nether", "known_portal", "has_ingot"));
+        task.nodes.add(nearWaypoint("known_portal", NETHER_SIDE, 256, "armor", "n_mark"));
+        // Started anywhere else, the pack says how far an earlier run got, asked from the end back
+        // the way the speedrun resumes: an ingot goes to the template, four scrap to the gold and
+        // four debris to the furnace, each to the step that uses it. Only a pack with none of them
+        // crosses over.
+        task.nodes.add(carrying("has_ingot", "minecraft:netherite_ingot", 1,
+                "template_check", "has_scrap"));
+        task.nodes.add(carrying("has_scrap", "minecraft:netherite_scrap", 4,
+                "gold_check", "has_debris"));
+        task.nodes.add(carrying("has_debris", ANCIENT_DEBRIS, 4, "furnace_check", "cross"));
         task.nodes.add(usePortal("cross", 32, "n_mark", "obsidian_check"));
         task.nodes.add(carrying("obsidian_check", "minecraft:obsidian", 10, "lighter_check", "cant_cross"));
         task.nodes.add(carrying("lighter_check", "minecraft:flint_and_steel", 1, "build", "cant_cross"));
@@ -1324,7 +1374,10 @@ public final class DefaultTasks {
         // The Nether side of the portal is the one waypoint this job cannot do without: the way
         // home is through the same frame.
         task.nodes.add(saveWaypoint("n_mark", NETHER_SIDE, "armor"));
-        task.nodes.add(wearArmor("armor", "pick_check"));
+        task.nodes.add(wearArmor("armor", "debris_ready"));
+        // Four debris already carried, as after a restart in the mine, go straight home - before
+        // the pickaxe is asked for, since the way home needs none.
+        task.nodes.add(carrying("debris_ready", ANCIENT_DEBRIS, 4, "to_portal", "pick_check"));
         task.nodes.add(hold("pick_check", "minecraft:diamond_pickaxe", 10, "n_food", "no_pick"));
         task.nodes.add(notify("no_pick", SOUND_PROBLEM, "stop_pick"));
         task.nodes.add(end("stop_pick"));
@@ -1335,8 +1388,16 @@ public final class DefaultTasks {
         task.nodes.add(carrying("debris_count", ANCIENT_DEBRIS, 4, "to_portal", "strip_two"));
         task.nodes.add(branchMine("strip_two", ANCIENT_DEBRIS, 15, 40, 10, "loot_two", "to_portal"));
         task.nodes.add(sweep("loot_two", "to_portal"));
-        task.nodes.add(goTo("to_portal", NETHER_SIDE, 2, "exit"));
-        task.nodes.add(usePortal("exit", 32, "furnace_check", "stranded"));
+        // The waypoint is where she came through, a cell of the sheet, so within one block of it is
+        // in front of the portal, behind it, or in it. Two also takes the cell off to one side, in
+        // line with the portal, where a side column of the frame stands between her eyes and every
+        // portal block; Use Nether Portal goes by what it can see, and from there it saw nothing.
+        task.nodes.add(goTo("to_portal", NETHER_SIDE, 1, "exit"));
+        task.nodes.add(usePortal("exit", 32, "home_check", "home_check"));
+        // Where she ends up decides, not what the portal card said. A walk that ends in the sheet
+        // crosses at once in Creative, where a portal does not wait four seconds; the card then
+        // starts at home, stands in the portal it arrived through, and fails there.
+        task.nodes.add(dimensionIs("home_check", "Overworld", "furnace_check", "stranded"));
         task.nodes.add(notify("stranded", SOUND_PROBLEM, "rest"));
 
         task.nodes.add(carrying("furnace_check", "minecraft:furnace", 1, "coal_check", "cobble_check"));
@@ -1373,17 +1434,20 @@ public final class DefaultTasks {
 
         Lane lane = new Lane(task);
         lane.plain("start", null);
+        lane.band("left_off", "Where she left off", AMBER,
+                cards("where", "has_ingot", "has_scrap", "has_debris"),
+                under("where", 1, "known_portal"));
         lane.band("crossing", "Crossing over", PURPLE,
-                cards("where", "cross", "obsidian_check", "lighter_check", "build", "enter"),
+                cards("cross", "obsidian_check", "lighter_check", "build", "enter"),
                 under("build", 1, "build_open"), under("enter", 1, "cant_cross"),
                 under("enter", 2, "stop_cross"));
         lane.band("debris", "Ancient debris", RED,
-                cards("n_mark", "armor", "pick_check", "n_food", "strip_one", "loot_one",
-                        "debris_count"),
+                cards("n_mark", "armor", "debris_ready", "pick_check", "n_food", "strip_one",
+                        "loot_one", "debris_count"),
                 under("pick_check", 1, "no_pick"), under("pick_check", 2, "stop_pick"),
                 under("n_food", 1, "n_eat"), under("debris_count", 1, "strip_two", "loot_two"));
-        lane.band("home", "Home again", PURPLE, cards("to_portal", "exit"),
-                under("exit", 1, "stranded"));
+        lane.band("home", "Home again", PURPLE, cards("to_portal", "exit", "home_check"),
+                under("home_check", 1, "stranded"));
         lane.band("furnace", "The furnace", SLATE,
                 cards("furnace_check", "cobble_check", "quarry", "make_furnace"));
         lane.band("smelting", "Smelting", AMBER, cards("coal_check", "fuel_wood", "fuel_loot", "smelt"));
@@ -1397,17 +1461,26 @@ public final class DefaultTasks {
                 "Go to the Nether, mine ancient debris and come home to make a netherite pickaxe. "
                         + "Bring a diamond pickaxe, food, four gold ingots, and ten obsidian with "
                         + "flint and steel. The upgrade template is found in bastion chests.");
+        caption(task, "left_off", lane.start("left_off"), 3, AMBER,
+                "Already under way? In the Nether, Check Distance keeps a portal saved within 256 "
+                        + "blocks, so a restart in the mine still knows the way home; with none "
+                        + "that near, the spot she starts on is saved, so start her at the "
+                        + "portal. At home, a netherite ingot, four scrap or four ancient debris "
+                        + "in the pack send the job straight to the step that uses them.");
         caption(task, "crossing", lane.start("crossing"), 3, PURPLE,
-                "Already in the Nether? Straight on. Otherwise Use Nether Portal walks into a lit "
-                        + "portal in sight; with none, Build Nether Portal makes one from the "
-                        + "obsidian carried.");
+                "Use Nether Portal walks into a lit portal in sight; with none, Build Nether "
+                        + "Portal makes one from the obsidian carried.");
         caption(task, "debris", lane.start("debris"), 3, RED,
-                "The portal is saved as a waypoint. Ancient debris is most common at height "
-                        + "fifteen, so Stripmine digs a shaft and branches there, and a longer "
-                        + "second pass runs when fewer than four were found.");
-        caption(task, "home", lane.start("home"), 2, PURPLE,
-                "Back to the saved portal and through it. A portal that will not take her home "
-                        + "ends the job.");
+                "The portal is saved as a waypoint. Four ancient debris already carried, as after "
+                        + "a restart in the mine, go straight home. Otherwise Stripmine digs a "
+                        + "shaft and branches at height fifteen, where debris is most common, "
+                        + "and a longer second pass runs when fewer than four were found.");
+        caption(task, "home", lane.start("home"), 3, PURPLE,
+                "Back to the saved portal, stopping within one block of it: in front of it or in "
+                        + "it. Within two she could also stop off to one side, in line with the "
+                        + "portal, where the frame hides it from her. Then Use Nether Portal takes "
+                        + "her through, and Check Dimension asks where she ended up: at home the "
+                        + "job carries on, and still in the Nether it ends.");
         caption(task, "furnace", lane.start("furnace"), 3, SLATE,
                 "A furnace is placed from the pack, or made from eight cobblestone.");
         caption(task, "smelting", lane.start("smelting"), 3, AMBER,
@@ -1419,7 +1492,8 @@ public final class DefaultTasks {
                         + "netherite.");
         caption(task, "finish", lane.start("finish"), 3, AMBER,
                 "Anything missing ends the run with a low note, and the world is paused either way "
-                        + "so you can see how far it got.");
+                        + "so you can see how far it got. Put what was missing in the pack and "
+                        + "run it again: it picks up from there.");
         rowNote(task, "guard", 2, lane.lowestRow() + 2, 3, RED,
                 "Self Preservation holds for the whole trip on its own Always card: lava, ghast "
                         + "fireballs and long falls are the Nether's usual ways to end a run.");
@@ -1841,6 +1915,21 @@ public final class DefaultTasks {
                 "tolerance", Integer.toString(tolerance)));
         node.onSuccess = next;
         node.onFailure = next;
+        return node;
+    }
+
+    /**
+     * Whether a saved place is at most {@code blocks} away. One that is not saved, or is saved in
+     * another world, is not.
+     */
+    private static TaskNode nearWaypoint(String id, String waypoint, int blocks, String yes,
+                                         String no) {
+        TaskNode node = node(id, "check_distance", Map.of(
+                "waypoint", waypoint,
+                "comparison", "At most",
+                "distance", Integer.toString(blocks)));
+        node.onSuccess = yes;
+        node.onFailure = no;
         return node;
     }
 

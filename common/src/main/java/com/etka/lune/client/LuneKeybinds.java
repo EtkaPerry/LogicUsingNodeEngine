@@ -5,6 +5,7 @@ import com.etka.lune.util.Lang;
 import com.etka.lune.Constants;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.client.gui.LuneScreen;
+import com.etka.lune.client.gui.LuneStatusOverlay;
 import com.etka.lune.client.gui.TermsScreen;
 import com.etka.lune.config.BotConfig;
 import com.etka.lune.config.Terms;
@@ -68,7 +69,16 @@ public final class LuneKeybinds {
         }
     }
 
-    /** Called once per client tick by each loader: handles keys, then ticks the bot. */
+    /**
+     * Called by each loader at the start of every client tick, before the game reads the keys and
+     * the mouse - the one moment a click can still be kept from reaching it. Only a run beside the
+     * player does anything here; see {@link BotEngine#beforeTick}.
+     */
+    public static void clientTickStart(Minecraft mc) {
+        BotEngine.get().beforeTick(mc);
+    }
+
+    /** Called once per client tick by each loader: handles keys, then ticks the bot and Lune's card. */
     public static void clientTick(Minecraft mc) {
         if (mc.player != null) {
             while (OPEN.consumeClick()) {
@@ -108,7 +118,13 @@ public final class LuneKeybinds {
                     mc.player.sendOverlayMessage(Component.literal(Lang.get("lune.gui.bot_context.lune", BotEngine.get().recordLearningFeedback(false))));
                 }
             }
+            // The keys players gave their own tasks. Not mappings of this class: those are the
+            // mod's, listed in Controls; these are set on the Tasks tab, one per task.
+            TaskShortcutKeys.tick(mc);
         }
         BotEngine.get().tick(mc);
+        // After the bot, so she speaks of the tick just taken; and while a screen hides the card
+        // too, so it shows how things stand the moment the screen closes.
+        LuneStatusOverlay.tick();
     }
 }

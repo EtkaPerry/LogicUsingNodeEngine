@@ -89,6 +89,11 @@ public final class BotConfig {
      * the panel shut and the bot idle on a fresh install.
      */
     public int acceptedTermsVersion = 0;
+    /**
+     * Highest {@link SharePolicy#VERSION} the player has agreed to; 0 until their first share
+     * link, which is when the Share popup asks.
+     */
+    public int acceptedSharePolicyVersion = 0;
 
     // --- Movement -----------------------------------------------------------
     /** Sprint on straight, level stretches. */
@@ -190,6 +195,12 @@ public final class BotConfig {
      * when its task is renamed and drops it when the task is deleted.</p>
      */
     public Map<String, TaskView> taskViews = new LinkedHashMap<>();
+    /**
+     * The key that starts each task in game, by task name, as the game's own key name
+     * ({@code key.keyboard.keypad.1}). Given on the Tasks tab rather than in Controls: a task is
+     * the player's, and so is the key. See {@link TaskShortcuts} for the rules that keep it true.
+     */
+    public Map<String, String> taskShortcuts = new LinkedHashMap<>();
     /** Training lesson ids the player has cleared; see {@code com.etka.lune.training}. */
     public Set<String> trainingCompleted = new LinkedHashSet<>();
     /** Redstone Wires: the fastest clear per board size id, in milliseconds; see {@code com.etka.lune.games}. */

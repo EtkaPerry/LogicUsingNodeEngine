@@ -71,6 +71,12 @@ public final class StopGameTask implements Task {
         this.ending = ending == null ? Ending.PAUSE : ending;
     }
 
+    /** Never touches the controls, so beside the player it never takes them. */
+    @Override
+    public boolean holdsControls() {
+        return false;
+    }
+
     @Override
     public String name() {
         return Lang.get(ending == Ending.PAUSE

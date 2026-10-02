@@ -6,7 +6,8 @@
     "description": "${description}",
     "authors": [ "${mod_author}" ],
     "license": "${license}",
-    "environment": "client",
+    "icon": "assets/${mod_id}/icon.png",
+    "environment": "*",
     "entrypoints": {
         "main": [ "com.etka.lune.LuneFabric" ],
         "client": [ "com.etka.lune.client.LuneFabricClient" ],

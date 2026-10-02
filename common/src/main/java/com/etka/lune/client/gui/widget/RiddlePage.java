@@ -2,6 +2,7 @@ package com.etka.lune.client.gui.widget;
 
 import com.etka.lune.client.gui.Accessibility;
 import com.etka.lune.client.gui.LuneScreen;
+import com.etka.lune.client.gui.UiScale;
 import com.etka.lune.client.gui.mascot.MascotAdvisor;
 import com.etka.lune.games.RiddleDeck;
 import com.etka.lune.games.RiddleGame;
@@ -293,7 +294,9 @@ final class RiddlePage {
             extractor.itemDecorations(font, stack, mouseX - 8, mouseY - 8,
                     game.heldCount() > 1 ? String.valueOf(game.heldCount()) : null);
         } else if (hovered != null) {
-            extractor.setTooltipForNextFrame(font, hovered, mouseX, mouseY);
+            // Anchored in game pixels: the tooltip is drawn after the panel's scale is undone.
+            extractor.setTooltipForNextFrame(font, hovered, UiScale.toGamePixels(mouseX),
+                    UiScale.toGamePixels(mouseY));
         }
     }
 

@@ -85,9 +85,52 @@ public final class TaskRunner implements Task {
     private TaskPower powerSample = TaskPower.NONE;
     /** Last completed values from each node, used by downstream exposed parameters. */
     private final Map<String, Map<String, String>> nodeOutputs = new HashMap<>();
+    /**
+     * Whether this run is beside the player. Set before the run starts, by the engine for a task
+     * started on its own and by the parent runner for a Run Task card - never read off this graph's
+     * own switch, so a task run from inside another follows the run it is part of.
+     */
+    private boolean beside;
+    /** Whether the primary lane needed the controls after the tick it last took. */
+    private boolean laneHolds;
 
     public TaskRunner(TaskGraph graph) {
         this.graph = graph;
+    }
+
+    /** Whether this task, started on its own, asks to run beside the player. */
+    @Override
+    public boolean wantsBesidePlayer() {
+        return graph != null && graph.beside;
+    }
+
+    @Override
+    public void runBesidePlayer() {
+        beside = true;
+    }
+
+    /** Whether this run is beside the player; see {@link TaskGraph#beside}. */
+    public boolean besidePlayer() {
+        return beside;
+    }
+
+    /**
+     * True while any lane has a card that needs the controls: a working card in the primary lane,
+     * an Always branch whose card is working, or a guard that has stepped in. A lane that is only
+     * waiting - a card watching for its work, a Timer counting, an Always card between pulses, a
+     * guard with nothing to answer - leaves them with the player.
+     */
+    @Override
+    public boolean holdsControls() {
+        if (laneHolds) {
+            return true;
+        }
+        for (ParallelCircuit circuit : parallelCircuits) {
+            if (circuit.holds) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -263,6 +306,9 @@ public final class TaskRunner implements Task {
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
+        // Set again below wherever a card in this lane ticks; every other path leaves the lane
+        // waiting, and a waiting lane has no business holding the player's keys.
+        laneHolds = false;
         if (!startupError.isBlank()) {
             status.set(startupError);
             markFailed();
@@ -353,6 +399,7 @@ public final class TaskRunner implements Task {
         if (cooldown > 0) {
             cooldown--;
             TaskStatus monitorResult = tickLocalMonitor(ctx);
+            laneHolds = localMonitorHolds();
             if (monitorResult == TaskStatus.FAILED) {
                 return failOrBranch(ctx, "lune.status.task_runner.while_failed",
                         monitor.statusLine());
@@ -387,6 +434,10 @@ public final class TaskRunner implements Task {
         TaskStatus result = timedTick(ctx);
         status.set(describeStep());
         TaskStatus monitorResult = tickLocalMonitor(ctx);
+        // Read after both have ticked, because that is what the keys do until the next tick: the
+        // card at work, or the guard on its While pin having stepped in. A card that has just
+        // finished needs nothing more; the next one says for itself once it has ticked.
+        laneHolds = (result == TaskStatus.RUNNING && task.holdsControls()) || localMonitorHolds();
         if (monitorResult == TaskStatus.FAILED) {
             return failOrBranch(ctx, "lune.status.task_runner.while_failed",
                     monitor.statusLine());
@@ -527,6 +578,7 @@ public final class TaskRunner implements Task {
         }
         stopMonitor(ctx);
         stopParallelCircuits(ctx);
+        laneHolds = false;
         node = null;
         wirePulses.clear();
         sourcePulses.clear();
@@ -728,6 +780,11 @@ public final class TaskRunner implements Task {
         return timerSeconds(timer) * 20;
     }
 
+    /** Whether the guard on the primary lane's While pin has stepped in and needs the controls. */
+    private boolean localMonitorHolds() {
+        return monitorRunning && monitor != null && monitor.holdsControls();
+    }
+
     /** Ticks the node attached to the main circuit's While pin without pausing the main task. */
     private TaskStatus tickLocalMonitor(BotContext ctx) {
         if (monitor == null) {
@@ -822,7 +879,14 @@ public final class TaskRunner implements Task {
         if (def == null) {
             return null;
         }
-        return def.buildWith(resolveParams(current));
+        Task built = def.buildWith(resolveParams(current));
+        // Every card this run builds - in the lane, on an Always branch, on a While pin - is told
+        // before it starts. The sub-tasks a card builds for itself are not, which is the point:
+        // Mine's own sweep still ends when the drops are picked up.
+        if (beside && built != null) {
+            built.runBesidePlayer();
+        }
+        return built;
     }
 
     /** One independent flow powered by a single electrical pulse. */
@@ -845,6 +909,8 @@ public final class TaskRunner implements Task {
         private int timerWaitTicks;
         private int timerPulseCount;
         private boolean finished;
+        /** Whether this branch needed the controls after the tick it last took; see holdsControls. */
+        private boolean holds;
         private final StatusText status = new StatusText();
 
         private ParallelCircuit(TaskNode start, TaskNode source, TaskNode origin,
@@ -876,6 +942,7 @@ public final class TaskRunner implements Task {
         }
 
         private TaskStatus onTick(BotContext ctx) {
+            holds = false;
             if (finished) {
                 return TaskStatus.SUCCESS;
             }
@@ -894,6 +961,7 @@ public final class TaskRunner implements Task {
             if (cooldown > 0) {
                 cooldown--;
                 tickOwnMonitor(ctx);
+                holds = ownMonitorHolds();
                 status.set("lune.status.stop_game.pausing");
                 return TaskStatus.RUNNING;
             }
@@ -979,6 +1047,9 @@ public final class TaskRunner implements Task {
                 monitorRunning = true;
                 TaskStatus result = guarded.tick(ctx);
                 status.set(guarded.statusLine());
+                // The guard has stepped in, so it has the keys for as long as it is answering -
+                // unless it says that this stretch of the answer is only watching.
+                holds = result == TaskStatus.RUNNING && guarded.holdsControls();
                 if (result == TaskStatus.FAILED) {
                     return failMonitor(ctx, guarded);
                 }
@@ -995,6 +1066,7 @@ public final class TaskRunner implements Task {
             TaskStatus result = task.tick(ctx);
             status.set(task.statusLine());
             TaskStatus monitorResult = tickOwnMonitor(ctx);
+            holds = (result == TaskStatus.RUNNING && task.holdsControls()) || ownMonitorHolds();
             if (monitorResult == TaskStatus.FAILED) {
                 if (monitor == null) {
                     status.set("lune.status.task_runner.while_action_failed");
@@ -1119,6 +1191,10 @@ public final class TaskRunner implements Task {
             monitorRunning = false;
             monitor.start(ctx);
             return true;
+        }
+
+        private boolean ownMonitorHolds() {
+            return monitorRunning && monitor != null && monitor.holdsControls();
         }
 
         private TaskStatus tickOwnMonitor(BotContext ctx) {
@@ -1321,6 +1397,11 @@ public final class TaskRunner implements Task {
         @Override
         public void onControlReleased(BotContext ctx) {
             stopDelegate(ctx);
+        }
+
+        @Override
+        public boolean holdsControls() {
+            return started && delegate.holdsControls();
         }
 
         @Override

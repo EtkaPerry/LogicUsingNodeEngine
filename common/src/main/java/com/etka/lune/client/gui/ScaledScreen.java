@@ -22,6 +22,10 @@ import net.minecraft.network.chat.Component;
  * own pixels; the raw vanilla entry points are final so there is no way to accidentally take the
  * unconverted ones.</p>
  *
+ * <p>A third leaks out on the way back: tooltips, which the game draws after the transform has
+ * ended. A widget's is given through {@link ScaledTooltips} and drawn here; anything else hands
+ * over its anchor in the game's pixels ({@link UiScale#toGamePixels}).</p>
+ *
  * <p>Whole scales only. Drawing at 3 inside a game running at 4 means every Lune pixel is exactly
  * 3 real pixels, so the 1px panel borders stay crisp; a fractional scale would smear them.</p>
  */
@@ -101,6 +105,9 @@ public abstract class ScaledScreen extends Screen {
         pose.scale(menuPixelSize, menuPixelSize);
         scaledRender(extractor, (int) toMenu(mouseX), (int) toMenu(mouseY), partialTick);
         pose.popMatrix();
+        // Out here, in the game's pixels, which is where the game will draw them. The widgets'
+        // own drawing would anchor them in the page's pixels instead; see ScaledTooltips.
+        ScaledTooltips.extract(extractor, children(), menuPixelSize, mouseX, mouseY);
     }
 
     /** Panels and dividers, drawn behind the widgets, in this page's own pixels. */

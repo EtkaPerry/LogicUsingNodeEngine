@@ -160,8 +160,7 @@ public class WaypointsTab extends LuneTab {
             overlay(Lang.get("lune.gui.waypoints.lune_waypoint_another_dimension"));
             return;
         }
-        BotEngine.get().runNow(new GotoTask(new Goals.Near(selected.pos(), 2), true, false));
-        Screens.open(Minecraft.getInstance(), null);
+        start(GotoTask.toPlace(new Goals.Near(selected.pos(), 2), true));
     }
 
     private void refresh() {
@@ -303,7 +302,15 @@ public class WaypointsTab extends LuneTab {
         Goal goal = waypoint.hasY()
                 ? new Goals.Near(waypoint.pos(), 2)
                 : new Goals.NearXZ(waypoint.x(), waypoint.z(), 2);
-        BotEngine.get().runNow(new GotoTask(goal, true, false));
+        start(GotoTask.toPlace(goal, true));
+    }
+
+    /** Sets off and closes the panel, or says why not - this server's rules - and stays. */
+    private static void start(GotoTask walk) {
+        if (!BotEngine.get().runNow(walk)) {
+            overlay(Lang.get("lune.gui.bot_context.lune", BotEngine.get().getLastMessage()));
+            return;
+        }
         Screens.open(Minecraft.getInstance(), null);
     }
 

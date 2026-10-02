@@ -25,8 +25,11 @@ import java.util.Optional;
  * <ul>
  *   <li><b>The route may dig.</b> Deaths happen in caves and at the bottom of ravines far more
  *       often than they happen on a lawn, and a walk that refuses to break a block usually cannot
- *       get back to one. Breaking is expensive in the router's costs, so it still walks wherever
- *       walking is possible.</li>
+ *       get back to one. It is the walk every named place gets, {@link GotoTask#toPlace}, so it
+ *       still walks wherever walking is possible - and the Waypoints tab's Go to it on the same
+ *       death gets there the same way. When it fails, the walk's own reason goes into the line:
+ *       from a respawn the reason is often a pickaxe the pack no longer holds, which is
+ *       something a Fail pin can go and get.</li>
  *   <li><b>A recovered death is forgotten.</b> Otherwise the card walks back to the same
  *       picked-clean patch of ground on every pass, and a graph that loops does nothing else for
  *       the rest of the night. A walk that never arrives keeps the record, so the Fail pin can
@@ -110,7 +113,7 @@ public final class RecoverDeathTask implements Task {
             return fail("lune.status.recover_death.other_dimension");
         }
         target = found.get();
-        walk = new GotoTask(new Goals.Near(target.pos(), ARRIVAL_TOLERANCE), true, true);
+        walk = GotoTask.toPlace(new Goals.Near(target.pos(), ARRIVAL_TOLERANCE), true);
         walk.start(ctx);
         phase = Phase.WALKING;
         say("lune.status.recover_death.walking");
@@ -120,9 +123,11 @@ public final class RecoverDeathTask implements Task {
     private TaskStatus walk(BotContext ctx) {
         TaskStatus result = walk.tick(ctx);
         if (result == TaskStatus.FAILED) {
+            StatusText why = new StatusText().set(walk.statusLine());
             walk.stop(ctx);
             walk = null;
-            return fail("lune.status.recover_death.cannot_reach", target.x(), target.y(), target.z());
+            return fail("lune.status.recover_death.cannot_reach", target.x(), target.y(), target.z(),
+                    why);
         }
         if (result != TaskStatus.SUCCESS) {
             say("lune.status.recover_death.walking");

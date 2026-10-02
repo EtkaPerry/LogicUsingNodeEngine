@@ -48,7 +48,7 @@ class LangTest {
      */
     private static final Set<String> NOT_TEXT = Set.of(
             "lune.autorun", "lune.learning", "lune.version", "lune.author", "lune.minecraft",
-            "lune.release");
+            "lune.release", "lune.share");
     private static final Pattern PLACEHOLDER =
             Pattern.compile("%(?:%|[-#+ 0,(]*\\d*(?:\\.\\d+)?[a-zA-Z])");
 
@@ -306,11 +306,18 @@ class LangTest {
                         + String.join("\n", repeats));
     }
 
-    /** A key assembled at runtime, or a numbered line of a dialogue bank. Neither can be merged. */
+    /**
+     * A key assembled at runtime, or a numbered line of a dialogue bank. Neither can be merged.
+     *
+     * <p>A starter job's note is keyed by the job's id and its own, so a job reworked under a new
+     * id repeats every note it kept, beside the retired job's lines that a copy on disk still
+     * draws.</p>
+     */
     private static boolean isBuiltFromAnId(String key) {
         return key.startsWith("lune.command.") || key.startsWith("lune.choice.")
                 || key.startsWith("lune.training.") || key.startsWith("lune.param.")
                 || key.startsWith("lune.gui.section.") || key.startsWith("lune.task.group.")
+                || key.startsWith("lune.task.note.")
                 || key.startsWith("lune.mascot.dismissal.") || key.matches(".*\\.\\d+$");
     }
 

@@ -146,6 +146,12 @@ public final class ConditionTask implements Task {
         return new ConditionTask(Kind.DIMENSION, null, dimension, null, null, 0, false);
     }
 
+    /** Never touches the controls, so beside the player it never takes them. */
+    @Override
+    public boolean holdsControls() {
+        return false;
+    }
+
     @Override
     public String name() {
         return Lang.get("lune.command." + card() + ".name");

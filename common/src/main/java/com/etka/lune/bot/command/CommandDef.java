@@ -20,9 +20,12 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -45,8 +48,20 @@ public final class CommandDef {
         this.id = id;
         this.params = List.copyOf(params);
         this.factory = factory;
+        Set<String> switchesSoFar = new HashSet<>();
         for (Param<?> param : this.params) {
             param.attachTo(id);
+            // A row under a switch that is declared after it, or not at all, could only be shown
+            // by asking a question that loops or has no answer. Refused here, where the card is
+            // written, rather than discovered as a row that never appears.
+            String parent = param.parentSwitch();
+            if (parent != null && !switchesSoFar.contains(parent)) {
+                throw new IllegalArgumentException("Card '" + id + "': '" + param.id()
+                        + "' is under '" + parent + "', which is not a switch declared before it");
+            }
+            if (param instanceof Param.Bool) {
+                switchesSoFar.add(param.id());
+            }
         }
     }
 
@@ -225,6 +240,15 @@ public final class CommandDef {
      * three cells wide or it is not - so asking is not a choice, it is noise.
      */
     public boolean isRelevant(String paramId) {
+        // How to answer a danger, and when, is only a question while that danger is watched for.
+        // The constructor guarantees the switch is declared first, so this cannot loop.
+        Param<?> param = find(paramId);
+        if (param != null && param.parentSwitch() != null) {
+            String parent = param.parentSwitch();
+            if (!boolValue(parent) || !isRelevant(parent)) {
+                return false;
+            }
+        }
         if ("craft".equals(id) && "table".equals(paramId)) {
             return !recipeValue("recipe").isDrawn();
         }
@@ -235,15 +259,6 @@ public final class CommandDef {
             }
             if ("waypoint".equals(paramId)) {
                 return where == PlaceBlockTask.Where.WAYPOINT;
-            }
-        }
-        if ("self_preservation".equals(id)) {
-            // How to answer a danger is only a question while that danger is being watched for.
-            if (paramId.startsWith("clutch_")) {
-                return boolValue("protect_fall");
-            }
-            if ("protect_fireballs".equals(paramId) || "build_cover".equals(paramId)) {
-                return boolValue("protect_monsters");
             }
         }
         if ("equip".equals(id) && "item".equals(paramId)) {
@@ -262,6 +277,68 @@ public final class CommandDef {
             }
         }
         return true;
+    }
+
+    /**
+     * The switches shown beside this one, in the order the card declares them: the card's own
+     * switches, or the ones under the same switch when it sits under one ({@link Param#under}).
+     *
+     * <p>Only the rows on screen. A switch hidden because its own switch is off is ignored, so
+     * nothing the player cannot see is changed for them. Empty for a row that is not a switch,
+     * and for a switch with nothing beside it, which leaves nothing to keep it apart from.</p>
+     */
+    public List<Param.Bool> switchGroup(String paramId) {
+        Param<?> member = find(paramId);
+        if (!(member instanceof Param.Bool) || !isRelevant(paramId)) {
+            return List.of();
+        }
+        List<Param.Bool> group = new ArrayList<>();
+        for (Param<?> param : params) {
+            if (param instanceof Param.Bool bool
+                    && Objects.equals(param.parentSwitch(), member.parentSwitch())
+                    && isRelevant(param.id())) {
+                group.add(bool);
+            }
+        }
+        return group.size() < 2 ? List.of() : List.copyOf(group);
+    }
+
+    /** True when this switch is on and every other switch beside it is off. */
+    public boolean isOnlySwitchOn(String paramId) {
+        List<Param.Bool> group = switchGroup(paramId);
+        if (group.isEmpty()) {
+            return false;
+        }
+        for (Param.Bool bool : group) {
+            if (bool.get() != bool.id().equals(paramId)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Keeps this switch on and turns the others beside it off - a Self Preservation card that only
+     * watches the air is one click, not five. Asked of the one switch that already is on alone, it
+     * turns them all back on, so the same click takes the card back to where it started.
+     *
+     * <p>Rows under the switches turned off keep their values: a fall's clutches are still chosen
+     * the way they were when somebody turns falls back on.</p>
+     *
+     * @return whether anything changed
+     */
+    public boolean keepOnly(String paramId) {
+        List<Param.Bool> group = switchGroup(paramId);
+        boolean all = isOnlySwitchOn(paramId);
+        boolean changed = false;
+        for (Param.Bool bool : group) {
+            boolean on = all || bool.id().equals(paramId);
+            if (bool.get() != on) {
+                bool.set(on);
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     /** Saving a place, moving one and forgetting one are three sentences, not one with a switch. */
@@ -486,12 +563,21 @@ public final class CommandDef {
     }
 
     private Param<?> param(String paramId) {
+        Param<?> param = find(paramId);
+        if (param == null) {
+            throw new IllegalArgumentException(Lang.get("lune.card.command_has_parameter", id, paramId));
+        }
+        return param;
+    }
+
+    /** The parameter with this id, or null when the card has none. */
+    private Param<?> find(String paramId) {
         for (Param<?> param : params) {
             if (param.id().equals(paramId)) {
                 return param;
             }
         }
-        throw new IllegalArgumentException(Lang.get("lune.card.command_has_parameter", id, paramId));
+        return null;
     }
 
     // Typed accessors, so task factories read parameters without casting at every call site.

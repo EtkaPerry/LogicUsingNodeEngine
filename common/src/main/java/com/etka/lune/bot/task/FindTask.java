@@ -1,6 +1,7 @@
 package com.etka.lune.bot.task;
 
 import com.etka.lune.util.Lang;
+import com.etka.lune.bot.Beside;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
@@ -36,6 +37,12 @@ public final class FindTask implements Task {
     private static final int PROSPECT_STAIR_STEPS = 6;
     /** How far the bot must move before a look around counts as a look from somewhere new. */
     private static final int RESCAN_DISTANCE = 3;
+    /**
+     * Ray casts per tick while watching beside the player, who keeps moving. The same bound a
+     * walking Explore spends, so the look shares the tick with the player's own frame rather than
+     * testing every candidate in the cube at once.
+     */
+    private static final int BESIDE_SIGHT_CHECKS = 64;
     /** A stair that ends this quickly was refused by the terrain rather than dug. */
     private static final int PROSPECT_REJECT_TICKS = 20;
     /**
@@ -76,6 +83,8 @@ public final class FindTask implements Task {
      */
     private boolean foundSomething;
     private final TargetIndex index = new TargetIndex();
+    /** Beside the player: report what comes into their view; never turn, dig or recall to find it. */
+    private final Beside beside = new Beside();
 
     public FindTask(Set<Block> targets, int radius) {
         this(targets, Set.of(), radius, -64, 320, false, false, false);
@@ -129,6 +138,16 @@ public final class FindTask implements Task {
     }
 
     @Override
+    public void runBesidePlayer() {
+        beside.enable();
+    }
+
+    @Override
+    public boolean holdsControls() {
+        return beside.holdsControls();
+    }
+
+    @Override
     public void onStart(BotContext ctx) {
         foundSomething = false;
         prospectAttempts = 0;
@@ -142,6 +161,7 @@ public final class FindTask implements Task {
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
+        beside.tick();
         if (entityMode) {
             return findEntity(ctx);
         }
@@ -160,6 +180,11 @@ public final class FindTask implements Task {
         ScanResult scan = scanAndReport(ctx);
         if (scan == ScanResult.FOUND) {
             return TaskStatus.SUCCESS;
+        }
+        if (beside.on()) {
+            // Not in the player's view yet. No staircase, and no remembered block reported as if it
+            // had just been seen: the player is the one looking, and this waits for them.
+            return beside.watch(status, "lune.status.find.watching_beside");
         }
         if (scan == ScanResult.SEARCHING) {
             return TaskStatus.RUNNING;
@@ -190,8 +215,9 @@ public final class FindTask implements Task {
             return TaskStatus.FAILED;
         }
 
-        if (checkAround && !Vision.isPanoramic()
-                && (headScanner.isTurning() || headScanner.isVerticalGlance())) {
+        // Beside the player the head is theirs, so the look around is theirs too.
+        boolean turn = checkAround && !beside.on() && !Vision.isPanoramic();
+        if (turn && (headScanner.isTurning() || headScanner.isVerticalGlance())) {
             if (!headScanner.tickTurn(ctx)) {
                 status.set(headScanner.statusLine());
                 return TaskStatus.RUNNING;
@@ -210,7 +236,10 @@ public final class FindTask implements Task {
             return TaskStatus.SUCCESS;
         }
 
-        if (checkAround && !Vision.isPanoramic() && headScanner.advance()) {
+        if (beside.on()) {
+            return beside.watch(status, "lune.status.find.watching_beside");
+        }
+        if (turn && headScanner.advance()) {
             status.set(headScanner.statusLine());
             return TaskStatus.RUNNING;
         }
@@ -246,8 +275,9 @@ public final class FindTask implements Task {
             headScanner.reset(ctx.player);
         }
 
-        if (checkAround && !ctx.omniscientMining() && !Vision.isPanoramic()
-                && (headScanner.isTurning() || headScanner.isVerticalGlance())) {
+        boolean turn = checkAround && !beside.on() && !ctx.omniscientMining()
+                && !Vision.isPanoramic();
+        if (turn && (headScanner.isTurning() || headScanner.isVerticalGlance())) {
             if (!headScanner.tickTurn(ctx)) {
                 status.set(headScanner.statusLine());
                 return ScanResult.SEARCHING;
@@ -267,7 +297,11 @@ public final class FindTask implements Task {
 
         java.util.function.BiPredicate<BlockPos, BlockState> filter =
                 (pos, state) -> ctx.omniscientMining() || Vision.isVisible(ctx, pos);
-        BlockPos hit = index.nearest(ctx.level, scanOrigin, Set.of(), filter);
+        // Beside the player the look is taken every tick while they move, so it is bounded the way
+        // a walking search's is; standing still to look, every candidate is worth its ray.
+        BlockPos hit = beside.on()
+                ? index.nearestBounded(ctx.level, scanOrigin, Set.of(), filter, BESIDE_SIGHT_CHECKS)
+                : index.nearest(ctx.level, scanOrigin, Set.of(), filter);
         if (hit != null) {
             int distance = (int) Math.sqrt(hit.distSqr(origin));
             Block found = ctx.level.getBlockState(hit).getBlock();
@@ -279,8 +313,7 @@ public final class FindTask implements Task {
             return ScanResult.FOUND;
         }
 
-        if (checkAround && !ctx.omniscientMining() && !Vision.isPanoramic()
-                && headScanner.advance()) {
+        if (turn && headScanner.advance()) {
             status.set(headScanner.statusLine());
             return ScanResult.SEARCHING;
         }

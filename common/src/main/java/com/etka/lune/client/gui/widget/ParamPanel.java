@@ -327,7 +327,7 @@ public class ParamPanel extends AbstractWidget {
                 extractor.fill(getX() + 1, rowY, getX() + getWidth() - 1, rowY + ROW_HEIGHT, ROW_HOVER);
                 newHoverRow = index;
             }
-            renderRow(extractor, text, rows.get(index), rowY, hovered);
+            renderRow(extractor, text, rows.get(index), rowY, hovered, mouseX);
         }
 
         renderChoiceDropdown(extractor, text, mouseX, mouseY);
@@ -368,12 +368,15 @@ public class ParamPanel extends AbstractWidget {
     }
 
     private void renderRow(GuiGraphicsExtractor extractor, net.minecraft.client.gui.ActiveTextCollector text,
-                           Row row, int rowY, boolean hovered) {
+                           Row row, int rowY, boolean hovered, int mouseX) {
         switch (row) {
             case SectionRow(String title) -> text.accept(getX() + 6, rowY + 3,
                     Component.literal(sectionTitle(title)).withColor(LuneScreen.ACCENT));
             case ParamRow(Param<?> param) -> {
                 boolean enabled = isParameterEnabled(param);
+                // Only while pointed at: six buttons down a card that nobody is reaching for are
+                // six things to read past on the way to the one row that matters.
+                String only = hovered ? onlyLabel(param) : null;
                 Icon icon = ICONS.getOrDefault(param.id(), Icon.NONE);
                 int labelX = getX() + 6;
                 int valueBoxX = valueBoxX();
@@ -408,6 +411,11 @@ public class ParamPanel extends AbstractWidget {
                     }
                     if (!enabled) {
                         hoverTooltip.add(Component.literal(Lang.get("lune.gui.param.unavailable_world_or_player"))
+                                .withColor(LuneScreen.TEXT_DIM));
+                    }
+                    if (only != null) {
+                        hoverTooltip.add(Component.literal(Lang.get(command.isOnlySwitchOn(param.id())
+                                        ? "lune.gui.param.all_tip" : "lune.gui.param.only_tip"))
                                 .withColor(LuneScreen.TEXT_DIM));
                     }
                 }
@@ -459,17 +467,73 @@ public class ParamPanel extends AbstractWidget {
                                             : openChoice == choice ? "▾" : "▸")
                                     .withColor(LuneScreen.TEXT_DIM));
                 } else {
-                    String clippedDisplay = clipToWidth(font, display, VALUE_WIDTH - 8);
-                    text.accept(centredValueX(valueBoxX, font, clippedDisplay), rowY + 3,
+                    // The Only button takes the end of the box, and Yes or No moves over for it.
+                    int room = VALUE_WIDTH - (only == null ? 0 : onlyButtonWidth(font, only));
+                    String clippedDisplay = clipToWidth(font, display, room - 8);
+                    text.accept(valueBoxX + Math.max(4, (room - font.width(clippedDisplay)) / 2), rowY + 3,
                             Component.literal(clippedDisplay).withColor(
                                     enabled ? LuneScreen.ACCENT : LuneScreen.TEXT_DIM));
+                    if (only != null) {
+                        drawOnlyButton(extractor, text, font, only, rowY, mouseX);
+                    }
                 }
             }
-            case EntityRow(Param.EntitySet param, EntityType<?> type) ->
-                    renderCheck(extractor, text, rowY, param.isSelected(type), type.getDescription().getString());
+            case EntityRow(Param.EntitySet param, EntityType<?> type) -> {
+                renderCheck(extractor, text, rowY, param.isSelected(type), type.getDescription().getString());
+                if (hovered && offersOnly(param, type)) {
+                    drawOnlyButton(extractor, text, Minecraft.getInstance().font,
+                            Lang.get("lune.gui.param.only"), rowY, mouseX);
+                    hoverTooltip.add(Component.literal(Lang.get("lune.gui.param.only_one_tip"))
+                            .withColor(LuneScreen.TEXT_DIM));
+                }
+            }
             default -> {
             }
         }
+    }
+
+    /**
+     * What the button on a switch row says while it is pointed at - Only, or All once it is the
+     * one switch on - or null when the row has none: not a switch, nothing beside it to switch
+     * off, or not a card at all.
+     *
+     * <p>The Config tab draws its settings with this same panel, and is left out on purpose. It is
+     * a page of preferences, not a choice among dangers, and a click there that turned off every
+     * other setting in sight would be a click that did harm.</p>
+     */
+    private String onlyLabel(Param<?> param) {
+        if (compactMode || command == null || !(param instanceof Param.Bool)
+                || !isParameterEnabled(param) || command.switchGroup(param.id()).isEmpty()) {
+            return null;
+        }
+        return Lang.get(command.isOnlySwitchOn(param.id()) ? "lune.gui.param.all" : "lune.gui.param.only");
+    }
+
+    /** A mob list offers Only on every row but the one already chosen alone, and never All. */
+    private boolean offersOnly(Param.EntitySet param, EntityType<?> type) {
+        return !compactMode && !param.isOnly(type);
+    }
+
+    /** The Only button's width: the word, three pixels either side. */
+    private static int onlyButtonWidth(Font font, String label) {
+        // font.width counts the pixel of space after the last glyph, hence five rather than six.
+        return font.width(label) + 5;
+    }
+
+    /** Whether a click at {@code clickX} lands on a row's Only button, which ends where the value box does. */
+    private boolean onOnlyButton(double clickX, String label) {
+        int right = valueBoxX() + VALUE_WIDTH;
+        return clickX >= right - onlyButtonWidth(Minecraft.getInstance().font, label) && clickX < right;
+    }
+
+    private void drawOnlyButton(GuiGraphicsExtractor extractor, net.minecraft.client.gui.ActiveTextCollector text,
+                                Font font, String label, int rowY, int mouseX) {
+        int right = valueBoxX() + VALUE_WIDTH;
+        int left = right - onlyButtonWidth(font, label);
+        boolean pointed = mouseX >= left && mouseX < right;
+        extractor.fill(left, rowY + 1, right, rowY + ROW_HEIGHT - 1, pointed ? LuneScreen.ACCENT : CHOICE_HOVER);
+        text.accept(left + 3, rowY + 3, Component.literal(label)
+                .withColor(pointed ? 0xFF000000 : LuneScreen.TEXT));
     }
 
     private void renderChoiceDropdown(GuiGraphicsExtractor extractor,
@@ -602,6 +666,9 @@ public class ParamPanel extends AbstractWidget {
                     selectChoice(openChoice, options.get(selected));
                 }
                 closeChoice();
+                // Which rows the card shows can hang on the answer - Place asks for coordinates
+                // only while they are where the block goes - so the rows are asked again now.
+                rebuild();
                 return;
             }
             closeChoice();
@@ -632,13 +699,28 @@ public class ParamPanel extends AbstractWidget {
                         onTogglePort.accept(param.id(), PortSide.OUTPUT);
                     }
                 } else {
-                    clickParam(param, event.x(), shift);
+                    String only = onlyLabel(param);
+                    if (only != null && (shift || onOnlyButton(event.x(), only))) {
+                        command.keepOnly(param.id());
+                    } else {
+                        clickParam(param, event.x(), shift);
+                    }
                 }
             }
-            case EntityRow(Param.EntitySet param, EntityType<?> type) -> param.toggle(type);
+            case EntityRow(Param.EntitySet param, EntityType<?> type) -> {
+                if (offersOnly(param, type) && (shift
+                        || onOnlyButton(event.x(), Lang.get("lune.gui.param.only")))) {
+                    param.keepOnly(type);
+                } else {
+                    param.toggle(type);
+                }
+            }
             default -> {
             }
         }
+        // A switch decides which rows sit under it, so the card is asked again now rather than
+        // the next time it is selected - turning falls off takes the clutches away at once.
+        rebuild();
     }
 
     private void clickParam(Param<?> param, double clickX, boolean shift) {

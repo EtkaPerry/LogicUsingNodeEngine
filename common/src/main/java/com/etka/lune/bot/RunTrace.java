@@ -68,7 +68,7 @@ public final class RunTrace implements AutoCloseable {
     );
 
     /** Ticks a mission may repeat itself before the journal says so in its own voice. */
-    private static final int STALL_TICKS = 2400;
+    static final int STALL_TICKS = 2400;
     /** How many statuses the closing summary lists, most expensive first. */
     private static final int SUMMARY_STATUSES = 12;
     /** Floor for the structure scan when the render distance is set very low. */
@@ -98,6 +98,10 @@ public final class RunTrace implements AutoCloseable {
     private String currentPhase = "";
     private int firstTick = -1;
     private int lastTick;
+    /** Ticks the engine spent paused; see {@link #charge}. */
+    private int pausedTicks;
+    /** Ticks of a run beside the player that the player had the keys for; billed like a pause. */
+    private int besideTicks;
     private int minHealth = Integer.MAX_VALUE;
     private int minFood = Integer.MAX_VALUE;
     /** Motion ledger; see {@link #accumulateMotion}. */
@@ -114,7 +118,7 @@ public final class RunTrace implements AutoCloseable {
     private String lastDiversions = "";
     private String lastFailures = "";
 
-    private RunTrace(Path file, BufferedWriter writer) {
+    RunTrace(Path file, BufferedWriter writer) {
         this.file = file;
         this.writer = writer;
     }
@@ -135,9 +139,14 @@ public final class RunTrace implements AutoCloseable {
             RunTrace trace = new RunTrace(file, writer);
             trace.line("Lune run trace");
             // 4 added the taskid column; 5 added action's "using" field, which is what says whether
-            // the shield was up. Readers find fields by name rather than by position, so an older
-            // journal still parses - it simply has no taskid, and no answer about the shield.
-            trace.line("format=5");
+            // the shield was up; 6 bills paused ticks to a SUMMARY paused line of their own, leaves
+            // them out of the statuses, the phases, the motion totals and the stall alarm, and
+            // closes every pause with a resume event or the end of the run. Readers find fields by
+            // name rather than by position, so an older journal still parses - it simply has no
+            // taskid, no answer about the shield, and its pauses billed to whatever status was on
+            // screen (the run harness takes them back out). 7 does the same for the ticks a
+            // run beside the player leaves the keys with the player, on a SUMMARY beside line.
+            trace.line("format=7");
             trace.line("started=" + LocalDateTime.now());
             trace.line("dimension=" + level.dimension());
             // Written so a run can be repeated from its own journal rather than from a log that has
@@ -183,13 +192,33 @@ public final class RunTrace implements AutoCloseable {
         line(format(tick, "EVENT:" + safe(event), debug, player, level, true));
     }
 
-    /** Records a changed snapshot and a once-per-second heartbeat for repeated states. */
-    public void tick(int tick, DebugInfo debug, LocalPlayer player, ClientLevel level) {
+    /**
+     * Records a changed snapshot and a once-per-second heartbeat for repeated states.
+     *
+     * @param paused whether the engine is paused this tick. Snapshots are written all the same -
+     *               they are the only record of what the player did with the controls - but the
+     *               tick is charged to the pause rather than to the run; see {@link #charge}
+     */
+    public void tick(int tick, DebugInfo debug, LocalPlayer player, ClientLevel level, boolean paused) {
+        tick(tick, debug, player, level, paused, false);
+    }
+
+    /**
+     * @param besideWatching a run beside the player in which the player had the keys this tick.
+     *                       Charged to a line of its own and to nothing else, for the same reason
+     *                       as a pause: what happened in it was the player's doing, not the bot's
+     */
+    public void tick(int tick, DebugInfo debug, LocalPlayer player, ClientLevel level, boolean paused,
+                     boolean besideWatching) {
         if (closed) {
             return;
         }
-        accumulate(tick, debug, player);
-        checkForStall(tick, debug, player, level);
+        int stalled = charge(tick, debug, Body.of(player), paused, besideWatching);
+        if (stalled > 0) {
+            eventCounts.merge("stall", 1, Integer::sum);
+            line(format(tick, "EVENT:stall(" + stalled + " ticks with no mission change)",
+                    debug, player, level, true));
+        }
         String signature = signature(debug, player, level);
         if (!signature.equals(lastSignature) || tick - lastSnapshotTick >= HEARTBEAT_TICKS) {
             line(format(tick, "SNAPSHOT", debug, player, level, false));
@@ -199,28 +228,65 @@ public final class RunTrace implements AutoCloseable {
     }
 
     /**
+     * Charges one tick to the closing summary, and returns how long the mission has now gone
+     * unchanged if that is worth a stall event - 0 otherwise.
+     * <p>
+     * A paused tick is charged to the pause and to nothing else. The status on screen is frozen
+     * while the player has the controls, and billing the tick to it made the pause look like the
+     * bot's own doing: a Woodland Cleanup paused at tick 3740 and never resumed closed with 85% of
+     * its time "coming next to the tree", an idle share to match, and a stall event every two
+     * minutes of the pause.
+     */
+    int charge(int tick, DebugInfo debug, Body body, boolean paused) {
+        return charge(tick, debug, body, paused, false);
+    }
+
+    int charge(int tick, DebugInfo debug, Body body, boolean paused, boolean besideWatching) {
+        accumulate(tick, debug, body, paused, besideWatching);
+        return paused || besideWatching ? 0 : stalledFor(tick, debug);
+    }
+
+    /** What the summary reads off the player, taken once a tick so the charging needs no player. */
+    record Body(double x, double z, boolean airborne, boolean inWater, boolean sprinting,
+                int health, int food) {
+
+        static Body of(LocalPlayer player) {
+            return new Body(player.getX(), player.getZ(), !player.onGround(), player.isInWater(),
+                    player.isSprinting(), Math.round(player.getHealth()),
+                    player.getFoodData().getFoodLevel());
+        }
+    }
+
+    /**
      * Totals for the closing summary, charged one tick at a time.
      * <p>
      * Reconstructing this afterwards means an awk pass over tens of megabytes to answer questions
      * as basic as "where did the time go", which is exactly the question worth answering first.
      */
-    private void accumulate(int tick, DebugInfo debug, LocalPlayer player) {
+    private void accumulate(int tick, DebugInfo debug, Body body, boolean paused,
+                            boolean besideWatching) {
         if (firstTick < 0) {
             firstTick = tick;
         }
         lastTick = tick;
-        String phase = phaseOf(debug.missionProgress);
-        if (!phase.isEmpty()) {
-            currentPhase = phase;
-            phaseTicks.merge(phase, 1, Integer::sum);
+        if (paused) {
+            pausedTicks++;
+        } else if (besideWatching) {
+            besideTicks++;
+        } else {
+            String phase = phaseOf(debug.missionProgress);
+            if (!phase.isEmpty()) {
+                currentPhase = phase;
+                phaseTicks.merge(phase, 1, Integer::sum);
+            }
+            String status = generalise(debug.taskStatus);
+            if (!status.isBlank()) {
+                statusTicks.merge(status, 1, Integer::sum);
+            }
         }
-        String status = generalise(debug.taskStatus);
-        if (!status.isBlank()) {
-            statusTicks.merge(status, 1, Integer::sum);
-        }
-        minHealth = Math.min(minHealth, Math.round(player.getHealth()));
-        minFood = Math.min(minFood, player.getFoodData().getFoodLevel());
-        accumulateMotion(player);
+        minHealth = Math.min(minHealth, body.health());
+        minFood = Math.min(minFood, body.food());
+        accumulateMotion(body, paused || besideWatching);
         if (!debug.diversions.isBlank()) {
             lastDiversions = debug.diversions;
         }
@@ -238,10 +304,12 @@ public final class RunTrace implements AutoCloseable {
      * left the ground are three numbers that make "it looks sluggish" into something with a value,
      * and make a change to the movement rules provable rather than a matter of taste.
      */
-    private void accumulateMotion(LocalPlayer player) {
-        if (lastX != Double.MIN_VALUE) {
-            double dx = player.getX() - lastX;
-            double dz = player.getZ() - lastZ;
+    private void accumulateMotion(Body body, boolean paused) {
+        // Paused, the baseline keeps following the player while nothing is charged. Freezing it
+        // instead would bill the bot's first tick back for wherever the player walked meanwhile.
+        if (lastX != Double.MIN_VALUE && !paused) {
+            double dx = body.x() - lastX;
+            double dz = body.z() - lastZ;
             double step = Math.sqrt(dx * dx + dz * dz);
             // A teleport, a respawn or a dimension change is not travel, and letting one through
             // makes the whole distance figure meaningless.
@@ -249,16 +317,16 @@ public final class RunTrace implements AutoCloseable {
                 blocksTravelled += step;
                 if (step > 0.01) {
                     movingTicks++;
-                    if (player.isSprinting()) {
+                    if (body.sprinting()) {
                         sprintingTicks++;
                     }
                 }
             }
         }
-        lastX = player.getX();
-        lastZ = player.getZ();
-        boolean airborne = !player.onGround();
-        if (airborne && !wasAirborne && !player.isInWater()) {
+        lastX = body.x();
+        lastZ = body.z();
+        boolean airborne = body.airborne();
+        if (airborne && !wasAirborne && !body.inWater() && !paused) {
             jumps++;
         }
         wasAirborne = airborne;
@@ -281,34 +349,38 @@ public final class RunTrace implements AutoCloseable {
     }
 
     /**
-     * Says so, loudly and in the file, when the mission has stopped moving.
+     * How long the mission has gone unchanged, at each moment that deserves saying so loudly and
+     * in the file; 0 the rest of the time.
      * <p>
      * A run that holds {@code iron 0/4} for fourteen thousand ticks is the most important thing
      * that happened, and it is completely invisible in a journal made of per-tick lines that all
      * look reasonable on their own.
+     * <p>
+     * Timed on the run's clock with the pauses taken out, so a pause neither raises the alarm nor
+     * brings the next one any closer.
      */
-    private void checkForStall(int tick, DebugInfo debug, LocalPlayer player, ClientLevel level) {
+    private int stalledFor(int tick, DebugInfo debug) {
+        int now = tick - pausedTicks - besideTicks;
         // Mission progress plus the generalised status, because only the speedrun keeps a mission
         // line - an ordinary task that spends three minutes "coming next to the tree" is just as
         // stuck, and keying on the mission alone would never say so.
         String mission = debug.missionProgress + "|" + generalise(debug.taskStatus);
         if (!mission.equals(lastMission)) {
             lastMission = mission;
-            missionUnchangedSince = tick;
+            missionUnchangedSince = now;
             stallsReported = 0;
-            return;
+            return 0;
         }
         if (missionUnchangedSince < 0 || mission.isBlank() || mission.equals("|")) {
-            missionUnchangedSince = tick;
-            return;
+            missionUnchangedSince = now;
+            return 0;
         }
-        int stalled = tick - missionUnchangedSince;
+        int stalled = now - missionUnchangedSince;
         if (stalled >= STALL_TICKS * (stallsReported + 1)) {
             stallsReported++;
-            eventCounts.merge("stall", 1, Integer::sum);
-            line(format(tick, "EVENT:stall(" + stalled + " ticks with no mission change)",
-                    debug, player, level, true));
+            return stalled;
         }
+        return 0;
     }
 
     /** Strips positions and counts so "walking to target - 12 blocks left" totals as one status. */
@@ -366,6 +438,13 @@ public final class RunTrace implements AutoCloseable {
                 + " reachedPhase=" + (currentPhase.isEmpty() ? "-" : currentPhase)
                 + " minHealth=" + (minHealth == Integer.MAX_VALUE ? "-" : minHealth)
                 + " minFood=" + (minFood == Integer.MAX_VALUE ? "-" : minFood));
+        // Written even at zero: a missing line then means a journal from before pauses were
+        // counted, never one that was not paused. Its share is of the whole run, like the ones
+        // below, and no status, phase or idle figure counts these ticks a second time.
+        line("SUMMARY paused " + share(pausedTicks, total));
+        // The same bargain for a run beside the player: written at zero too, so its absence dates
+        // a journal rather than describing a run.
+        line("SUMMARY beside " + share(besideTicks, total));
         for (Map.Entry<String, Integer> phase : phaseTicks.entrySet()) {
             line("SUMMARY phase " + pad(phase.getKey(), 16) + " " + share(phase.getValue(), total));
         }
@@ -380,7 +459,8 @@ public final class RunTrace implements AutoCloseable {
         // The headline number for any change to movement or target choice. Blocks per minute of
         // travel and the share of it spent at a run are what a watcher means by "it looks better".
         line("SUMMARY motion " + motionSummary()
-                + ";idle=" + share(total - movingTicks, total).trim());
+                + ";idle=" + share(Math.max(0, total - pausedTicks - besideTicks - movingTicks),
+                        total).trim());
         line("SUMMARY diversions " + (lastDiversions.isBlank() ? "none" : lastDiversions));
         line("SUMMARY failures " + (lastFailures.isBlank() ? "none" : lastFailures));
     }
@@ -477,7 +557,11 @@ public final class RunTrace implements AutoCloseable {
                 ? player.getUseItem().getItem().getDescriptionId()
                         + "/" + player.getUsedItemHand().name().toLowerCase(java.util.Locale.ROOT)
                 : "-";
+        // The pose, because the keys alone cannot say whether a crossing was swum. Sprint held at
+        // the surface reads the same as the crawl stroke and travels at half its speed, and only
+        // the pose tells the two apart.
         String action = "keys=" + safe(debug.keys)
+                + ";pose=" + player.getPose().name().toLowerCase(java.util.Locale.ROOT)
                 + ";using=" + using
                 + ";move=" + pos(debug.movementTarget, debug.movementLabel)
                 + ";place=" + pos(debug.placementTarget, debug.placementBlock + "/" + debug.placementVerdict)

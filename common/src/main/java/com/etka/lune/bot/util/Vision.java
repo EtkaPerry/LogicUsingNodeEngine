@@ -247,6 +247,40 @@ public final class Vision {
         return rayReport(ctx, pos, eye, blockAimPoint(ctx, pos)).reachable();
     }
 
+    /**
+     * What a look from {@code from} toward {@code to} stops at, or null when it reaches {@code to}
+     * without stopping.
+     *
+     * <p>The same sight line {@link #isVisible} draws, turned round: that asks whether one named
+     * block is the first thing the eyes meet, this asks what the first thing is. Leaves are looked
+     * through up to the same depth and fluids stop the eyes, so a block this returns is one
+     * {@link #isVisible} would call visible from the same place. A look lost in foliage returns the
+     * last leaf rather than claiming it saw past it.</p>
+     */
+    public static BlockHitResult firstSeen(BotContext ctx, Vec3 from, Vec3 to) {
+        Vec3 ray = to.subtract(from);
+        double distance = Math.sqrt(ray.lengthSqr());
+        if (distance <= 0.0) {
+            return null;
+        }
+        Vec3 dir = ray.scale(1.0 / distance);
+        Vec3 rayStart = from;
+        BlockHitResult last = null;
+        for (int pass = 0; pass < MAX_TRANSPARENT_PASSES; pass++) {
+            BlockHitResult hit = ctx.level.clip(new ClipContext(rayStart, to,
+                    ClipContext.Block.OUTLINE, ClipContext.Fluid.ANY, ctx.player));
+            if (hit.getType() != HitResult.Type.BLOCK) {
+                return null;
+            }
+            if (!isSeeThrough(ctx.level.getBlockState(hit.getBlockPos()))) {
+                return hit;
+            }
+            last = hit;
+            rayStart = pastBlock(hit.getBlockPos(), hit.getLocation(), dir);
+        }
+        return last;
+    }
+
     private record RayReport(boolean reachable, String verdict, BlockPos blocker) {}
 
     private static RayReport rayReport(BotContext ctx, BlockPos pos, Vec3 eye, Vec3 centre) {

@@ -238,4 +238,38 @@ public interface Task {
     default boolean madeProgress() {
         return true;
     }
+
+    /**
+     * Tells this card that its task runs beside the player rather than in their place.
+     *
+     * <p>Called once, before the card starts, by the runner that built it - never on the sub-tasks
+     * a card builds for itself, so Mine's own sweep still finishes when the drops are gone. A card
+     * that looks for its work answers by waiting until the work is in the player's view, instead of
+     * turning the head or walking off to search: see {@link Beside}. A card with nothing to wait
+     * for ignores this and acts the moment power reaches it, as it always has.</p>
+     */
+    default void runBesidePlayer() {}
+
+    /**
+     * Whether this task, when it is started on its own, asks to run beside the player - a task
+     * whose {@link com.etka.lune.task.TaskGraph#beside} switch is on. The engine asks once, as the
+     * run begins, and answers with {@link #runBesidePlayer()}; a task started from inside another
+     * follows the run it is part of instead.
+     */
+    default boolean wantsBesidePlayer() {
+        return false;
+    }
+
+    /**
+     * Whether this task needs the player's controls after the tick it has just taken.
+     *
+     * <p>Asked only of a run beside the player, where it decides who holds the keys: the player
+     * while every powered card is waiting, Lune from the tick a card has something to do. True by
+     * default, because a card that moves the player is the ordinary case. A card that never touches
+     * the controls - a check, a timer, a sound - says false, so its tick does not freeze somebody
+     * who is walking; a card waiting for its work to come into view says false while it waits.</p>
+     */
+    default boolean holdsControls() {
+        return true;
+    }
 }

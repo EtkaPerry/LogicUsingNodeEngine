@@ -1,6 +1,7 @@
 package com.etka.lune.bot.task;
 
 import com.etka.lune.util.Lang;
+import com.etka.lune.bot.Beside;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.LuneProfiler;
@@ -360,6 +361,13 @@ public final class MineTask implements Task {
     private final TargetIndex index = new TargetIndex();
     /** Keeps digging local to the last block broken, instead of jumping between two faces. */
     private final WorkSite site = new WorkSite();
+    /**
+     * Beside the player: no head sweep, no walking back to remembered ore, no prospecting and no
+     * fetching a tool. The player is the one exploring; this card takes the controls only for a
+     * block the player can see and could mine with what they carry, and gives them back once
+     * nothing more of it is in view.
+     */
+    private final Beside beside = new Beside();
     /** Where the job was, and how much it had, when it last did something. See {@link #hardStalled}. */
     private BlockPos stallAnchor;
     private int stallMined;
@@ -495,6 +503,16 @@ public final class MineTask implements Task {
         return broken > 0;
     }
 
+    @Override
+    public void runBesidePlayer() {
+        beside.enable();
+    }
+
+    @Override
+    public boolean holdsControls() {
+        return beside.holdsControls();
+    }
+
     /**
      * How many of the blocks this task was actually sent for it got.
      *
@@ -597,7 +615,26 @@ public final class MineTask implements Task {
     @Override
     public TaskStatus onTick(BotContext ctx) {
         taskTicks++;
+        if (beside.watching()) {
+            // The player had the keys: whatever they did or did not do with them is not this card
+            // standing still, and a player who stops to read a sign must not end the job.
+            stallAnchor = null;
+        }
+        beside.tick();
         if (hardStalled(ctx)) {
+            if (beside.on()) {
+                // Stuck on one block with nothing to show for it. Beside the player that is a block
+                // given up, not the card finished: ending here would end the job under somebody
+                // who is still playing, and the keys are better back in their hands.
+                if (target != null) {
+                    unreachable.add(target.asLong());
+                }
+                stopBreaking(ctx);
+                clearTarget(ctx);
+                stallAnchor = null;
+                ctx.debug.decide("beside: stalled on one block; giving it up and watching again");
+                return watchBeside();
+            }
             status.set("lune.status.mine.stood_still_s_without_cutting_anything", (HARD_STALL_TICKS / 20));
             ctx.debug.decide("hard stall: nothing gained and nowhere moved; ending the mining step");
             return TaskStatus.SUCCESS;
@@ -763,9 +800,18 @@ public final class MineTask implements Task {
         }
 
         if (target == null) {
+            if (!beside.mayStart(ctx) && treeAnchor == null) {
+                // A screen is open over the player's game: nothing new is started under it.
+                return watchBeside();
+            }
             boolean scanComplete = findTarget(ctx);
             if (target == null) {
                 if (!scanComplete) {
+                    // Beside the player, a sweep still working through what is in view is watching,
+                    // not work - unless it is the look round a tree already being felled.
+                    if (beside.on() && treeAnchor == null) {
+                        return watchBeside();
+                    }
                     return TaskStatus.RUNNING;
                 }
                 if (finishCurrentTree && treeAnchor != null) {
@@ -785,6 +831,13 @@ public final class MineTask implements Task {
                     }
                     status.set("lune.status.mine.tree_finished_looking_another");
                     return TaskStatus.RUNNING;
+                }
+                if (beside.on()) {
+                    // Nothing of it in the player's view. No remembered ore to walk back to and no
+                    // staircase dug to find more: the player is the one exploring, so wait for what
+                    // they turn up rather than finishing, which would end the card the first time
+                    // they looked away.
+                    return watchBeside();
                 }
                 // If a previous find/scan already remembered a target, use it. Only start digging for
                 // new ore when there is nothing remembered and prospecting is explicitly enabled.
@@ -861,6 +914,12 @@ public final class MineTask implements Task {
         // Checked before walking anywhere: without the right pickaxe the block would be destroyed
         // with no drop, and there is no point crossing thirty blocks to find that out.
         if (!ToolSelector.canHarvest(ctx.player, ctx.level.getBlockState(target))) {
+            if (beside.on()) {
+                // The tool that was mining it has broken. Making another is a trip the player did
+                // not ask for; the block stays where it is until they carry one again.
+                clearTarget(ctx);
+                return watchBeside();
+            }
             if (!autoTool) {
                 status.set("lune.status.mine.mine",
                         ctx.level.getBlockState(target).getBlock().getName().getString());
@@ -1258,6 +1317,12 @@ public final class MineTask implements Task {
             return false;
         }
         return ++stallTicks >= HARD_STALL_TICKS;
+    }
+
+    /** Beside the player with nothing of this card's in view: hand back the keys and keep watching. */
+    private TaskStatus watchBeside() {
+        return beside.watch(status, finishCurrentTree
+                ? "lune.status.mine.watching_beside_trees" : "lune.status.mine.watching_beside");
     }
 
     /** An arrival that ends in a swing is not a fruitless one, whatever came before it. */
@@ -2193,8 +2258,10 @@ public final class MineTask implements Task {
         // Once a tree is committed, scanning around it is always worthwhile even when the command's
         // initial search was intentionally limited to the current view. The filter below restricts
         // this scan to the committed tree, so it cannot steal a different tree while turning.
+        // Beside the player the wide sweep is the player's own head: only the look round a tree
+        // already being felled is this card's to take.
         boolean areaCheck = !ctx.omniscientMining()
-                && (treeAnchor != null || checkAround);
+                && (treeAnchor != null || (checkAround && !beside.on()));
         HeadScanner scanner = treeAnchor != null ? treeScanner : headScanner;
         boolean viewSettled = true;
         if (areaCheck && !Vision.isPanoramic()
@@ -2250,6 +2317,10 @@ public final class MineTask implements Task {
                         && !pos.equals(deferredStump)
                         && belongsToCurrentTree(pos, state)
                         && (ctx.omniscientMining() || Vision.isVisible(ctx, pos))
+                        // Beside the player, only what they could mine with what they carry: ore
+                        // the pack cannot take is a reason to fetch a pickaxe, and that trip is
+                        // theirs to decide on.
+                        && (!beside.on() || ToolSelector.canHarvest(ctx.player, state))
                         && (!judgeFooting(ctx, state) || canStandToCut(ctx, pos));
         // Ordinary mining stays ranked from WorkSite. A committed tree may instead use the
         // skill learner's safe ordering; every candidate still passes the same tree and Vision
@@ -2407,7 +2478,7 @@ public final class MineTask implements Task {
         if (candidate != null) {
             ctx.debug.target("nearest " + ctx.level.getBlockState(candidate).getBlock().getName().getString(),
                     candidate, Vision.inspect(ctx, candidate).verdict());
-            if (prospect && exposureAttempts < MAX_VISIBLE_BLOCK_EXPOSURES) {
+            if (prospect && !beside.on() && exposureAttempts < MAX_VISIBLE_BLOCK_EXPOSURES) {
                 Vision.SightReport sight = Vision.inspect(ctx, candidate);
                 BlockPos blocker = sight.blocker();
                 if (canExposeVisibleBlock(ctx, blocker) && isWallFace(ctx, blocker, candidate)) {

@@ -1,5 +1,6 @@
 package com.etka.lune.bot.task;
 
+import com.etka.lune.bot.Beside;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.util.Lang;
@@ -92,6 +93,8 @@ public final class ExploreTask implements Task {
     /** The last indexed match, even when it was behind a visible blocker. */
     private BlockPos lastCandidate;
     private final StatusText status = new StatusText();
+    /** Beside the player the player explores: this card only watches what they bring into view. */
+    private final Beside beside = new Beside();
 
     /** The heading currently being followed, or null before the first choice. */
     private Float committedYaw;
@@ -175,6 +178,16 @@ public final class ExploreTask implements Task {
     }
 
     @Override
+    public void runBesidePlayer() {
+        beside.enable();
+    }
+
+    @Override
+    public boolean holdsControls() {
+        return beside.holdsControls();
+    }
+
+    @Override
     public LearningScope learningScope() {
         return LearningScope.of("visible-search", null, searchPhase());
     }
@@ -237,9 +250,21 @@ public final class ExploreTask implements Task {
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
+        beside.tick();
         if (targets.isEmpty()) {
             status.set("lune.status.explore.no_targets_selected");
             return TaskStatus.FAILED;
+        }
+
+        if (beside.on()) {
+            // Beside the player, the player is the explorer. The same look a walk takes as it goes -
+            // nothing turned, only what is already in front of the eyes - succeeds on the first
+            // sight of a target, exactly as the walk would have; until then the keys stay theirs.
+            BlockPos seen = visibleTarget(ctx, TRAVEL_RESCAN_DISTANCE, TRAVEL_SIGHT_CHECKS);
+            if (seen != null) {
+                return spotted(ctx, seen, Lang.get("lune.reason.spotted"));
+            }
+            return beside.watch(status, "lune.status.explore.watching_beside");
         }
 
         if (walk != null) {

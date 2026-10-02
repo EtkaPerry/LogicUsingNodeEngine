@@ -3,6 +3,7 @@ package com.etka.lune.bot.task;
 import com.etka.lune.compat.Hands;
 import com.etka.lune.compat.Mobs;
 import com.etka.lune.util.Lang;
+import com.etka.lune.bot.Beside;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.Task;
@@ -142,6 +143,12 @@ public final class KillTask implements Task {
     private int shelterPlacementTicks;
     private String combatStrategy = CombatPolicy.DEFAULT;
     private final StatusText status = new StatusText();
+    /**
+     * Beside the player: a target the player can see, inside the card's radius, and a wait rather
+     * than a finish when there is none. Only ever on for the Kill card itself, never for the fights
+     * the hunting cards start for themselves.
+     */
+    private final Beside beside = new Beside();
 
     private enum PreparationKind {
         SHIELD, WEAPON
@@ -183,6 +190,16 @@ public final class KillTask implements Task {
     @Override
     public StatusText statusLine() {
         return status;
+    }
+
+    @Override
+    public void runBesidePlayer() {
+        beside.enable();
+    }
+
+    @Override
+    public boolean holdsControls() {
+        return beside.holdsControls();
     }
 
     /**
@@ -267,6 +284,7 @@ public final class KillTask implements Task {
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
+        beside.tick();
         if (targets.isEmpty()) {
             status.set("lune.status.find.no_mobs_selected");
             return TaskStatus.FAILED;
@@ -311,9 +329,15 @@ public final class KillTask implements Task {
         }
 
         if (target == null) {
+            if (!beside.mayStart(ctx)) {
+                return beside.watch(status, "lune.status.kill.watching_beside");
+            }
             target = findNearest(ctx);
             openingHitDone = false;
             if (target == null) {
+                if (beside.on()) {
+                    return beside.watch(status, "lune.status.kill.watching_beside");
+                }
                 status.set("lune.status.kill.killed_nothing_left_within_blocks", killed, radius);
                 return TaskStatus.SUCCESS;
             }

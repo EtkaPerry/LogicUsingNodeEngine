@@ -1,7 +1,6 @@
 modLoader = "javafml"
 loaderVersion = "${forge_loader_version_range}"
 license = "${license}"
-clientSideOnly = true
 
 [[mods]]
 modId = "${mod_id}"
@@ -10,17 +9,21 @@ displayName = "${mod_name}"
 authors = "${mod_author}"
 credits = "${credits}"
 description = '''${description}'''
+logoFile = "assets/${mod_id}/icon.png"
+# Optional on both sides, any version: the server list never marks a server red for having or
+# lacking Lune.
+displayTest = "IGNORE_ALL_VERSION"
 
 [[dependencies.${mod_id}]]
 modId = "forge"
 mandatory = true
 versionRange = "${forge_loader_version_range}"
 ordering = "NONE"
-side = "CLIENT"
+side = "BOTH"
 
 [[dependencies.${mod_id}]]
 modId = "minecraft"
 mandatory = true
 versionRange = "${minecraft_version_range}"
 ordering = "NONE"
-side = "CLIENT"
+side = "BOTH"

@@ -12,10 +12,19 @@ package com.etka.lune.bot;
  * <p>{@link #DANGER} is the world: lava, water, air, a fall. A mob is {@link #FIGHT} when she is
  * facing it and {@link #FLEE} when she is getting away from it, and her own body is {@link #HURT},
  * {@link #RECOVERING} or {@link #DEAD}.</p>
+ *
+ * <p>{@link #DIGGING}, {@link #FARMING}, {@link #CRAFTING}, {@link #SMELTING} and
+ * {@link #COLLECTING} are the job in hand while she is at the work itself - breaking the block,
+ * cutting the crop, standing at the furnace - rather than walking to it.</p>
  */
 public enum StatusSignal {
 
     NONE,
+    FARMING,
+    SMELTING,
+    CRAFTING,
+    DIGGING,
+    COLLECTING,
     TRAVEL,
     BRIDGING,
     PILLARING,
@@ -45,27 +54,38 @@ public enum StatusSignal {
      * then her own health. The ones that merely say which job is in hand sit at the bottom, under
      * every kind of trouble, so a bridge that cannot be built reads as a blockage and not as
      * bridging.</p>
+     *
+     * <p>The five jobs sit under even the walking, for the same reason: the job is the outer status
+     * and the walk is the inner one, and whatever she is doing this tick is the inner one. A tree
+     * felled from the far side of a clearing reads as travel until she arrives, then as digging.
+     * Among the jobs themselves the one done inside another comes first - collecting a drop happens
+     * inside digging, digging inside crafting a tool, crafting a furnace inside smelting.</p>
      */
     public int priority() {
         return switch (this) {
-            case DEAD -> 18;
-            case SUCCESS -> 17;
-            case DANGER -> 16;
-            case FIGHT -> 15;
-            case FLEE -> 14;
-            case HURT -> 13;
-            case RECOVERING -> 12;
-            case INVENTORY_FULL -> 11;
-            case MISSING_MATERIALS -> 10;
-            case BLOCKED -> 9;
-            case SEARCH -> 8;
-            case LOADING -> 7;
-            case WAITING -> 6;
-            case FRAMING -> 5;
-            case STAIRS -> 4;
-            case PILLARING -> 3;
-            case BRIDGING -> 2;
-            case TRAVEL -> 1;
+            case DEAD -> 23;
+            case SUCCESS -> 22;
+            case DANGER -> 21;
+            case FIGHT -> 20;
+            case FLEE -> 19;
+            case HURT -> 18;
+            case RECOVERING -> 17;
+            case INVENTORY_FULL -> 16;
+            case MISSING_MATERIALS -> 15;
+            case BLOCKED -> 14;
+            case SEARCH -> 13;
+            case LOADING -> 12;
+            case WAITING -> 11;
+            case FRAMING -> 10;
+            case STAIRS -> 9;
+            case PILLARING -> 8;
+            case BRIDGING -> 7;
+            case TRAVEL -> 6;
+            case COLLECTING -> 5;
+            case DIGGING -> 4;
+            case CRAFTING -> 3;
+            case SMELTING -> 2;
+            case FARMING -> 1;
             case NONE -> 0;
         };
     }

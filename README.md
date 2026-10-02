@@ -28,6 +28,8 @@ Floating within your control interface lives **Lune**—a gentle, living soul wh
 
 As your tasks execute, Lune monitors the world in real time. She visually expresses what is happening—reflecting when the bot is deep in thought, hunting down a path, celebrating a successful harvest, running low on inventory space, missing tools, or sensing imminent danger.
 
+You don't have to open the panel to hear from her. While a task runs, a small card in the top-right corner of the game shows her face and says what she makes of the moment in the same words as the panel—hungry, blocked, in danger, or simply which step she is on and where she is headed.
+
 Inside the Task Editor, Lune acts as your intelligent advisor. She watches your circuit layouts and offers proactive, sensible suggestions: reminding you to pack a meal before embarking on a long expedition, recommending a background safety circuit, proposing targets for large mining orders, or highlighting orphaned wires. Every suggestion comes with an instant preview, applies only when you accept it, and can be undone with a single keystroke.
 
 <br clear="left">
@@ -39,20 +41,30 @@ Inside the Task Editor, Lune acts as your intelligent advisor. She watches your 
 ### Visual Node Canvas
 - **Drag-and-Drop Workflow**: Build tasks as intuitive node graphs. Add cards for walking, mining, crafting, fighting, and looting.
 - **Natural Logic Flow**: Nodes connect with clear **Success** (green) and **Fail** (red) pins. Branching and looping feel completely natural without learning a scripting language.
+- **Either Way**: When a job should carry on the same way whether it succeeds or fails, right-click its card and untick **Show ▸ Separate outcomes**. Success and Fail become one grey **Done** pin with a single cable; tick it again and they split back apart without losing a wire.
+- **Only This One**: Point at a switch on any card that has several (`Self Preservation`'s dangers, `Kill`'s shield and potion, `Mine`'s tool and search options) and press **Only**. That switch stays on and the rest go off, so a guard that watches nothing but your air takes one click. Click the others to add them back one by one, or press **All** on the one left on. Shift-click does the same, and in a mob list or the block picker it keeps just the one you clicked.
 - **Concurrent Parallel Circuits**: Use **Always** power nodes to run companion safety circuits (like health monitoring, weapon re-equipping, or perimeter bounds) simultaneously beside your main job.
 - **Live Circuit Telemetry**: Watch energized wires light up with moving sparks and active cards glow as your bot steps through its instructions.
-- **Blueprints & Clipboard Sharing**: Group complex sub-graphs into reusable blueprints, or export and import entire tasks via JSON through your clipboard.
+- **Blueprints & Share Links**: Group complex sub-graphs into reusable blueprints. Press **Share** on the Tasks tab for a view-only or view-and-edit link that opens the task in any browser, with every card, wire and note drawn as it is on your canvas and an editor to change it; **Import** reads the link straight back into Lune.
 - **Find Anything (`Ctrl+F`)**: Search the canvas by card name, command id, or anything you typed into a parameter — "diamond" finds the mine card looking for it. Matches light up, everything else dims, and `Enter` walks you from one to the next. Notes and groups are searched too.
-- **Sticky Notes (`N`)**: Drop a coloured note anywhere on the board to record *why* a branch is wired the way it is. Notes travel with the task through save, export and import, so the reasoning arrives with the graph instead of staying in your head.
+- **Sticky Notes (`N`)**: Drop a coloured note anywhere on the board to record *why* a branch is wired the way it is. Notes travel with the task through save, share and import, so the reasoning arrives with the graph instead of staying in your head.
 - **Card Groups (`Ctrl+G`)**: Draw a named, coloured frame around a handful of cards. Drag its title bar to move the whole section, and collapse it to a single bar when you are working elsewhere — wires that leave the group still connect to it, so a closed group reads as one card with a lot going on inside.
 - **Trace a Cable (middle-click)**: When the wiring gets busy, middle-click a cable to make it shine. It glows, with sparks running from the card it leaves to the card it reaches, both of those cards are ringed, every other cable fades back, and the minimap draws it too. Middle-drag to follow it across the canvas; middle-click it again, click empty canvas, or press `Esc` to let it go.
 - **Breakpoints & Step-Through (`F9`)**: Put a breakpoint on a card and the run stops the moment the signal arrives there, before the card does anything. **Step** runs that card and stops at the next one; **Continue** carries on to the next breakpoint. The bot stands still while held rather than drifting on with a walk key down.
 - **Copy, Paste, Duplicate (`Ctrl+C` / `Ctrl+V` / `Ctrl+D`)**: Lift a chunk of one task and drop it into another with every wire *between* those cards intact. Press `F` to zoom to what is selected, `Home` to fit the whole task.
 
+### Beside You, Not Instead of You
+- **One Switch per Task**: The small two-figure cap beside a task's name on the **Task** tab makes it run *beside* you. Power flows through the cards exactly as before, but the keys stay yours: Lune takes them only while a powered card has work in sight, and gives them back when it is done. Tasks that run beside you wear the same blue mark in both task lists.
+- **Cards Wait for What You See**: Beside you, a card that looks for its work — `Mine`, `Chop Wood`, `Harvest`, `Loot`, `Kill`, `Explore`, `Find` — never turns your head or wanders off to search. It waits until its target is in your view. Walk past iron with a stone pickaxe in your pack and she walks over, mines it, picks it up and hands the keys back. Checks, timers and sounds never take the keys at all; every other card acts the moment power reaches it, as in any run.
+- **Guards Still Answer at Once**: `Self Preservation` on an Always card, or on the While pin of a powered card, steps in the moment it is needed — a long fall, lava, a Ghast's fireball to bat back. While a card has the controls it has all of them: movement, the camera, attack and use, and the hotbar. Your hotbar slot comes back when she is done.
+- **Pause Is Your Override**: `C` hands every key back at once. Nothing new starts while your inventory or the chat box is open. Try **4. Mine Ore Beside Me** on the starter shelf.
+
 ### Human-Like Perception (No X-Ray Hacks)
 - **True Line-of-Sight Vision**: The bot only interacts with blocks and mobs it can legitimately see. Raycasts and field-of-view cones ensure blocks behind solid walls or thick leaves aren't magically discovered.
 - **Smooth, Realistic Camera**: Turns are managed by a specialized physics easing curve (`LookController`) with acceleration and braking. No unnatural robotic snaps.
 - **Player-Like Scanning**: Lune glances ahead and performs sweeping head turns when scouting for resources.
+- **Swims Like a Player**: In deep water Lune ducks under with Shift and swims the crawl stroke a block below the surface — twice as fast as paddling — and comes up for a full breath once half the air is gone. A Walk card, which promises not to sprint, still paddles, because the stroke is the sprint key.
+- **Opens Doors, and Shuts Them Behind**: Wooden doors and fence gates are a way through, not a wall. Lune stops at the door, turns to it, opens it, and shuts it again once she is through, so a base stays closed at night and a pen keeps its sheep. Iron doors need redstone, and Lune presses no buttons. A door a server will not let her open ends the walk, and she says which door.
 - **Biome Intelligence**: The built-in `BiomeScout` analyzes surrounding loaded chunks across 16 headings to seek out wood, water, or stone without blindly swimming across oceans.
 
 ### Tactical, Balanced Combat
@@ -87,6 +99,7 @@ Inside the Task Editor, Lune acts as your intelligent advisor. She watches your 
 ### Accessibility & Modern Comfort
 - **Color-Blind Friendly**: One-click toggle for the Okabe-Ito high-contrast color palette, making Success and Failure connections effortless to distinguish.
 - **Customizable Themes**: Choose from clean UI themes including Slate, Orange, Blue, Purple, Amber, and Green.
+- **Task Shortcuts**: Give any task a key of its own — `Num 1` for *Chop Wood*, `Num 2` for a guard task you built around `Self Preservation`. Press it in game and the task starts; press it again and it stops. Set it from the small key cap beside the task's name on the **Task** tab. Keys the game already uses are refused, and nothing is bound until you bind it.
 - **HUD Safety Monitor**: Optional in-game overlay showing real-time coordinates, enemy proximity, saturation, equipment durability, light levels, and pathfinding telemetry.
 - **Modded Minecraft Ready**: Block, item, and recipe pickers dynamically read the live Minecraft registry—ores, tools, crops, and materials from other mods show up seamlessly.
 - **Waystones, JourneyMap & Xaero's Minimap**: The Waypoints tab lists the places those mods already know about, nearest first. Walk to one, or copy it into Lune's own list so any card can use it by name. Nothing is written back into the other mod.
@@ -108,15 +121,19 @@ Inside the Task Editor, Lune acts as your intelligent advisor. She watches your 
 
 ## Controls & Keybindings
 
-All keys can be rebound in the standard Minecraft **Controls** screen under the **Lune** category:
+Lune's own keys can be rebound in the standard Minecraft **Controls** screen under the **Lune** category:
 
 | Key | Action | Description |
 | :--- | :--- | :--- |
 | **`X`** | **Open Control Panel** | Opens the main menu, task canvas, waypoints, and settings |
-| **`C`** | **Pause / Resume** | Instantly freezes or resumes the currently running task |
+| **`C`** | **Pause / Resume** | Instantly freezes or resumes the currently running task; beside you, it hands every key back at once |
 | **`Shift + C`** | **Emergency Stop** | Immediately aborts all bot tasks and hands full control back |
 | **`F6`** | **Debug Telemetry** | Toggles the HUD overlay (TPS, path nodes, active tasks, profiler) |
 | **`F7` / `F8`** | **Approve / Reject Tactic** | Feedback for the tactical learning engine. Developer builds only; inert in a released jar |
+
+**Task shortcuts** are set in Lune's panel instead, because each one belongs to a task you made. On the **Task** tab, click the key cap at the end of the task's name box and press a key. `Esc` cancels, `Backspace` or a right-click removes the key. The key then shows on that task in both task lists. In game it starts the task, or stops it if it is already running. It does nothing while a screen or the chat box is open.
+
+**Task order** is yours as well. Hold a task in either task list for a second, until it lifts, then carry it to where it belongs: the tasks in between move along to make room, and it stays there when you let go, in both lists. Carried past the top or bottom row, the list scrolls. Let go where it started or beside the list and nothing moves, and **Undo** on the **Task** tab puts a move back.
 
 ---
 
@@ -125,14 +142,14 @@ All keys can be rebound in the standard Minecraft **Controls** screen under the 
 
 Lune ships with 15 tasks on a shelf that runs from a two-minute demo to what the engine can be asked to do. The last two need a compass mod and are listed only while it is installed, so a pack without them shows tasks 1 to 13. Every one of them explains itself: open it on the **Task** tab and sticky notes above each section say what the cards under them do, in your language, while framed groups name the sections. Each task reads left to right along one lane, however long it gets.
 
-**Demos** take a few minutes from an empty pack and finish on their own.
+**Demos** take a few minutes and finish on their own. The first three need nothing in the pack; the fourth runs beside you while you play.
 
 | Task | Cards | What It Does |
 | :--- | :---: | :--- |
 | **1. Chop Wood** | 12 | Punches six logs by hand, makes a wooden axe from them, and chops six more with it. Start here. |
 | **2. Stone Tools from Scratch** | 16 | Logs, a wooden pickaxe and twenty stone, then a stone pickaxe, axe and sword. |
 | **3. Go Fishing** | 10 | Ten catches at the water you are standing by. Needs a fishing rod. |
-| **4. Dig a Tunnel** | 10 | Makes a stone pickaxe if needed, digs 32 blocks the way you face, and walks back out. |
+| **4. Mine Ore Beside Me** | 8 | Runs beside you: you play, and Lune mines the iron and diamond ore you walk past, with whatever pickaxe you carry, ten of them, guarded the whole time. |
 
 **Chores** run for hours unattended and stop by themselves. Stand beside a chest before pressing Start.
 
@@ -151,7 +168,7 @@ Lune ships with 15 tasks on a shelf that runs from a two-minute demo to what the
 | **10. Get My Stuff Back** | 11 | Walks back to your last death, picks up the drops, puts the armor back on, and comes home. |
 | **11. Stone Tools to a Lit Portal** | 56 | *Demonstration graph.* Iron &rarr; diamonds &rarr; obsidian &rarr; a lit Nether portal and ender pearls. See below. |
 | **12. New World to Ender Dragon** | 79 | *Demonstration graph.* The whole game, from the first tree to the End. See below. |
-| **13. Netherite from the Nether** | 46 | Crosses into the Nether, mines ancient debris, comes home and upgrades a diamond pickaxe. Needs the upgrade template from a bastion. See below. |
+| **13. Netherite, There and Back** | 52 | Crosses into the Nether, mines ancient debris, comes home and upgrades a diamond pickaxe; run again, it picks up from what the pack holds. Needs the upgrade template from a bastion. See below. |
 | **14. Find a Village** | 13 | Asks the Explorer's Compass for each kind of village in turn, and explores on foot when no compass is carried. Listed only with Explorer's Compass installed. |
 | **15. Cherry Grove Timber** | 16 | Finds a cherry grove with Nature's Compass, cuts and replants it, and brings the logs home. Listed only with Nature's Compass installed. |
 
@@ -171,7 +188,7 @@ Every card defines a distinct capability that can be combined with others:
 | Category | Available Cards & Nodes |
 | :--- | :--- |
 | **Gathering** | `Mine` (ores/blocks), `Chop Wood` (trees), `Replant Trees` (a sapling back where each felled tree stood), `Harvest` (crops), `Loot` (ground items), `Fish`, `Hunt Sheep` (wool/mutton) |
-| **Movement** | `Walk`, `Run`, `Step` (micro-adjustment), `Go to Waypoint`, `Save Waypoint`, `Boat`, `Explore`, `Find Biome` (Nature's Compass), `Find Structure` (Explorer's Compass), `Use Nether Portal` (walk into a lit portal and cross over) |
+| **Movement** | `Walk`, `Run`, `Step` (micro-adjustment), `Go to Waypoint`, `Save Waypoint`, `Boat`, `Explore`, `Find Biome` (Nature's Compass), `Find Structure` (Explorer's Compass), `Find Stronghold` (one Eye of Ender, read from its flight rather than chased), `Find Portal Room` (dig into that stronghold and walk it by sight until the End portal is in reach), `Use Nether Portal` (walk into a lit portal and cross over) |
 | **Mining & Building** | `Place Block`, `Bridge` (chasm traversal), `Tunnel` (clearing corridors), `Stripmine` (shaft and branches, mining the ore it opens &mdash; ancient debris in the Nether included), `Build Nether Portal` |
 | **Items & Crafting** | `Get Tools` (smart autonomous material gatherer & crafter), `Craft` (recipe & 3x3 grid), `Smelt` (furnaces, ancient debris included), `Upgrade to Netherite` (smithing table; the template and the ingot have to be in the bag), `Deposit` (chests; a full chest fails the card, so a task can end or go elsewhere), `Deposit to Backpack` and `Take from Backpack` (Sophisticated Backpacks, Traveler's Backpack), `Select Item`, `Equip` (wear the best armor carried, or one chosen piece &mdash; accessory slots included where a mod adds them), `Recover Death Drop` (walk back to a death and sweep up the drops) |
 | **Combat** | `Kill` (targeted mob), `Hunt Creepers`, `Hunt Skeletons`, `Hunt Endermen`, `Hunt Blazes` |
@@ -221,9 +238,9 @@ for. A mod that has not been released for a version simply is not there to hook 
 
 ## Fair Play & Server Safety
 
-- **Client-Side Only**: Lune operates entirely on your client. It requires zero server-side mods or plugins.
+- **Client-Side, Server-Optional**: Lune operates entirely on your client and needs nothing on the server to work. A server owner *can* add the same jar to their server to decide what Lune may do there — see *For Server Owners* below.
 - **Respect Server Rules**: Many multiplayer servers strictly forbid automation, macros, or botting. Always check server rules before connecting.
-- **Cheating Protections**: The omniscient modes (X-raying blocks the bot cannot see) are not settings at all — they are session-only cheats behind a command, and they are **hard-locked off** unless you are in your own world or hold operator permission on the server. See below.
+- **Cheating Protections**: The omniscient modes (X-raying blocks the bot cannot see) are not settings at all — they are session-only cheats behind a command, and they are **hard-locked off** unless you are in your own world or hold operator permission on the server — or the server runs Lune and its rules say otherwise. See below.
 - **Safety Backups**: Because Lune can dig, place blocks, and traverse terrain, always keep backups of your single-player worlds!
 
 <details>
@@ -259,8 +276,46 @@ vanilla operator permission. That answer comes **from the server**, so no amount
 can fake it — and now there is no local file to edit in the first place. Switching a mode **off** is
 always allowed, anywhere.
 
+A server that runs Lune can move that line, and its word comes from the server too: its `cheats` rule
+opens the modes to everyone, or closes them to everyone, operators included. See *For Server
+Owners*.
+
 The command is the only thing Lune adds to chat. Every ordinary setting stays on the panel behind
 **`X`**.
+
+</details>
+
+<details>
+<summary><b>For Server Owners</b></summary>
+
+Lune is a client mod and does not need to be on your server. But if you would rather decide what it
+may do there, put the same Lune jar in your server's `mods` folder — Fabric, NeoForge or Forge, the
+same as your players. Nothing changes for players without Lune, and nobody is kept out for having or
+not having it. From then on:
+
+- **You know who has Lune.** Each player whose Lune joins is written to the server log with the
+  version they run, and operators see the list on Lune's **Server** tab, beside Config.
+- **You set the rules.** Two of them, each `everyone`, `operators` or `nobody`:
+
+  | Rule | Decides | Starts at |
+  | :--- | :--- | :--- |
+  | `run` | who may run tasks at all | `operators` |
+  | `cheats` | who may switch on the omniscient modes | `operators` |
+
+  They live in `config/lune-server.json`, written the first time the server starts, and an edit is
+  picked up a moment after you save it — no restart, no command. Operators can change them in game
+  on the **Server** tab too. Everybody else can read them there, so a refused player sees which
+  rule refused them.
+- **Lune holds itself to them.** A player the rules do not allow cannot start a task, and a run in
+  progress stops the moment the rules close — for an `/op` or a `/deop` as much as for an edit. The
+  panel still opens, and tasks can still be built and edited.
+
+What this is, plainly: a server cannot stop a client mod; it can only say what it allows. Every Lune
+build listens and obeys, but a player who rebuilt Lune with that taken out would not, as with any mod
+that asks a client to behave. Lune versions from before server rules existed do not know to ask.
+
+Your own world opened to LAN is a server too. Its rules apply to the friends who join it with Lune
+— they start at `everyone` for tasks — and never to you.
 
 </details>
 
@@ -270,12 +325,12 @@ The command is the only thing Lune adds to chat. Every ordinary setting stays on
 
 <details>
 <summary><b>Is Lune a hacked client?</b></summary>
-No. Lune is a client-side utility and automation mod built for survival automation, world management, and single-player fun. It contains no PvP features, cannot target other players, and respects vanilla line-of-sight vision. The two omniscient modes that bypass that vision are session-only cheats behind <code>/lune omniscient</code>, refused outright unless you own the world or the server has granted you operator permission — there is no setting or config value that can turn them on.
+No. Lune is a client-side utility and automation mod built for survival automation, world management, and single-player fun. It contains no PvP features, cannot target other players, and respects vanilla line-of-sight vision. The two omniscient modes that bypass that vision are session-only cheats behind <code>/lune omniscient</code>, refused outright unless you own the world or the server allows them — by granting you operator permission, or through its own Lune rules — and there is no setting or config value that can turn them on.
 </details>
 
 <details>
 <summary><b>Does Lune need to be installed on the server?</b></summary>
-No. Lune is 100% client-side. The server does not need to run Lune, nor does it even know Lune is installed.
+No. Lune is 100% client-side, and a server needs nothing to let a Lune player in. A server owner may install it anyway, to see who has Lune and decide what it may do there — see <b>For Server Owners</b> above. Without it, the server does not know Lune is installed.
 </details>
 
 <details>
@@ -285,7 +340,9 @@ Yes! Lune queries Minecraft's live block, item, and entity registries. Ores, tre
 
 <details>
 <summary><b>Can I share tasks with friends?</b></summary>
-Absolutely. Simply select nodes in the editor and copy them to your clipboard, or use the Export button. Your tasks are exported as clean JSON using standard namespaced IDs (e.g. <code>minecraft:iron_ore</code>) so they work across different mod setups.
+Yes. Select a task and press <b>Share</b> on the Tasks tab, choose <b>View only</b> or <b>View and edit</b>, then <b>Create link</b>. You get a short link to <code>lunode.etka.co.uk</code> that opens the task in any browser, drawn the way your canvas draws it: click a card to read its settings and what it is wired to. Paste a link into <b>Import</b> and Lune adds the task.<br><br>
+On the page, <b>Edit</b> works like the canvas: add cards from the list, drag from a pin onto a card to wire it, right-click a wire to cut it, change settings, move cards and write notes. With a view-and-edit link, Save writes into that same link, so pressing Import on it again brings the changes back into your game. A view-only link never changes: anyone who edits it gets a new link of their own.<br><br>
+Nothing is uploaded until you press Create link, and only that one task. Anyone with a link can read it, including coordinates and names on its cards, so look before you post it publicly, and give edit links only to people you trust. A link nobody opens for 30 days is deleted, and the Share popup can delete one you have just made. The first link asks you to agree to the <a href="https://lunode.etka.co.uk/policy">share policy</a>. If the site cannot be reached, Share hands you a longer, view-only link with the whole task inside it, which needs nothing stored anywhere. <b>Copy as text</b> in the same popup still copies the task as JSON. Cards, blocks and mobs are saved as namespaced IDs (e.g. <code>minecraft:iron_ore</code>), so a task works across different mod setups.
 </details>
 
 # Development & Contributing

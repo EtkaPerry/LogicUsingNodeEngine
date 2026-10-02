@@ -35,6 +35,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -305,11 +306,18 @@ public class BlockPicker extends AbstractWidget {
         scrollbar(extractor, x + layout.gridW() - SCROLLBAR_W, y, layout.contentH(), scrollRow, rows, rowCount(cols));
 
         if (hoveredEntry != null) {
+            List<Component> tooltip = new ArrayList<>(List.of(
+                    Component.literal(hoveredEntry.name()).withColor(LuneScreen.TEXT),
+                    Component.literal(hoveredEntry.id()).withColor(LuneScreen.TEXT_DIM)));
+            // Said only where it would change something: under the one block already chosen
+            // alone it would promise a click that does nothing.
+            if (!isOnly(hoveredEntry)) {
+                tooltip.add(Component.literal(Lang.get("lune.gui.block.shift_click_only"))
+                        .withColor(LuneScreen.TEXT_DIM));
+            }
             // Tooltips are deferred to the end of the frame, after the menu's scale transform has
             // been popped, so the anchor has to be handed over in the game's coordinates.
-            extractor.setComponentTooltipForNextFrame(font, List.of(
-                            Component.literal(hoveredEntry.name()).withColor(LuneScreen.TEXT),
-                            Component.literal(hoveredEntry.id()).withColor(LuneScreen.TEXT_DIM)),
+            extractor.setComponentTooltipForNextFrame(font, tooltip,
                     UiScale.toGamePixels(mouseX), UiScale.toGamePixels(mouseY));
         }
     }
@@ -497,7 +505,12 @@ public class BlockPicker extends AbstractWidget {
                 }
                 int index = (scrollRow + row) * layout.cols() + col;
                 if (index >= 0 && index < entries.size()) {
-                    toggle(entries.get(index));
+                    // Shift keeps just this one, as it does on a card's switches and in a mob list.
+                    if (Minecraft.getInstance().hasShiftDown()) {
+                        keepOnly(entries.get(index));
+                    } else {
+                        toggle(entries.get(index));
+                    }
                 }
                 return;
             }
@@ -697,6 +710,29 @@ public class BlockPicker extends AbstractWidget {
                 return;
             }
             working = working.blocks().contains(block) ? working.withoutBlock(block) : working.withBlock(block);
+        }
+    }
+
+    /** True when this entry is chosen and nothing else is, block or tag. */
+    private boolean isOnly(Entry entry) {
+        return working.blocks().size() + working.tags().size() == 1 && isSelected(entry);
+    }
+
+    /**
+     * Chooses this entry and drops every other block and tag. Never the reverse: "all" of a
+     * picker that offers the whole registry is no selection anybody wants.
+     */
+    private void keepOnly(Entry entry) {
+        if (entry.isTag()) {
+            TagKey<Block> tag = entry.tag();
+            if (tag != null) {
+                working = BlockTarget.ofTag(tag.location());
+            }
+            return;
+        }
+        Block block = entry.block();
+        if (block != null) {
+            working = BlockTarget.ofBlocks(Set.of(block));
         }
     }
 

@@ -13,7 +13,10 @@ public final class TaskCanvas {
     public static final int CARD_WIDTH = 124;
     public static final int CARD_HEIGHT = 72;
 
-    /** The input pin and the Success pin share a row; Fail sits below it, While below that. */
+    /**
+     * The input pin and the Success pin share a row; Fail sits below it, While below that. A card
+     * showing one Done pin puts it on the Success row, and While moves up into the row Fail left.
+     */
     public static final int INPUT_OFFSET_Y = 29;
     public static final int SUCCESS_OFFSET_Y = 29;
     public static final int FAILURE_OFFSET_Y = 44;
@@ -48,13 +51,18 @@ public final class TaskCanvas {
         return top(node) + SUCCESS_OFFSET_Y;
     }
 
+    /** Where a failure leaves the card: its Fail pin, or the Done pin on a joined card. */
     public static int failureY(TaskNode node) {
-        return top(node) + FAILURE_OFFSET_Y;
+        return top(node) + (node != null && node.showsDone()
+                ? SUCCESS_OFFSET_Y : FAILURE_OFFSET_Y);
     }
 
     public static int whileY(TaskNode node) {
-        return top(node) + (node != null && node.isClockNode()
-                ? CLOCK_OUTPUT_OFFSET_Y : WHILE_OFFSET_Y);
+        if (node != null && node.isClockNode()) {
+            return top(node) + CLOCK_OUTPUT_OFFSET_Y;
+        }
+        return top(node) + (node != null && node.showsDone()
+                ? FAILURE_OFFSET_Y : WHILE_OFFSET_Y);
     }
 
     /** True when a point would be drawn on top of a card rather than in the space between them. */

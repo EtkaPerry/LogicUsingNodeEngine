@@ -40,6 +40,20 @@ final class NetherPortalFrame {
         return positions;
     }
 
+    /**
+     * The six cells the frame closes round, bottom row first: what must be empty for the portal to
+     * light, and where it is once it has.
+     */
+    static List<BlockPos> opening(BlockPos base) {
+        List<BlockPos> cells = new ArrayList<>(6);
+        for (int y = 1; y < HEIGHT - 1; y++) {
+            for (int x = 1; x < WIDTH - 1; x++) {
+                cells.add(base.offset(x, y, 0));
+            }
+        }
+        return cells;
+    }
+
     static boolean isCorner(BlockPos base, BlockPos pos) {
         int x = pos.getX() - base.getX();
         int y = pos.getY() - base.getY();
@@ -66,9 +80,9 @@ final class NetherPortalFrame {
                         clear = false;
                         break;
                     }
-                    for (int x = 1; clear && x <= 2; x++) {
-                        for (int y = 1; y <= 3; y++) {
-                            if (!BlockPlacer.isReplaceable(ctx, candidate.offset(x, y, 0))) {
+                    if (clear) {
+                        for (BlockPos cell : opening(candidate)) {
+                            if (!BlockPlacer.isReplaceable(ctx, cell)) {
                                 clear = false;
                                 break;
                             }

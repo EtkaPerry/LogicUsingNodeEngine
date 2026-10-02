@@ -5,6 +5,7 @@ import com.etka.lune.util.Lang;
 import com.etka.lune.client.gui.tab.AboutTab;
 import com.etka.lune.client.gui.tab.ConfigTab;
 import com.etka.lune.client.gui.tab.MainTab;
+import com.etka.lune.client.gui.tab.ServerTab;
 import com.etka.lune.client.gui.tab.TasksTab;
 import com.etka.lune.client.gui.tab.WaypointsTab;
 import com.etka.lune.client.gui.mascot.MascotAdvisor;
@@ -14,6 +15,7 @@ import com.etka.lune.client.gui.widget.GamesSection;
 import com.etka.lune.client.gui.widget.LuneMenu;
 import com.etka.lune.client.gui.widget.NamePrompt;
 import com.etka.lune.client.gui.widget.RecipePicker;
+import com.etka.lune.client.gui.widget.SharePrompt;
 import com.etka.lune.client.gui.widget.SoundPicker;
 import com.etka.lune.client.gui.widget.InventoryPicker;
 import com.etka.lune.client.gui.widget.TrainingSection;
@@ -37,9 +39,9 @@ import java.util.List;
  * it that the active {@link LuneTab} owns.
  * <p>
  * The {@link LuneMenu} button shares the bar with the tabs, at its right end, and opens Lune's
- * corner over the tab below. Whatever is not a tab's own work - the training course now, games to
- * play while Lune works later - has a page there, so the tab bar stays five tabs long and no tab
- * carries a button that is not about it.
+ * corner over the tab below. Whatever is not a tab's own work - the training course, and games to
+ * play while Lune works - has a page there, so the tab bar stays six tabs long and no tab carries a
+ * button that is not about it.
  * <p>
  * The panel draws itself at its own GUI scale (see {@link UiScale}) rather than the game's, so a
  * large game scale cannot squeeze the layout into a space it does not fit. That means
@@ -63,12 +65,18 @@ public class LuneScreen extends ScaledScreen {
     /** Transparent primary shades used for selected rows and splitter glows. */
     public static final int ACCENT_SELECTION = 0x50FF8811;
     public static final int ACCENT_GLOW = 0x18FF8811;
+    /**
+     * A task that runs beside the player, wherever one is listed or switched: a cool blue, as far
+     * round the wheel from the accent as it goes, so it never reads as a selection.
+     */
+    public static final int BESIDE = 0xFF7FC8E8;
 
     private final TabManager tabManager = new TabManager(this::addRenderableWidget, this::removeWidget);
 
     private final MainTab mainTab = new MainTab();
     private final TasksTab tasksTab = new TasksTab();
     private final ConfigTab configTab = new ConfigTab();
+    private final ServerTab serverTab = new ServerTab();
     private final WaypointsTab waypointsTab = new WaypointsTab();
     private final AboutTab aboutTab = new AboutTab();
 
@@ -77,6 +85,7 @@ public class LuneScreen extends ScaledScreen {
     private final RecipePicker recipePicker = new RecipePicker();
     private final SoundPicker soundPicker = new SoundPicker(0, 0, 10, 10);
     private final NamePrompt namePrompt = new NamePrompt();
+    private final SharePrompt sharePrompt = new SharePrompt();
     private final LuneMenu menu = new LuneMenu();
     private final TrainingSection trainingSection = new TrainingSection(this::openLesson);
     private final GamesSection gamesSection = new GamesSection();
@@ -114,7 +123,7 @@ public class LuneScreen extends ScaledScreen {
         // Register first for pointer priority; rendering is manual so Lune still appears above tabs.
         addWidget(mascot);
         navBar = addRenderableWidget(NavBars.build(tabManager, this.width,
-                mainTab, tasksTab, waypointsTab, configTab, aboutTab));
+                mainTab, tasksTab, waypointsTab, configTab, serverTab, aboutTab));
         // Registered, though it draws itself, so Tab reaches it after the tabs like any button.
         addWidget(menu);
         mainTab.setTaskEditorOpener(this::openTaskEditor);
@@ -124,11 +133,13 @@ public class LuneScreen extends ScaledScreen {
         addRenderableWidget(recipePicker);
         addRenderableWidget(soundPicker);
         addRenderableWidget(namePrompt);
+        addRenderableWidget(sharePrompt);
         tasksTab.setBlockPicker(blockPicker);
         tasksTab.setInventoryPicker(inventoryPicker);
         tasksTab.setRecipePicker(recipePicker);
         tasksTab.setSoundPicker(soundPicker);
         tasksTab.setNamePrompt(namePrompt);
+        tasksTab.setSharePrompt(sharePrompt);
         tasksTab.setCourseMapOpener(() -> menu.open(trainingSection));
         // The pages of Lune's corner, in the order the side menu lists them.
         menu.setSections(List.of(trainingSection, gamesSection));
@@ -230,6 +241,9 @@ public class LuneScreen extends ScaledScreen {
         if (namePrompt.isOpen()) {
             namePrompt.render(extractor, menuMouseX, menuMouseY, partialTick);
         }
+        if (sharePrompt.isOpen()) {
+            sharePrompt.render(extractor, menuMouseX, menuMouseY, partialTick);
+        }
         // Last, so the corner covers the tab and the mascot rather than sharing the screen with
         // them. It never coexists with a picker: it only opens when nothing else is up.
         menu.renderCorner(extractor, menuMouseX, menuMouseY);
@@ -246,12 +260,19 @@ public class LuneScreen extends ScaledScreen {
         if (tabManager.getCurrentTab() instanceof LuneTab tab) {
             tab.tick();
         }
+        if (tabManager.getCurrentTab() != tasksTab) {
+            // Left for another tab mid-listen: the key would otherwise wait there for the player
+            // to come back, and take whatever they pressed first.
+            tasksTab.stopListeningForShortcut();
+        }
         MascotAdvisor.Surface surface = tabManager.getCurrentTab() == tasksTab
                 ? tasksTab.inTraining() ? MascotAdvisor.Surface.TRAINING : MascotAdvisor.Surface.TASKS
                 : tabManager.getCurrentTab() == waypointsTab
                 ? MascotAdvisor.Surface.WAYPOINTS
                 : tabManager.getCurrentTab() == configTab
                 ? MascotAdvisor.Surface.CONFIG
+                : tabManager.getCurrentTab() == serverTab
+                ? MascotAdvisor.Surface.SERVER
                 : tabManager.getCurrentTab() == aboutTab
                 ? MascotAdvisor.Surface.ABOUT
                 : MascotAdvisor.Surface.MAIN;
@@ -270,10 +291,16 @@ public class LuneScreen extends ScaledScreen {
         return false;
     }
 
+    /** True while the Tasks tab's key button is waiting for the key a task should start with. */
+    private boolean shortcutListening() {
+        return tabManager.getCurrentTab() == tasksTab && tasksTab.listeningForShortcut();
+    }
+
     /** True while one of the modal popups is up and owns the pointer. */
     private boolean popupOpen() {
         return blockPicker.isOpen() || inventoryPicker.isOpen() || recipePicker.isOpen()
-                || soundPicker.isOpen() || namePrompt.isOpen() || menu.isOpen();
+                || soundPicker.isOpen() || namePrompt.isOpen() || sharePrompt.isOpen()
+                || menu.isOpen();
     }
 
     /** Settings and tasks are edited live; persisting on close avoids writing every tick. */
@@ -291,6 +318,11 @@ public class LuneScreen extends ScaledScreen {
      */
     @Override
     protected boolean scaledMouseClicked(MouseButtonEvent menuEvent, boolean doubleClick) {
+        // A click anywhere but the key button means the player has moved on without pressing a
+        // key. The click still does whatever it was for.
+        if (shortcutListening() && !tasksTab.isOverShortcutButton(menuEvent.x(), menuEvent.y())) {
+            tasksTab.stopListeningForShortcut();
+        }
         // A click in the tab bar closes the corner and comes back unhandled, and carries on to
         // the tab it landed on.
         if (menu.isOpen() && menu.handleClick(menuEvent.x(), menuEvent.y(), menuEvent.button())) {
@@ -302,6 +334,10 @@ public class LuneScreen extends ScaledScreen {
         }
         if (namePrompt.isOpen()) {
             namePrompt.handleScreenMouseClick(menuEvent.x(), menuEvent.y(), menuEvent.button());
+            return true;
+        }
+        if (sharePrompt.isOpen()) {
+            sharePrompt.handleScreenMouseClick(menuEvent.x(), menuEvent.y(), menuEvent.button());
             return true;
         }
         if (recipePicker.isOpen()) {
@@ -399,12 +435,20 @@ public class LuneScreen extends ScaledScreen {
 
     @Override
     public boolean charTyped(CharacterEvent event) {
+        if (shortcutListening()) {
+            // The key itself was the answer; its character is not also typing.
+            return true;
+        }
         if (menu.isOpen()) {
             // A name box left focused behind the corner would otherwise take the typing.
             return true;
         }
         if (namePrompt.isOpen()) {
             namePrompt.handleScreenCharTyped(event.codepoint());
+            return true;
+        }
+        if (sharePrompt.isOpen()) {
+            // Nothing in it is typed into, and nothing behind it may be.
             return true;
         }
         if (blockPicker.isOpen()) {
@@ -424,6 +468,13 @@ public class LuneScreen extends ScaledScreen {
 
     @Override
     public boolean keyPressed(KeyEvent event) {
+        // First, before Escape can close the panel: while the key button listens, the next key is
+        // the answer to it, Escape included. Nothing else can be open meanwhile - reaching any of
+        // it takes a click, and a click anywhere else stops the listening.
+        if (shortcutListening()) {
+            tasksTab.shortcutKeyPressed(event);
+            return true;
+        }
         if (menu.isOpen()) {
             // Escape closes the corner, not the panel under it.
             menu.handleKey(event.key());
@@ -431,6 +482,10 @@ public class LuneScreen extends ScaledScreen {
         }
         if (namePrompt.isOpen()) {
             namePrompt.handleScreenKeyPressed(event.key(), 0, event.modifiers());
+            return true;
+        }
+        if (sharePrompt.isOpen()) {
+            sharePrompt.handleScreenKeyPressed(event.key());
             return true;
         }
         if (blockPicker.isOpen()) {

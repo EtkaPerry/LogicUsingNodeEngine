@@ -7,13 +7,20 @@ import com.etka.lune.bot.Task;
 import com.etka.lune.bot.command.CommandDef;
 import com.etka.lune.bot.command.CommandRegistry;
 import com.etka.lune.bot.task.TaskRunner;
+import com.etka.lune.client.TaskShortcutKeys;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.LuneTab;
+import com.etka.lune.client.gui.ScaledTooltips;
 import com.etka.lune.bot.command.Param;
+import com.etka.lune.client.gui.widget.BesideButton;
 import com.etka.lune.client.gui.widget.BlockPicker;
+import com.etka.lune.client.gui.widget.GuiIcons;
 import com.etka.lune.client.gui.widget.NamePrompt;
+import com.etka.lune.client.gui.widget.SharePrompt;
+import com.etka.lune.share.ShareService;
 import com.etka.lune.client.gui.widget.RecipePicker;
 import com.etka.lune.client.gui.widget.InventoryPicker;
+import com.etka.lune.client.gui.widget.ShortcutButton;
 import com.etka.lune.client.gui.widget.SoundPicker;
 import com.etka.lune.client.gui.widget.BlueprintPanel;
 import com.etka.lune.client.gui.widget.ListPanel;
@@ -28,17 +35,22 @@ import com.etka.lune.task.TaskDebug;
 import com.etka.lune.task.TaskGraph;
 import com.etka.lune.task.TaskGroup;
 import com.etka.lune.task.TaskCableAnchor;
+import com.etka.lune.task.TaskCode;
 import com.etka.lune.task.TaskWiring;
 import com.etka.lune.task.TaskNode;
 import com.etka.lune.task.TaskStore;
 import com.etka.lune.config.BotConfig;
+import com.etka.lune.config.TaskShortcuts;
 import com.etka.lune.config.TaskView;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 
 import java.util.ArrayDeque;
@@ -56,9 +68,9 @@ import java.util.Optional;
  * command, a task can end by handing off to another one - which is how a mining run switches to
  * harvesting and back.
  * <p>
- * <b>Export</b> puts the task on the clipboard as JSON and <b>Import</b> reads one back, so tasks
- * can be shared. Blocks and mobs are stored as namespaced ids, so an imported task
- * works on a different mod set, quietly dropping anything unrecognised.
+ * <b>Share</b> makes a link that opens the task in a browser, or copies it as text, and
+ * <b>Import</b> reads back any of those. Blocks and mobs are stored as namespaced ids, so an
+ * imported task works on a different mod set, quietly dropping anything unrecognised.
  */
 public class TasksTab extends LuneTab {
 
@@ -122,6 +134,9 @@ public class TasksTab extends LuneTab {
     private RecipePicker recipePicker;
     private SoundPicker soundPicker;
     private NamePrompt namePrompt;
+    private SharePrompt sharePrompt;
+    /** Which Import a fetched share belongs to: a newer Import makes an older answer moot. */
+    private int importTicket;
     /** Opens the course map; the last step's Next hands the player back to it. */
     private Runnable openCourseMap = () -> {};
     /** The lesson being attempted, or null when the editor is being used for real work. */
@@ -151,12 +166,16 @@ public class TasksTab extends LuneTab {
      */
     private String lessonTaskName;
     private final EditBox nameBox;
+    /** The open task's key in game, beside its name: both say which task this is to the player. */
+    private final ShortcutButton shortcutButton;
+    /** Whether the open task runs beside the player; beside the key, because both say what it is. */
+    private final BesideButton besideButton;
     private final EditBox paletteSearch;
 
     private final Button newButton;
     private final Button deleteButton;
     private final Button importButton;
-    private final Button exportButton;
+    private final Button shareButton;
     private final Button runButton;
     private final Button undoButton;
     private final Button redoButton;
@@ -236,6 +255,11 @@ public class TasksTab extends LuneTab {
         // rather than select, Del and Sure for every one of them.
         taskList.setMultiSelect(true);
         taskList.setOnDeleteKey(this::deleteTask);
+        // Held for a second, a task lifts and can be carried to another place in the list.
+        taskList.setOnMove(this::moveTask);
+        taskList.setBadge(TaskShortcutKeys::badge, TaskShortcutKeys::badgeTip, TaskGraph::displayName);
+        taskList.setMark(task -> task.beside, GuiIcons.Icon.BESIDE, LuneScreen.BESIDE,
+                task -> Lang.get("lune.beside.mark_tip"));
         blueprintPanel = add(new BlueprintPanel(0, 0, 10, 10, this::onStepSelected,
                 () -> TaskStore.get().save(), value -> message = value, this::removeSteps));
         palettePanel = add(new PalettePanel(0, 0, 10, 10, this::onPaletteSelect, this::onPaletteDrop));
@@ -252,14 +276,14 @@ public class TasksTab extends LuneTab {
         nameBox.setHint(Component.literal(Lang.get("lune.gui.tasks.task_name")));
         nameBox.setMaxLength(32);
         nameBox.setResponder(this::onRename);
+        shortcutButton = add(new ShortcutButton(this::toggleShortcutListening, this::clearShortcut));
+        besideButton = add(new BesideButton(this::toggleBeside));
 
         newButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.new")), b -> createTask()).size(42, 18).build());
-        deleteButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.del")), b -> deleteTask()).size(42, 18)
-                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
-                        Component.literal(Lang.get("lune.gui.tasks.delete_whole_task_delete_card_instead"))))
-                .build());
+        deleteButton = add(tipped(Button.builder(Component.literal(Lang.get("lune.gui.tasks.del")), b -> deleteTask())
+                .size(42, 18).build(), "lune.gui.tasks.delete_whole_task_delete_card_instead"));
         importButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.import")), b -> importTask()).size(44, 18).build());
-        exportButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.export")), b -> exportTask()).size(50, 18).build());
+        shareButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.share")), b -> shareTask()).size(50, 18).build());
         runButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.run")), b -> runTask()).size(124, 18).build());
         leaveButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.leave_puzzle")), b -> leavePuzzle())
                 .size(104, 18).build());
@@ -301,36 +325,24 @@ public class TasksTab extends LuneTab {
                 b -> pressSelectedButton()).size(42, 18).build());
         layoutButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.layout")), b -> blueprintPanel.autoLayout()).size(48, 18).build());
         minimapButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.map")), b -> toggleMinimap()).size(58, 18).build());
-        findButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.find")),
-                        b -> blueprintPanel.toggleFind()).size(42, 18)
-                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
-                        Component.literal(Lang.get("lune.gui.tasks.find_tip"))))
-                .build());
-        noteButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.note")),
-                        b -> addNote()).size(44, 18)
-                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
-                        Component.literal(Lang.get("lune.gui.tasks.note_tip"))))
-                .build());
-        groupButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.group")),
-                        b -> groupCards()).size(52, 18)
-                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
-                        Component.literal(Lang.get("lune.gui.tasks.group_tip"))))
-                .build());
-        breakpointButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.breakpoint")),
-                        b -> toggleBreakpoint()).size(52, 18)
-                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
-                        Component.literal(Lang.get("lune.gui.tasks.breakpoint_tip"))))
-                .build());
-        stepButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.debug_step")),
-                        b -> stepTask()).size(44, 18)
-                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
-                        Component.literal(Lang.get("lune.gui.tasks.debug_step_tip"))))
-                .build());
-        resumeButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.debug_continue")),
-                        b -> resumeTask()).size(60, 18)
-                .tooltip(net.minecraft.client.gui.components.Tooltip.create(
-                        Component.literal(Lang.get("lune.gui.tasks.debug_continue_tip"))))
-                .build());
+        findButton = add(tipped(Button.builder(Component.literal(Lang.get("lune.gui.tasks.find")),
+                        b -> blueprintPanel.toggleFind()).size(42, 18).build(),
+                "lune.gui.tasks.find_tip"));
+        noteButton = add(tipped(Button.builder(Component.literal(Lang.get("lune.gui.tasks.note")),
+                        b -> addNote()).size(44, 18).build(),
+                "lune.gui.tasks.note_tip"));
+        groupButton = add(tipped(Button.builder(Component.literal(Lang.get("lune.gui.tasks.group")),
+                        b -> groupCards()).size(52, 18).build(),
+                "lune.gui.tasks.group_tip"));
+        breakpointButton = add(tipped(Button.builder(Component.literal(Lang.get("lune.gui.tasks.breakpoint")),
+                        b -> toggleBreakpoint()).size(52, 18).build(),
+                "lune.gui.tasks.breakpoint_tip"));
+        stepButton = add(tipped(Button.builder(Component.literal(Lang.get("lune.gui.tasks.debug_step")),
+                        b -> stepTask()).size(44, 18).build(),
+                "lune.gui.tasks.debug_step_tip"));
+        resumeButton = add(tipped(Button.builder(Component.literal(Lang.get("lune.gui.tasks.debug_continue")),
+                        b -> resumeTask()).size(60, 18).build(),
+                "lune.gui.tasks.debug_continue_tip"));
         tasksButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.title")), b -> toggleList()).size(46, 18).build());
 
         // Hidden until there is something to debug; layout may run before the first tick does.
@@ -352,6 +364,7 @@ public class TasksTab extends LuneTab {
         }
         refreshTasks();
         forgetMissingViews();
+        forgetMissingShortcuts();
         restoreTaskSelection();
         recordEdit();
     }
@@ -376,6 +389,10 @@ public class TasksTab extends LuneTab {
 
     public void setNamePrompt(NamePrompt prompt) {
         this.namePrompt = prompt;
+    }
+
+    public void setSharePrompt(SharePrompt prompt) {
+        this.sharePrompt = prompt;
     }
 
     public void setCourseMapOpener(Runnable opener) {
@@ -823,6 +840,7 @@ public class TasksTab extends LuneTab {
         nameBox.setValue("");
         selectedTaskName = null;
         forgetViews(doomed);
+        forgetShortcuts(doomed);
         BotConfig.get().save();
         recordEdit();
         resetDeleteConfirmation();
@@ -831,16 +849,87 @@ public class TasksTab extends LuneTab {
                 : Lang.get("lune.gui.tasks.deleted_tasks", doomed.size());
     }
 
-    private void exportTask() {
-        TaskGraph selected = taskList.getSelected();
-        message = TaskStore.get().exportToClipboard(selected)
-                ? Lang.get("lune.gui.tasks.copied_clipboard", selected.displayName())
-                : Lang.get("lune.gui.tasks.select_task_first");
+    /**
+     * A task held and carried to another place in the list stays there.
+     *
+     * <p>One step of undo, like every other edit to the list. The order is the store's, so the
+     * dashboard's list and the file follow it as well.</p>
+     */
+    private void moveTask(TaskGraph moved, List<TaskGraph> order) {
+        beginEdit();
+        if (TaskStore.get().reorder(order)) {
+            message = Lang.get("lune.gui.tasks.moved", moved.displayName(), order.indexOf(moved) + 1);
+        }
+        refreshTasks();
+        recordEdit();
     }
 
+    /** Opens the Share popup, which makes a link - or copies the task as text, as Export did. */
+    private void shareTask() {
+        TaskGraph selected = taskList.getSelected();
+        if (selected == null) {
+            message = Lang.get("lune.gui.tasks.select_task_first");
+            return;
+        }
+        if (sharePrompt == null) {
+            message = TaskStore.get().exportToClipboard(selected)
+                    ? Lang.get("lune.gui.tasks.copied_clipboard", selected.displayName())
+                    : Lang.get("lune.gui.tasks.select_task_first");
+            return;
+        }
+        sharePrompt.open(selected, text -> message = text);
+    }
+
+    /**
+     * Imports whatever the clipboard holds that is a task: a share link, a link carrying the task
+     * in it, a bare share code, or the JSON Export used to copy. Only a share link needs the
+     * network, and only that one link is fetched.
+     */
     private void importTask() {
+        int ticket = ++importTicket;
+        String clipboard = Minecraft.getInstance().keyboardHandler.getClipboard();
+        ShareService service = ShareService.standard();
+        Optional<TaskCode.Pasted> pasted = TaskCode.read(clipboard, service.base());
+        if (pasted.isEmpty()) {
+            message = Lang.get("lune.gui.tasks.clipboard_did_contain_task");
+            return;
+        }
+        switch (pasted.get()) {
+            case TaskCode.Json json -> importJson(json.json());
+            case TaskCode.Code code -> importCode(code.code());
+            case TaskCode.Link link -> {
+                message = Lang.get("lune.gui.tasks.share_fetching");
+                service.download(link.id()).whenComplete((code, failure) ->
+                        Minecraft.getInstance().execute(() -> {
+                            if (ticket != importTicket) {
+                                return;
+                            }
+                            if (failure != null) {
+                                message = ShareService.isGone(failure)
+                                        ? Lang.get("lune.gui.tasks.share_gone")
+                                        : Lang.get("lune.gui.tasks.share_unreachable", service.host());
+                                return;
+                            }
+                            importCode(code);
+                        }));
+            }
+        }
+    }
+
+    private void importCode(String code) {
+        String json;
+        try {
+            json = TaskCode.decode(code);
+        } catch (IllegalArgumentException notATask) {
+            message = Lang.get("lune.gui.tasks.clipboard_did_contain_task");
+            return;
+        }
+        importJson(json);
+    }
+
+    private void importJson(String json) {
         beginEdit();
-        Optional<TaskGraph> imported = TaskStore.get().importFromClipboard();
+        Optional<TaskGraph> imported = TaskStore.get().importFrom(json);
         message = imported
                 .map(task -> Lang.get("lune.gui.tasks.imported") + task.displayName() + "'")
                 .orElse(Lang.get("lune.gui.tasks.clipboard_did_contain_task"));
@@ -885,7 +974,12 @@ public class TasksTab extends LuneTab {
             return;
         }
         TaskStore.get().save();
-        BotEngine.get().runNow(new TaskRunner(selected));
+        if (!BotEngine.get().runNow(new TaskRunner(selected))) {
+            // Refused - the terms, or this server's rules - and the engine says which. The panel
+            // stays open, so the reason is read where the button was pressed.
+            message = BotEngine.get().getLastMessage();
+            return;
+        }
         if (BotConfig.get().closePanelOnRun) {
             Screens.open(Minecraft.getInstance(), null);
         } else {
@@ -897,15 +991,173 @@ public class TasksTab extends LuneTab {
     private void syncRunButton() {
         if (inTraining()) {
             runButton.setMessage(Component.literal(Lang.get("lune.gui.tasks.send_pulse")));
-            runButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(Component.literal(Lang.get("lune.gui.tasks.preview_one_pulse_through_selected_path"))));
+            tipped(runButton, "lune.gui.tasks.preview_one_pulse_through_selected_path");
             return;
         }
         boolean running = selectedTaskIsRunning();
         runButton.setMessage(Component.literal(Lang.get(running ? "lune.gui.tasks.stop" : "lune.gui.tasks.run")));
-        runButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
-                Component.literal(Lang.get(running ? "lune.gui.tasks.stop_tip"
+        tipped(runButton, running ? "lune.gui.tasks.stop_tip"
                 : BotConfig.get().closePanelOnRun ? "lune.gui.tasks.run_tip_close"
-                : "lune.gui.tasks.run_tip_keep"))));
+                : "lune.gui.tasks.run_tip_keep");
+    }
+
+    /**
+     * A button with a tooltip, given the way a page that draws at its own scale has to give one.
+     * See {@link ScaledTooltips}: through the button's own tooltip it lands somewhere else
+     * whenever Lune's scale is not the game's.
+     */
+    private static Button tipped(Button button, String tipKey) {
+        return ScaledTooltips.set(button, Component.literal(Lang.get(tipKey)));
+    }
+
+    // --- shortcut key ----------------------------------------------------------
+
+    /**
+     * The key button was pressed: listen for the open task's new key, or stop listening.
+     *
+     * <p>The key is set here and not in the game's Controls screen on purpose. A task is the
+     * player's own, one of however many they have made, and Controls can only list a fixed set of
+     * actions by name - so the key goes where the task is, and is seen beside it in every list.</p>
+     */
+    private void toggleShortcutListening() {
+        if (shortcutButton.isListening()) {
+            stopListeningForShortcut();
+            return;
+        }
+        TaskGraph task = taskList.getSelected();
+        if (task == null || inTraining()) {
+            message = Lang.get("lune.gui.tasks.pick_task_first");
+            return;
+        }
+        shortcutButton.setListening(true);
+        message = Lang.get("lune.shortcut.prompt", task.displayName());
+    }
+
+    /** True while the key button is waiting for a key; the screen hands this tab the next one. */
+    public boolean listeningForShortcut() {
+        return shortcutButton.isListening();
+    }
+
+    /** Stops waiting for a key and leaves the task's key as it was. */
+    public void stopListeningForShortcut() {
+        if (shortcutButton.isListening()) {
+            shortcutButton.setListening(false);
+            message = "";
+        }
+    }
+
+    /** Whether a click here is on the key button, which the screen leaves to it. */
+    public boolean isOverShortcutButton(double x, double y) {
+        return shortcutButton.visible && shortcutButton.isMouseOver(x, y);
+    }
+
+    /**
+     * The key pressed while the button was listening.
+     *
+     * <p>Escape leaves the key as it was and Backspace or Delete takes it away, the pair a player
+     * reaches for to back out of a box or empty one. Shift, Control and Alt are passed over, since
+     * a player pressing Ctrl+1 means the 1. A key the game or another mod already answers to is
+     * refused by name - start the task every time the player walks forward, and the key has done
+     * harm - and the button keeps listening, so the next key can be tried straight away.</p>
+     */
+    public void shortcutKeyPressed(KeyEvent event) {
+        TaskGraph task = taskList.getSelected();
+        if (task == null || event.isEscape()) {
+            stopListeningForShortcut();
+            return;
+        }
+        InputConstants.Key key = InputConstants.getKey(event);
+        String name = key.getName();
+        if (InputConstants.UNKNOWN.equals(key) || TaskShortcuts.isModifier(name)) {
+            return;
+        }
+        if (TaskShortcutKeys.clears(name)) {
+            clearShortcut();
+            return;
+        }
+        KeyMapping taken = TaskShortcutKeys.takenBy(key);
+        if (taken != null) {
+            message = Lang.get("lune.shortcut.taken", TaskShortcutKeys.label(name),
+                    Lang.get(taken.getName()));
+            return;
+        }
+        String previous = TaskShortcutKeys.shortcuts().assign(task.name, name);
+        BotConfig.get().save();
+        shortcutButton.setListening(false);
+        message = previous == null
+                ? Lang.get("lune.shortcut.set", TaskShortcutKeys.label(name), task.displayName())
+                : Lang.get("lune.shortcut.moved", TaskShortcutKeys.label(name), task.displayName(),
+                        TaskStore.displayNameOf(previous));
+        syncShortcutButton();
+    }
+
+    /** Takes the open task's key away: a right click on the button, or Backspace while it listens. */
+    private void clearShortcut() {
+        shortcutButton.setListening(false);
+        TaskGraph task = taskList.getSelected();
+        if (task == null) {
+            message = "";
+            return;
+        }
+        if (TaskShortcutKeys.shortcuts().clear(task.name)) {
+            BotConfig.get().save();
+            message = Lang.get("lune.shortcut.removed", task.displayName());
+        } else {
+            message = "";
+        }
+        syncShortcutButton();
+    }
+
+    /**
+     * Shows the open task's key on the button, and gives the name box back the room when the
+     * button's width changes with it.
+     */
+    private void syncShortcutButton() {
+        TaskGraph task = taskList.getSelected();
+        shortcutButton.show(task == null ? null : TaskShortcutKeys.shortcuts().keyOf(task.name));
+        // Only while it is on screen: a hidden button is never laid out, so its width would never
+        // catch up and this would lay the tab out again every tick.
+        if (shortcutButton.visible && shortcutButton.getWidth() != shortcutButton.preferredWidth()
+                && area != null && area.width() > 0) {
+            layout(area);
+        }
+    }
+
+    // --- beside the player -------------------------------------------------------
+
+    /**
+     * Flips whether the open task runs beside the player.
+     *
+     * <p>Saved with the task and kept in the undo history like any other edit to it, because it
+     * changes what the task is. A run already going carries on as it started: its cards were told
+     * how to work when they were built, and changing that under them halfway is how a card ends up
+     * searching with the player's hands on the keys.</p>
+     */
+    private void toggleBeside() {
+        TaskGraph task = taskList.getSelected();
+        if (task == null || inTraining()) {
+            message = Lang.get("lune.gui.tasks.pick_task_first");
+            return;
+        }
+        beginEdit();
+        task.beside = !task.beside;
+        recordEdit();
+        TaskStore.get().save();
+        besideButton.show(task.beside);
+        boolean running = BotEngine.get().getCurrent() instanceof TaskRunner runner
+                && runner.currentTask() == task;
+        message = running ? Lang.get("lune.beside.next_run", task.displayName())
+                : Lang.get(task.beside ? "lune.beside.now_on" : "lune.beside.now_off",
+                        task.displayName());
+    }
+
+    private static void forgetShortcuts(List<TaskGraph> tasks) {
+        TaskShortcutKeys.shortcuts().forget(tasks.stream().map(task -> task.name).toList());
+    }
+
+    /** Lets go of the keys of tasks that are gone - taken by an undo, or by editing the file. */
+    private static void forgetMissingShortcuts() {
+        TaskShortcutKeys.shortcuts().retainOnly(TaskStore.get().names());
     }
 
     private void onRename(String value) {
@@ -917,6 +1169,8 @@ public class TasksTab extends LuneTab {
             if (view != null) {
                 taskViews().put(value, view);
             }
+            // The key too, for the same reason: it is the task's, not the name's.
+            TaskShortcutKeys.shortcuts().rename(selected.name, value);
             selected.name = value;
             // Named by the player now, so it stops following the language. Showing them a title
             // they did not write, over the one they just typed, would be the wrong answer to
@@ -931,6 +1185,8 @@ public class TasksTab extends LuneTab {
     }
 
     private void onTaskSelected(TaskGraph task) {
+        // A key pressed now would land on a different task from the one it was asked for.
+        stopListeningForShortcut();
         if (task != null) {
             lastOpenedTaskName = task.name;
             BotConfig.get().lastOpenedTask = task.name;
@@ -1621,10 +1877,10 @@ public class TasksTab extends LuneTab {
         removeStepButton.setMessage(Component.literal(Lang.get(selectedCount > 1 ? "lune.gui.tasks.delete_many"
                 : "lune.gui.tasks.del", selectedCount)));
         removeStepButton.active = selectedCount > 0;
-        removeStepButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
+        ScaledTooltips.set(removeStepButton,
                 Component.literal(Lang.get(selectedCount == 0 ? "lune.gui.tasks.delete_tip_none"
                         : selectedCount == 1 ? "lune.gui.tasks.delete_tip_one"
-                        : "lune.gui.tasks.delete_tip_many", selectedCount))));
+                        : "lune.gui.tasks.delete_tip_many", selectedCount)));
         // The task pane's Del counts too, for the same reason and more so: what it takes is whole
         // tasks, as many as are selected in the list.
         List<TaskGraph> chosenTasks = taskList.getSelection();
@@ -1635,13 +1891,16 @@ public class TasksTab extends LuneTab {
             deleteButton.setMessage(Component.literal(deleteLabel(chosenTasks.size())));
         }
         deleteButton.active = !chosenTasks.isEmpty();
-        deleteButton.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
-                Component.literal(chosenTasks.size() > 1
-                        ? Lang.get("lune.gui.tasks.delete_tasks_tip_many", chosenTasks.size())
-                        : Lang.get("lune.gui.tasks.delete_whole_task_delete_card_instead"))));
+        ScaledTooltips.set(deleteButton, Component.literal(chosenTasks.size() > 1
+                ? Lang.get("lune.gui.tasks.delete_tasks_tip_many", chosenTasks.size())
+                : Lang.get("lune.gui.tasks.delete_whole_task_delete_card_instead")));
         rememberView();
 
         syncRunButton();
+        syncShortcutButton();
+        TaskGraph open = taskList.getSelected();
+        besideButton.show(open != null && open.beside);
+        besideButton.active = open != null;
         syncTrainingControls();
         repeatButton.setMessage(Component.literal(step == null ? "-" : isWhileCompanion(step) ? "x∞" : step.describeRepeat()));
         boolean repeatable = step != null && !step.isSourceNode()
@@ -1881,6 +2140,7 @@ public class TasksTab extends LuneTab {
 
     /** Called when the panel closes, so edits survive without writing the file every tick. */
     public void save() {
+        stopListeningForShortcut();
         tick();
         if (inTraining()) {
             // Closing the panel mid-puzzle would otherwise write the practice task into
@@ -2095,8 +2355,17 @@ public class TasksTab extends LuneTab {
             return;
         }
 
+        // The key sits at the end of the name row and the name box takes what is left: sixteen
+        // pixels for a task with no key, as much as the key's name needs for one with a key. The
+        // beside switch stands just before the key, the same size as a bare one.
+        int keyWidth = shortcutButton.preferredWidth();
+        int besideX = left + frame.leftPane() - 2 - keyWidth - 2 - BesideButton.SIZE;
         nameBox.setPosition(left + 2, top + 2);
-        nameBox.setWidth(frame.leftPane() - 4);
+        nameBox.setWidth(Math.max(20, besideX - 2 - (left + 2)));
+        besideButton.setPosition(besideX, top + 2);
+        besideButton.setSize(BesideButton.SIZE, ShortcutButton.HEIGHT);
+        shortcutButton.setPosition(left + frame.leftPane() - 2 - keyWidth, top + 2);
+        shortcutButton.setSize(keyWidth, ShortcutButton.HEIGHT);
         taskList.setPosition(left, top + 22);
         taskList.setSize(frame.leftPane(), Math.max(20, frame.listHeight() - 22));
 
@@ -2111,8 +2380,8 @@ public class TasksTab extends LuneTab {
         int midY = rowY + 21;
         importButton.setPosition(left, midY);
         importButton.setSize(halfW, CONTROL_H);
-        exportButton.setPosition(left + halfW + BUTTON_GAP, midY);
-        exportButton.setSize(tailW, CONTROL_H);
+        shareButton.setPosition(left + halfW + BUTTON_GAP, midY);
+        shareButton.setSize(tailW, CONTROL_H);
 
         int botY = midY + 21;
         undoButton.setPosition(left, botY);
@@ -2152,9 +2421,14 @@ public class TasksTab extends LuneTab {
      * getting out of a lesson are not things to bury behind a toggle.</p>
      */
     private void syncPaneWidgets(boolean paneVisible) {
-        show(paneVisible && !inTraining(), nameBox, taskList, newButton, deleteButton,
-                importButton, exportButton);
+        show(paneVisible && !inTraining(), nameBox, besideButton, shortcutButton, taskList,
+                newButton, deleteButton, importButton, shareButton);
         show(paneVisible, undoButton, redoButton, leftSplitter);
+        if (!shortcutButton.visible) {
+            // Hidden with its pane, a listening button would take the next key for a task the
+            // player can no longer see.
+            stopListeningForShortcut();
+        }
     }
 
     private static void show(boolean visible, AbstractWidget... widgets) {

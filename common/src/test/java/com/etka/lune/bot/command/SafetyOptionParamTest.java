@@ -115,18 +115,22 @@ class SafetyOptionParamTest {
     @Test
     void aTacticRowIsHiddenWhileItsDangerIsSwitchedOff() {
         CommandDef def = card();
-        def.apply(Map.of("protect_fall", "false", "protect_monsters", "false"));
+        def.apply(Map.of("protect_fall", "false", "protect_monsters", "false", "protect_air", "true"));
         assertFalse(def.isRelevant("clutch_water"), "asking how to clutch a fall nobody watches for");
         assertFalse(def.isRelevant("clutch_boat"));
         assertFalse(def.isRelevant("clutch_cushion"));
         assertFalse(def.isRelevant("protect_fireballs"));
         assertFalse(def.isRelevant("build_cover"));
-        // The threshold rows that were always there are not affected by this.
-        assertTrue(def.isRelevant("fall_threshold"));
+        // The thresholds go with them now: how far a fall may go, or how near a mob may come, is
+        // the same unread question once nobody is watching for either.
+        assertFalse(def.isRelevant("fall_threshold"));
+        assertFalse(def.isRelevant("monster_distance"));
+        assertTrue(def.isRelevant("air_value"), "a danger still watched keeps its rows");
 
         def.apply(Map.of("protect_fall", "true", "protect_monsters", "true"));
         assertTrue(def.isRelevant("clutch_water"));
         assertTrue(def.isRelevant("protect_fireballs"));
+        assertTrue(def.isRelevant("fall_threshold"));
     }
 
     @Test
