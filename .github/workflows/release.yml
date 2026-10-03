@@ -5,13 +5,10 @@ on:
     branches: [main]
     paths:
       - gradle.properties
-      # A push that only edits the notes rewrites them where they are
-      # published, and builds nothing (the notes job below).
-      - CHANGELOG.md
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Build every target, check the Modrinth token, list the notes that would change, publish nothing
+        description: Build every target, check the Modrinth token, publish nothing
         type: boolean
         required: false
         default: true
@@ -381,7 +378,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${MODRINTH_TOKEN:-}" ]; then
-            echo "::error::Secret MODRINTH_TOKEN is not set. It needs a Modrinth PAT with the create versions, write versions, read versions and read projects scopes."
+            echo "::error::Secret MODRINTH_TOKEN is not set. It needs a Modrinth PAT with the create versions, read versions and read projects scopes."
             exit 1
           fi
           body=$(curl -sS --fail-with-body \
@@ -400,8 +397,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # The notes of a release that is already up are put right by the
-          # notes job, after this one.
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             echo "Release v$VERSION exists; uploading the jars into it."
             gh release upload "v$VERSION" jars/*.jar --clobber
@@ -426,8 +421,7 @@ jobs:
 
           # Keyed on the jar name rather than the version number: every version
           # here carries the same number, and Modrinth does not require it to
-          # be unique. Skipping what is already up finishes a partial upload;
-          # the notes job puts right the changelog of anything skipped.
+          # be unique. Skipping what is already up finishes a partial upload.
           existing=$(curl -sS --fail-with-body \
             -H "Authorization: $MODRINTH_TOKEN" -H "User-Agent: $MODRINTH_UA" \
             "https://api.modrinth.com/v2/project/$PROJECT_ID/version" | jq -r '.[].files[].filename')
@@ -493,110 +487,6 @@ jobs:
           echo "Re-run from the Actions tab with the dry_run box cleared to publish v$VERSION."
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "**Dry run** - nothing was published." >> "$GITHUB_STEP_SUMMARY"
-
-  # Every release already out whose version has notes in CHANGELOG.md gets
-  # exactly those notes: the GitHub release body, and the changelog of each
-  # Modrinth version with that version number. Runs after a release and on
-  # its own when nothing is released, so editing a section is all it takes
-  # to correct one. Only what differs is touched.
-  notes:
-    needs: [plan, publish]
-    if: >-
-      !cancelled() && needs.plan.result == 'success' &&
-      (needs.publish.result == 'success' ||
-      (needs.publish.result == 'skipped' && needs.plan.outputs.release != 'true'))
-    runs-on: ubuntu-latest
-    env:
-      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: changelog
-          path: changelog
-
-      - name: Bring the published notes in line with CHANGELOG.md
-        env:
-          GH_TOKEN: ${{ github.token }}
-          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-        run: |
-          set -euo pipefail
-          notes=changelog/changelog.json
-          work="$RUNNER_TEMP"
-
-          # Line endings and trailing blanks evened out: a body saved in the
-          # browser comes back with CRLF.
-          norm() { tr -d '\r' | sed -e 's/[[:space:]]*$//'; }
-          differs() { [ "$(printf '%s' "$1" | norm)" != "$(printf '%s' "$2" | norm)" ]; }
-
-          gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
-            --jq '.[] | {key: .tag_name, value: (.body // "")}' |
-            jq -s 'from_entries' > "$work/bodies.json"
-
-          if [ "$DRY_RUN" = "true" ]; then
-            did="would replace"
-          else
-            did="replaced"
-          fi
-
-          released=""
-          github=0
-          for version in $(jq -r 'keys[]' "$notes"); do
-            if ! jq -e --arg tag "v$version" 'has($tag)' "$work/bodies.json" > /dev/null; then
-              echo "  $version  not released yet, left alone"
-              continue
-            fi
-            released="$released $version"
-            have=$(jq -r --arg tag "v$version" '.[$tag]' "$work/bodies.json")
-            want=$(jq -r --arg v "$version" '.[$v].notes' "$notes")
-            differs "$have" "$want" || continue
-            if [ "$DRY_RUN" != "true" ]; then
-              printf '%s\n' "$want" > "$work/notes.md"
-              gh release edit "v$version" --notes-file "$work/notes.md" > /dev/null
-            fi
-            echo "  $version  $did the notes of the GitHub release"
-            github=$((github + 1))
-          done
-
-          if [ -z "$released" ]; then
-            echo "No release that is out has notes in CHANGELOG.md."
-            exit 0
-          fi
-
-          if [ -z "${MODRINTH_TOKEN:-}" ]; then
-            echo "::error::Secret MODRINTH_TOKEN is not set."
-            exit 1
-          fi
-          curl -sS --fail-with-body \
-            -H "Authorization: $MODRINTH_TOKEN" -H "User-Agent: $MODRINTH_UA" \
-            "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT/version" > "$work/versions.json" || {
-              echo "::error::Modrinth rejected the version list of '$MODRINTH_PROJECT': $(cat "$work/versions.json")"
-              exit 1
-            }
-
-          modrinth=0
-          for version in $released; do
-            want=$(jq -r --arg v "$version" '.[$v].modrinth' "$notes")
-            jq -c --arg v "$version" '{changelog: .[$v].modrinth}' "$notes" > "$work/patch.json"
-            while read -r id; do
-              name=$(jq -r --arg id "$id" '.[] | select(.id == $id) | .name' "$work/versions.json")
-              have=$(jq -r --arg id "$id" '.[] | select(.id == $id) | .changelog // ""' "$work/versions.json")
-              differs "$have" "$want" || continue
-              if [ "$DRY_RUN" != "true" ]; then
-                response=$(curl -sS --fail-with-body -X PATCH \
-                  -H "Authorization: $MODRINTH_TOKEN" -H "User-Agent: $MODRINTH_UA" \
-                  -H "Content-Type: application/json" --data-binary "@$work/patch.json" \
-                  "https://api.modrinth.com/v2/version/$id") || {
-                    echo "::error::Modrinth refused to change the changelog of $name: $response. Changing a version needs the write versions scope on MODRINTH_TOKEN."
-                    exit 1
-                  }
-              fi
-              echo "  $version  $did the changelog of $name"
-              modrinth=$((modrinth + 1))
-            done < <(jq -r --arg v "$version" '.[] | select(.version_number == $v) | .id' "$work/versions.json")
-          done
-
-          echo "Notes $did: $github on GitHub, $modrinth on Modrinth."
-          echo "- Notes $did: $github on GitHub, $modrinth on Modrinth" >> "$GITHUB_STEP_SUMMARY"
 
   skipped:
     needs: plan
