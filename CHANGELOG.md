@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.3
+
+- Added a choice of who comes first beside you; the two-figure switch asks before anything changes, and You first hands every key back the moment you touch the controls and waits a second after you let go
+- Added a choice of what she may take beside you; the mouse, the keyboard or both, and the one she may not take stays yours for the whole run
+- Fixed a hit never registering; the attacker is read from the damage the client is actually sent, so Self Preservation answers being hit instead of ignoring it
+- Changed what counts as an enemy; a piglin while you wear gold, a piglin baby and a zombified piglin count only once they attack, so she no longer starts the fight that calls the camp in
+- Fixed escapes walking into what they fled; every escape, retreat and back-off steers at the ground it checked, so the gaps in a bastion floor and the lava under its bridges are no longer a step
+- Fixed a guard and the card it guards pressing keys on the same tick; the escape's keys are the only keys while it answers
+- Changed route pricing over lava; a gap jump that would hurt to miss costs what walking beside lava costs, so the way round wins unless there is none
+
 ## 0.9.1.8
 
 - Added a companion mode; the two-figure switch beside a task's name runs it beside you, and Lune takes the keys only while a powered card has work in sight

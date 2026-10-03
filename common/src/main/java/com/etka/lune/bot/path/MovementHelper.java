@@ -389,6 +389,42 @@ public final class MovementHelper {
         return state.isAir() || state.getCollisionShape(level, pos).isEmpty();
     }
 
+    /**
+     * The longest fall that costs no health: vanilla's safe fall distance. Damage is the distance
+     * past it, rounded down, so a three-block drop is free and a four-block one is the first heart.
+     */
+    public static final int HARMLESS_FALL = 3;
+
+    /**
+     * Whether a body that ends up in this column - walked in, jumped short, knocked in by a hit -
+     * comes to harm on the way down: lava under it, something that burns at the bottom, or no floor
+     * within a {@link #HARMLESS_FALL}. A column with a floor of its own is not a fall at all, and
+     * water anywhere down it breaks the fall.
+     *
+     * <p>Only what is below is asked. Whether the body can get into the column in the first place -
+     * a wall, lava standing in it - is the caller's question, because a pushed body and a body that
+     * chose to step have different answers to it.</p>
+     */
+    public static boolean fallHurts(BlockGetter level, BlockPos column) {
+        for (int depth = 1; depth <= HARMLESS_FALL + 1; depth++) {
+            BlockPos at = column.below(depth);
+            if (isLava(level, at)) {
+                return true;
+            }
+            if (isWater(level, at)) {
+                return false;
+            }
+            if (isHarmful(level.getBlockState(at))) {
+                return true;
+            }
+            if (!canFallThrough(level, at)) {
+                // Lands on this, depth - 1 blocks down.
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** Blocks that damage or trap the player. The bot refuses to path through these. */
     public static boolean isHarmful(BlockState state) {
         return state.is(Blocks.LAVA)

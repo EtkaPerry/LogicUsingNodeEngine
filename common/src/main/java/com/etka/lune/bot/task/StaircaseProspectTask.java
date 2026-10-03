@@ -11,11 +11,11 @@ import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.util.BlockBreaker;
 import com.etka.lune.bot.util.BlockPlacer;
 import com.etka.lune.bot.util.ExposedVein;
+import com.etka.lune.bot.util.Hostility;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
@@ -438,9 +438,14 @@ public final class StaircaseProspectTask implements Task {
         return open;
     }
 
+    /**
+     * Whether anything near the opening would come for the player. A zombified piglin in the cave,
+     * or a piglin while the player wears gold, is no reason to seal it and dig elsewhere.
+     */
     private boolean hostileMobsNearby(BotContext ctx, BlockPos pos) {
         AABB box = new AABB(pos).inflate(HOSTILE_SCAN_RADIUS);
-        for (Entity entity : ctx.level.getEntities(ctx.player, box, e -> e instanceof LivingEntity living && living.isAlive() && e instanceof Enemy)) {
+        for (Entity entity : ctx.level.getEntities(ctx.player, box, e -> e instanceof LivingEntity living
+                && living.isAlive() && Hostility.attacksOnSight(ctx.player, e))) {
             double dx = entity.getX() - pos.getX();
             double dz = entity.getZ() - pos.getZ();
             double distance = Math.sqrt(dx * dx + dz * dz);

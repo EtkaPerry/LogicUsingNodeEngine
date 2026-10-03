@@ -621,6 +621,13 @@ public final class MineTask implements Task {
             stallAnchor = null;
         }
         beside.tick();
+        if (beside.yielding(ctx)) {
+            return yieldToPlayer(ctx);
+        }
+        if (!beside.mayUseHands(ctx)) {
+            // Mining is a swing, and this task leaves the mouse to the player.
+            return beside.watch(status, "lune.status.beside.needs_mouse");
+        }
         if (hardStalled(ctx)) {
             if (beside.on()) {
                 // Stuck on one block with nothing to show for it. Beside the player that is a block
@@ -727,6 +734,12 @@ public final class MineTask implements Task {
             sweepPending = true;
             sweepTicks = 0;
             emptySweepTicks = 0;
+        }
+
+        if (sweepPending && !beside.mayWalk(ctx)) {
+            // Without the keyboard the drop is the player's to walk over. The block counts as
+            // mined once it is broken, because nobody here can fetch it.
+            skipSweep(ctx);
         }
 
         // Collect what was just broken before moving on. Blocks are mined from up to 4.5 blocks
@@ -934,6 +947,17 @@ public final class MineTask implements Task {
 
         Vec3 centre = Vec3.atCenterOf(target);
         boolean inReach = ctx.player.getEyePosition().distanceToSqr(centre) <= REACH * REACH;
+        if (!beside.mayWalk(ctx)) {
+            // The legs are the player's. Reach is then measured exactly as the block was chosen,
+            // so a block taken is never dropped again on the next line; one the player has walked
+            // away from is let go of until it is back in reach.
+            if (!beside.withinReach(ctx, target)) {
+                stopBreaking(ctx);
+                clearTarget(ctx);
+                return watchBeside();
+            }
+            inReach = true;
+        }
         // The target was selected from the old scan position.  A route can legitimately bring us
         // around a corner, under a canopy, or onto the other side of a wall; in that case the
         // block is no longer an actionable face even though its coordinates are unchanged.  Do
@@ -966,7 +990,9 @@ public final class MineTask implements Task {
         double treeReach = breaking ? TREE_HORIZONTAL_REACH * 2.0 : TREE_HORIZONTAL_REACH;
         boolean closeToTree = !finishCurrentTree || isHorizontallyCloseToLog(
                 ctx.player.getX(), ctx.player.getZ(), target, treeReach);
-        if (inReach && closeToTree) {
+        // Without the keyboard the swing is from wherever the player stands, however far from the
+        // trunk, since there is no stepping closer.
+        if (inReach && (closeToTree || !beside.mayWalk(ctx))) {
             if (approach != null) {
                 approach.stop(ctx);
                 approach = null;
@@ -1319,6 +1345,64 @@ public final class MineTask implements Task {
         return ++stallTicks >= HARD_STALL_TICKS;
     }
 
+    /**
+     * Beside the player with them first, and their hands on the controls: the block in hand is let
+     * go of - and the tree being felled, the drop being fetched and the opening being made with it -
+     * and the card watches. Once their hands are off it looks again, and takes the same block if it
+     * is still in view.
+     */
+    private TaskStatus yieldToPlayer(BotContext ctx) {
+        if (target != null || treeAnchor != null || sweepPending || passageApproach != null
+                || passageTarget != null || passageAdvance != null) {
+            stopBreaking(ctx);
+            clearTarget(ctx);
+            if (passageApproach != null) {
+                passageApproach.stop(ctx);
+                passageApproach = null;
+            }
+            clearPassagePlan();
+            exposingBlocker = false;
+            exposureBlockState = null;
+            exposureOre = null;
+            if (sweepPending) {
+                skipSweep(ctx);
+            }
+            if (treeAnchor != null) {
+                // Not a verdict on the tactic: the player came first, nothing failed.
+                cancelTreeSkill(ctx);
+                treeAnchor = null;
+                deferredStump = null;
+                treeType = null;
+                currentTreeLogs.clear();
+                treeViewPending = false;
+                arrivalPaidOff();
+            }
+            workTarget = null;
+            targetWorkTicks = 0;
+            stallAnchor = null;
+            ctx.debug.decide("beside: your hands came first; letting this block go and watching");
+        }
+        return watchBeside();
+    }
+
+    /**
+     * Leaves the drop of the block just broken where it fell, for the player to walk over, and
+     * counts the block: nothing here will fetch it.
+     */
+    private void skipSweep(BotContext ctx) {
+        if (sweeper != null) {
+            sweeper.stop(ctx);
+            sweeper = null;
+        }
+        if (sweepCountsTarget) {
+            mined++;
+        }
+        sweepCountsTarget = false;
+        sweepPending = false;
+        sweepTicks = 0;
+        emptySweepTicks = 0;
+    }
+
     /** Beside the player with nothing of this card's in view: hand back the keys and keep watching. */
     private TaskStatus watchBeside() {
         return beside.watch(status, finishCurrentTree
@@ -1569,7 +1653,8 @@ public final class MineTask implements Task {
      * here; this is a local passage, not a license to tunnel toward hidden ore.</p>
      */
     private void planTwoHighPassage(BotContext ctx, BlockPos finished) {
-        if (finishCurrentTree || !isPickaxeMiningTask()) {
+        // Stepping into the opening is a walk, and without the keyboard there is none.
+        if (finishCurrentTree || !isPickaxeMiningTask() || !beside.mayWalk(ctx)) {
             return;
         }
         BlockPos feet = ctx.player.blockPosition();
@@ -2321,6 +2406,8 @@ public final class MineTask implements Task {
                         // the pack cannot take is a reason to fetch a pickaxe, and that trip is
                         // theirs to decide on.
                         && (!beside.on() || ToolSelector.canHarvest(ctx.player, state))
+                        // And, without the keyboard, only what the hand reaches from here.
+                        && beside.withinReach(ctx, pos)
                         && (!judgeFooting(ctx, state) || canStandToCut(ctx, pos));
         // Ordinary mining stays ranked from WorkSite. A committed tree may instead use the
         // skill learner's safe ordering; every candidate still passes the same tree and Vision

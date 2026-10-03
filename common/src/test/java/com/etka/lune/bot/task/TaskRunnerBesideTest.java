@@ -40,6 +40,17 @@ class TaskRunnerBesideTest {
     }
 
     @Test
+    void aTaskCarriesItsOwnChoiceOfHowToShareTheControls() {
+        TaskGraph graph = new TaskGraph("Fireballs");
+        graph.beside = true;
+        assertTrue(new TaskRunner(graph).besideOptions().isDefault(),
+                "a new task starts as every beside task ran: Lune first, with both");
+        graph.besideOptions = new com.etka.lune.task.BesideOptions(true, true, false);
+        assertEquals(new com.etka.lune.task.BesideOptions(true, true, false),
+                new TaskRunner(graph).besideOptions());
+    }
+
+    @Test
     void besideThePlayerTheLaneHoldsTheKeysOnlyWhileItsCardWorks() throws ReflectiveOperationException {
         TaskGraph graph = new TaskGraph("Lane");
         TaskNode card = new TaskNode("mine");

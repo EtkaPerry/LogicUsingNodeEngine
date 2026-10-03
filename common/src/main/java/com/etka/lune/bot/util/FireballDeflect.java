@@ -2,7 +2,6 @@ package com.etka.lune.bot.util;
 
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.LuneProfiler;
-import com.etka.lune.compat.Hands;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.tags.EntityTypeTags;
 import net.minecraft.world.InteractionHand;
@@ -350,6 +349,6 @@ public final class FireballDeflect {
     /** Swings at the shot, which is what actually sends it back. */
     public static void hit(BotContext ctx, Entity shot) {
         ctx.gameMode.attack(ctx.player, shot);
-        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+        ctx.gameMode.swing(InteractionHand.MAIN_HAND);
     }
 }

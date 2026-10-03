@@ -1,5 +1,6 @@
 package com.etka.lune.bot.input;
 
+import com.etka.lune.task.BesideOptions;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -52,5 +53,87 @@ class HandoverTest {
         assertEquals(Handover.Change.NONE, hands.update(false),
                 "a run that ended has nothing left to give back");
         assertEquals(Handover.Change.TAKE, hands.update(true), "the next one starts from the player");
+    }
+
+    @Test
+    void withLuneFirstATouchIsUndoneRatherThanObeyed() {
+        Handover hands = new Handover();
+        hands.start(new BesideOptions(false, true, true));
+        hands.update(true);
+        assertFalse(hands.observe(true), "her card is not done, so the touch hands nothing back");
+        assertFalse(hands.yielding(), "and nobody waits for anybody");
+        assertTrue(hands.lune());
+        assertEquals(Handover.Change.NONE, hands.update(true));
+    }
+
+    @Test
+    void withThePlayerFirstATouchHandsEverythingBackAtOnce() {
+        Handover hands = new Handover();
+        hands.start(new BesideOptions(true, true, true));
+        assertEquals(Handover.Change.TAKE, hands.update(true),
+                "hands that have been off the controls since the run began are no reason to wait");
+
+        assertTrue(hands.observe(true), "a touch while she holds them is the player taking them back");
+        assertTrue(hands.yielding());
+    }
+
+    @Test
+    void withThePlayerFirstNothingIsTakenUntilTheirHandsHaveBeenOffForAMoment() {
+        Handover hands = new Handover();
+        hands.start(new BesideOptions(true, true, true));
+        assertFalse(hands.observe(true), "she held nothing, so there was nothing to give back");
+        assertTrue(hands.yielding());
+        for (int tick = 1; tick < Handover.QUIET_TICKS; tick++) {
+            hands.observe(false);
+            assertEquals(Handover.Change.NONE, hands.update(true),
+                    tick + " ticks after a touch is too soon to take the controls");
+        }
+        hands.observe(false);
+        assertFalse(hands.yielding(), "a second with the hands off is an opening");
+        assertEquals(Handover.Change.TAKE, hands.update(true));
+
+        hands.observe(true);
+        hands.observe(false);
+        assertTrue(hands.yielding(), "any touch starts the wait over");
+    }
+
+    @Test
+    void aCardStillWantingTheControlsAfterATouchWaitsForThePlayer() {
+        Handover hands = new Handover();
+        hands.start(new BesideOptions(true, true, true));
+        hands.update(true);
+        hands.observe(true);
+        // The engine hands back on the touch itself, without the release gap a quiet card gets.
+        hands.forget();
+        assertFalse(hands.lune());
+        assertEquals(Handover.Change.NONE, hands.update(true), "wanted, but the player comes first");
+    }
+
+    @Test
+    void aRunTakesOnlyWhatItsTaskAllows() {
+        Handover hands = new Handover();
+        hands.start(new BesideOptions(false, true, false));
+        assertTrue(hands.takesMouse());
+        assertFalse(hands.takesKeyboard());
+
+        hands.start(new BesideOptions(false, false, true));
+        assertFalse(hands.takesMouse());
+        assertTrue(hands.takesKeyboard());
+
+        hands.start(null);
+        assertTrue(hands.takesMouse(), "a task with no choice saved ran with everything, and still does");
+        assertTrue(hands.takesKeyboard());
+        assertFalse(hands.playerFirst());
+    }
+
+    @Test
+    void startingAgainForgetsTheLastRunsHandsAndItsWait() {
+        Handover hands = new Handover();
+        hands.start(new BesideOptions(true, true, true));
+        hands.update(true);
+        hands.observe(true);
+        hands.start(new BesideOptions(true, true, true));
+        assertFalse(hands.lune());
+        assertFalse(hands.yielding(), "a fresh run does not inherit the last one's wait");
     }
 }

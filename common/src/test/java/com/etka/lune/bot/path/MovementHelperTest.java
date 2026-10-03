@@ -84,4 +84,22 @@ class MovementHelperTest {
         assertNull(MovementHelper.firstUndiggable(level, shaft, state -> true),
                 "with the right tool nothing on it stops the walk");
     }
+
+    /** Vanilla's safe fall distance is three: the fourth block down is the first heart. */
+    @Test
+    void aFallHurtsPastThreeBlocksOrIntoLava() {
+        BlockPos column = new BlockPos(0, 64, 0);
+
+        assertFalse(MovementHelper.fallHurts(TestLevel.scene().set(0, 63, 0, Blocks.STONE), column),
+                "a column with a floor is no fall at all");
+        assertFalse(MovementHelper.fallHurts(TestLevel.scene().set(0, 60, 0, Blocks.STONE), column),
+                "three blocks down costs nothing");
+        assertTrue(MovementHelper.fallHurts(TestLevel.scene().set(0, 59, 0, Blocks.STONE), column));
+        assertTrue(MovementHelper.fallHurts(TestLevel.scene(), column), "nothing below at all");
+        assertTrue(MovementHelper.fallHurts(TestLevel.scene().set(0, 62, 0, Blocks.LAVA), column),
+                "a short drop into lava is the worst kind");
+        assertTrue(MovementHelper.fallHurts(TestLevel.scene().set(0, 62, 0, Blocks.MAGMA_BLOCK), column));
+        assertFalse(MovementHelper.fallHurts(TestLevel.scene().set(0, 62, 0, Blocks.WATER), column),
+                "water breaks a fall of any height");
+    }
 }

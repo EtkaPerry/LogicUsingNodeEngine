@@ -1,6 +1,5 @@
 package com.etka.lune.bot.task;
 
-import com.etka.lune.compat.Hands;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
@@ -508,7 +507,7 @@ public final class FishTask implements Task {
 
     private void useRod(BotContext ctx) {
         ctx.gameMode.useItem(ctx.player, InteractionHand.MAIN_HAND);
-        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+        ctx.gameMode.swing(InteractionHand.MAIN_HAND);
         cooldown = USE_COOLDOWN;
     }
 }

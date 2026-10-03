@@ -108,6 +108,42 @@ class AStarPathfinderTest {
                 "it must not plan to step out over the hole");
     }
 
+    /**
+     * A strip with a two-block gap, and a walk round it three blocks out. Over a trench the jump is
+     * the short way and is taken; over nothing - the lava sea under a bastion, the void round the
+     * End - a jump that comes up short is the end of the run, and the walk round is taken instead.
+     */
+    private static TestLevel gapWithAWayRound() {
+        return TestLevel.scene()
+                .floor(0, 1, 0, 0, 63)
+                .floor(4, 6, 0, 0, 63)
+                .floor(1, 1, 1, 3, 63)
+                .floor(1, 4, 3, 3, 63)
+                .floor(4, 4, 1, 3, 63);
+    }
+
+    @Test
+    void itWalksRoundAGapItWouldHurtToMiss() {
+        AStarPathfinder.Result result = walk(gapWithAWayRound(),
+                new BlockPos(0, 64, 0), new BlockPos(6, 64, 0));
+
+        assertTrue(result.reachedGoal());
+        assertTrue(longestStride(result.path()) < 3, "no jump over a fall that hurts");
+        assertTrue(result.path().stream().anyMatch(pos -> pos.getZ() == 3),
+                "the walk round is a few blocks longer and nothing worse");
+    }
+
+    @Test
+    void itStillJumpsAGapOverATrench() {
+        TestLevel level = gapWithAWayRound().floor(2, 3, 0, 0, 61);
+
+        AStarPathfinder.Result result = walk(level, new BlockPos(0, 64, 0), new BlockPos(6, 64, 0));
+
+        assertTrue(result.reachedGoal());
+        assertEquals(3, longestStride(result.path()),
+                "missing it is a two-block drop, which costs nothing, so the short way wins");
+    }
+
     @Test
     void itStepsUpASingleBlockButNotTwo() {
         TestLevel oneUp = TestLevel.scene()

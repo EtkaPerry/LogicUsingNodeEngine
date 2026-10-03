@@ -2,9 +2,7 @@ package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
-import com.etka.lune.compat.Hands;
 import com.etka.lune.compat.Mobs;
-import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
@@ -20,6 +18,7 @@ import com.etka.lune.bot.util.BlockPlacer;
 import com.etka.lune.bot.util.BlockScanner;
 import com.etka.lune.bot.util.BucketHelper;
 import com.etka.lune.bot.util.HeadScanner;
+import com.etka.lune.bot.util.Hostility;
 import com.etka.lune.bot.util.HotbarLayout;
 import com.etka.lune.bot.util.InventoryHelper;
 import com.etka.lune.bot.util.TargetIndex;
@@ -3929,12 +3928,17 @@ public final class SpeedrunTask implements Task {
          * Hostile mob types close enough to be a problem right now. Proximity only - KillTask does
          * the reachability work, and a pillager behind a wall is still one that shoots through the
          * window a second later.
+         *
+         * <p>Only the ones that would attack the player on sight. A zombified piglin that has
+         * wandered out of a portal leaves the run alone, and clearing it first would bring every
+         * one near it down on the chest.</p>
          */
         private Set<EntityType<?>> threats(BotContext ctx) {
             Set<EntityType<?>> types = new java.util.HashSet<>();
             AABB box = ctx.player.getBoundingBox().inflate(THREAT_RADIUS);
             for (Entity entity : ctx.level.getEntities(ctx.player, box)) {
                 if (entity instanceof Monster monster && monster.isAlive()
+                        && Hostility.attacksOnSight(ctx.player, monster)
                         && !givenUpThreats.contains(entity.getId())
                         // KillTask uses the same visibility rule when it selects a mob. Do not
                         // interrupt a long approach for a monster hidden behind the portal wall:
@@ -4290,8 +4294,7 @@ public final class SpeedrunTask implements Task {
 
         private static void closeMenu(BotContext ctx) {
             if (ctx.player.containerMenu != ctx.player.inventoryMenu) {
-                ctx.player.closeContainer();
-                Screens.open(ctx.mc, null);
+                ctx.gameMode.closeContainer();
             }
         }
 
@@ -4759,7 +4762,7 @@ public final class SpeedrunTask implements Task {
             if (ctx.look.isLookingAt(ctx.player, hit, 15.0F)) {
                 ctx.gameMode.useItemOn(ctx.player, InteractionHand.MAIN_HAND,
                         new BlockHitResult(hit, Direction.UP, support, false));
-                Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+                ctx.gameMode.swing(InteractionHand.MAIN_HAND);
             }
             status.set("lune.status.speedrun.lighting_portal");
             return TaskStatus.RUNNING;

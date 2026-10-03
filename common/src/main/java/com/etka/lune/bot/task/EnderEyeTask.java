@@ -8,7 +8,6 @@ import com.etka.lune.bot.knowledge.StrongholdKnowledge;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.util.InventoryHelper;
-import com.etka.lune.compat.Hands;
 import com.etka.lune.util.Lang;
 import com.etka.lune.waypoint.Discovery;
 import com.etka.lune.waypoint.DiscoveryStore;
@@ -279,7 +278,7 @@ public final class EnderEyeTask implements Task {
         originY = ctx.player.getY(0.5);
         originZ = ctx.player.getZ();
         ctx.gameMode.useItem(ctx.player, InteractionHand.MAIN_HAND);
-        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+        ctx.gameMode.swing(InteractionHand.MAIN_HAND);
         throwsMade++;
         ticks = 0;
         eyeId = -1;

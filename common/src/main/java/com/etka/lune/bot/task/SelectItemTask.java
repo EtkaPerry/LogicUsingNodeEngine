@@ -2,6 +2,7 @@ package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.bot.Beside;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -200,6 +201,13 @@ public final class SelectItemTask implements Task {
         if (chosen < 0) {
             describeMiss(sawItem, bestRejectedPercent);
             return TaskStatus.FAILED;
+        }
+
+        // What is held is the mouse's, beside the player: changing it under a player who comes
+        // first, mid-swing, is exactly what putting them first refuses.
+        TaskStatus hands = Beside.handsOnly(ctx, status);
+        if (hands != null) {
+            return hands;
         }
 
         // Matched by identity rather than by another predicate: two stacks of the same item can

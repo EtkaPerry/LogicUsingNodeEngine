@@ -4,6 +4,8 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.function.BooleanSupplier;
+
 /**
  * Turns the player toward a target. Rotation is rate-limited rather than snapped, because an
  * instant 180° flip both looks wrong and is the most obvious tell to anti-cheat on servers.
@@ -12,8 +14,25 @@ import net.minecraft.world.phys.Vec3;
  * stops the head dead, which reads as mechanical even at a slow speed; a real player's head
  * accelerates, coasts, and slows into place. So the controller carries an angular velocity per axis
  * and limits how fast that velocity may change.
+ * <p>
+ * Beside the player the camera is not always hers to turn ({@link Controls#mouse()}). While it is
+ * not, a turn asked for changes nothing, and she is aimed at nothing either: every click a card
+ * makes waits on {@link #isLookingAt} or {@link #isLookingAtRotation}, so a card cannot swing at a
+ * block just because the player happens to be looking at it.
  */
 public final class LookController {
+
+    /** Whether the head is hers to turn this tick. */
+    private final BooleanSupplier turnAllowed;
+
+    /** A controller that always turns the head, for a run that has it all. */
+    public LookController() {
+        this(() -> true);
+    }
+
+    public LookController(BooleanSupplier mayTurn) {
+        this.turnAllowed = mayTurn == null ? () -> true : mayTurn;
+    }
 
     /** Max degrees turned per tick once up to speed. ~15 keeps a full turn under a second. */
     private float maxTurnPerTick = 15.0F;
@@ -104,6 +123,9 @@ public final class LookController {
 
     /** Aims at an exact point, stepping at most {@link #maxTurnPerTick} degrees this tick. */
     public void lookAt(LocalPlayer player, Vec3 target) {
+        if (!mayTurn()) {
+            return;
+        }
         Vec3 eye = player.getEyePosition();
         double dx = target.x - eye.x;
         double dy = target.y - eye.y;
@@ -124,20 +146,43 @@ public final class LookController {
      * task's actual block target.
      */
     public void lookAtRotation(LocalPlayer player, float yaw, float pitch) {
+        if (!mayTurn()) {
+            return;
+        }
         player.setYRot(approachYaw(player.getYRot(), yaw));
         player.setXRot(clampPitch(approachPitch(player.getXRot(), clampPitch(pitch))));
         expireUrgency();
     }
 
-    /** True once the camera has settled at an absolute rotation. */
+    /**
+     * Whether the head is hers to turn this tick. While it is not, nothing turns and nothing is
+     * aimed at; the momentum is dropped, so the first turn after it comes back starts from rest.
+     */
+    public boolean mayTurn() {
+        if (turnAllowed.getAsBoolean()) {
+            return true;
+        }
+        relax();
+        urgentTicks = 0;
+        return false;
+    }
+
+    /** True once the camera has settled at an absolute rotation - and never while it is not hers. */
     public boolean isLookingAtRotation(LocalPlayer player, float yaw, float pitch,
                                        float toleranceDegrees) {
-        return Math.abs(wrapDegrees(yaw - player.getYRot())) <= toleranceDegrees
+        return turnAllowed.getAsBoolean()
+                && Math.abs(wrapDegrees(yaw - player.getYRot())) <= toleranceDegrees
                 && Math.abs(clampPitch(pitch) - player.getXRot()) <= toleranceDegrees;
     }
 
-    /** True once the player is aimed close enough at {@code target} to interact with it. */
+    /**
+     * True once the player is aimed close enough at {@code target} to interact with it - and never
+     * while the camera is not hers, because where the player points is not where she aimed.
+     */
     public boolean isLookingAt(LocalPlayer player, Vec3 target, float toleranceDegrees) {
+        if (!turnAllowed.getAsBoolean()) {
+            return false;
+        }
         Vec3 eye = player.getEyePosition();
         double dx = target.x - eye.x;
         double dy = target.y - eye.y;

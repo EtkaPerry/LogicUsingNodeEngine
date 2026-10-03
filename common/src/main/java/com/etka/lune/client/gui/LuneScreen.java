@@ -12,6 +12,7 @@ import com.etka.lune.client.gui.mascot.MascotAdvisor;
 import com.etka.lune.client.gui.mascot.MascotWidget;
 import com.etka.lune.client.gui.widget.BlockPicker;
 import com.etka.lune.client.gui.widget.GamesSection;
+import com.etka.lune.client.gui.widget.BesidePrompt;
 import com.etka.lune.client.gui.widget.LuneMenu;
 import com.etka.lune.client.gui.widget.NamePrompt;
 import com.etka.lune.client.gui.widget.RecipePicker;
@@ -86,6 +87,7 @@ public class LuneScreen extends ScaledScreen {
     private final SoundPicker soundPicker = new SoundPicker(0, 0, 10, 10);
     private final NamePrompt namePrompt = new NamePrompt();
     private final SharePrompt sharePrompt = new SharePrompt();
+    private final BesidePrompt besidePrompt = new BesidePrompt();
     private final LuneMenu menu = new LuneMenu();
     private final TrainingSection trainingSection = new TrainingSection(this::openLesson);
     private final GamesSection gamesSection = new GamesSection();
@@ -134,12 +136,14 @@ public class LuneScreen extends ScaledScreen {
         addRenderableWidget(soundPicker);
         addRenderableWidget(namePrompt);
         addRenderableWidget(sharePrompt);
+        addRenderableWidget(besidePrompt);
         tasksTab.setBlockPicker(blockPicker);
         tasksTab.setInventoryPicker(inventoryPicker);
         tasksTab.setRecipePicker(recipePicker);
         tasksTab.setSoundPicker(soundPicker);
         tasksTab.setNamePrompt(namePrompt);
         tasksTab.setSharePrompt(sharePrompt);
+        tasksTab.setBesidePrompt(besidePrompt);
         tasksTab.setCourseMapOpener(() -> menu.open(trainingSection));
         // The pages of Lune's corner, in the order the side menu lists them.
         menu.setSections(List.of(trainingSection, gamesSection));
@@ -244,6 +248,9 @@ public class LuneScreen extends ScaledScreen {
         if (sharePrompt.isOpen()) {
             sharePrompt.render(extractor, menuMouseX, menuMouseY, partialTick);
         }
+        if (besidePrompt.isOpen()) {
+            besidePrompt.render(extractor, menuMouseX, menuMouseY, partialTick);
+        }
         // Last, so the corner covers the tab and the mascot rather than sharing the screen with
         // them. It never coexists with a picker: it only opens when nothing else is up.
         menu.renderCorner(extractor, menuMouseX, menuMouseY);
@@ -300,6 +307,7 @@ public class LuneScreen extends ScaledScreen {
     private boolean popupOpen() {
         return blockPicker.isOpen() || inventoryPicker.isOpen() || recipePicker.isOpen()
                 || soundPicker.isOpen() || namePrompt.isOpen() || sharePrompt.isOpen()
+                || besidePrompt.isOpen()
                 || menu.isOpen();
     }
 
@@ -338,6 +346,10 @@ public class LuneScreen extends ScaledScreen {
         }
         if (sharePrompt.isOpen()) {
             sharePrompt.handleScreenMouseClick(menuEvent.x(), menuEvent.y(), menuEvent.button());
+            return true;
+        }
+        if (besidePrompt.isOpen()) {
+            besidePrompt.handleScreenMouseClick(menuEvent.x(), menuEvent.y(), menuEvent.button());
             return true;
         }
         if (recipePicker.isOpen()) {
@@ -447,8 +459,8 @@ public class LuneScreen extends ScaledScreen {
             namePrompt.handleScreenCharTyped(event.codepoint());
             return true;
         }
-        if (sharePrompt.isOpen()) {
-            // Nothing in it is typed into, and nothing behind it may be.
+        if (sharePrompt.isOpen() || besidePrompt.isOpen()) {
+            // Nothing in either is typed into, and nothing behind them may be.
             return true;
         }
         if (blockPicker.isOpen()) {
@@ -486,6 +498,10 @@ public class LuneScreen extends ScaledScreen {
         }
         if (sharePrompt.isOpen()) {
             sharePrompt.handleScreenKeyPressed(event.key());
+            return true;
+        }
+        if (besidePrompt.isOpen()) {
+            besidePrompt.handleScreenKeyPressed(event.key());
             return true;
         }
         if (blockPicker.isOpen()) {

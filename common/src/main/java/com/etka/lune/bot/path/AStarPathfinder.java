@@ -100,6 +100,17 @@ public final class AStarPathfinder {
      */
     private static final int MAX_GAP_JUMP = GapJumpPolicy.MAX_GAP;
     private static final int MAX_GAP_DROP = GapJumpPolicy.MAX_DROP;
+    /**
+     * Surcharge for a gap jump that it would hurt to miss: lava under it, or more than a
+     * {@link MovementHelper#HARMLESS_FALL harmless fall}.
+     *
+     * <p>A jump across a trench costs nothing when it comes up short; the same two blocks over the
+     * Nether's lava sea, or the End's void, cost the run. Nothing about the jump itself tells the
+     * two apart - and a hit from whatever is chasing the bot lands mid-air as easily as on the
+     * ground. Priced like walking beside lava, so a walk round wins unless it is enormous, and a
+     * gap with no way round is still crossed.</p>
+     */
+    private static final double HURTING_GAP_COST = LAVA_PROXIMITY_COST;
 
     /** Horizontal neighbour offsets: 4 cardinals then 4 diagonals. */
     private static final int[][] HORIZONTAL = {
@@ -368,6 +379,7 @@ public final class AStarPathfinder {
             // itself has to be a gap: if there were a floor here the ordinary walking move would
             // have taken it, and jumping over solid ground is not a move worth searching.
             boolean clear = true;
+            boolean missHurts = false;
             for (int step = 1; step < distance; step++) {
                 BlockPos over = pos.offset(dx * step, 0, dz * step);
                 if (!MovementHelper.hasBodyClearance(level, over)
@@ -376,15 +388,17 @@ public final class AStarPathfinder {
                     clear = false;
                     break;
                 }
+                missHurts |= MovementHelper.fallHurts(level, over);
             }
             if (!clear) {
                 continue;
             }
+            double cost = Goals.STEP * distance + JUMP_COST * distance
+                    + (missHurts ? HURTING_GAP_COST : 0.0);
             for (int drop = 0; drop <= MAX_GAP_DROP; drop++) {
                 BlockPos landing = pos.offset(dx * distance, -drop, dz * distance);
                 if (MovementHelper.canStandAt(level, landing, settings.allowSwim())) {
-                    relax(level, current, landing,
-                            Goals.STEP * distance + JUMP_COST * distance + drop * FALL_COST,
+                    relax(level, current, landing, cost + drop * FALL_COST,
                             goal, settings, nodes, open);
                     break;
                 }

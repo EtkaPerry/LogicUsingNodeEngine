@@ -11,6 +11,7 @@ import com.etka.lune.bot.WhileMonitor;
 import com.etka.lune.bot.command.CommandDef;
 import com.etka.lune.bot.command.CommandRegistry;
 import com.etka.lune.bot.util.InventoryHelper;
+import com.etka.lune.task.BesideOptions;
 import com.etka.lune.task.TaskDebug;
 import com.etka.lune.task.TaskGraph;
 import com.etka.lune.task.TaskDataLink;
@@ -102,6 +103,12 @@ public final class TaskRunner implements Task {
     @Override
     public boolean wantsBesidePlayer() {
         return graph != null && graph.beside;
+    }
+
+    /** The graph's own choice of who comes first and what she may take; see {@link TaskGraph#besideOptions}. */
+    @Override
+    public BesideOptions besideOptions() {
+        return graph == null ? null : graph.besideOptions;
     }
 
     @Override

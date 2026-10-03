@@ -1,6 +1,5 @@
 package com.etka.lune.bot.task;
 
-import com.etka.lune.compat.Hands;
 import com.etka.lune.compat.Mobs;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Beside;
@@ -14,6 +13,7 @@ import com.etka.lune.bot.learning.LearningContext;
 import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.path.MovementHelper;
+import com.etka.lune.bot.path.SafeStep;
 import com.etka.lune.bot.util.BlockPlacer;
 import com.etka.lune.bot.util.InventoryHelper;
 import com.etka.lune.bot.util.Vision;
@@ -121,6 +121,8 @@ public final class KillTask implements Task {
     private int retreatTicks;
     private int strafeTicks;
     private boolean strafeLeft;
+    /** The step on foot a retreat or a back-off takes, which looks at the ground first. */
+    private final SafeStep steps = new SafeStep();
     /** Whether this target has already been hit once; only the opening swing sets up a critical. */
     private boolean openingHitDone;
     private int bowTicks;
@@ -145,8 +147,9 @@ public final class KillTask implements Task {
     private final StatusText status = new StatusText();
     /**
      * Beside the player: a target the player can see, inside the card's radius, and a wait rather
-     * than a finish when there is none. Only ever on for the Kill card itself, never for the fights
-     * the hunting cards start for themselves.
+     * than a finish when there is none. No shield or weapon is crafted for the fight: one in the
+     * pack is taken up, and making one is a trip the player did not ask for. Only ever on for the
+     * Kill card itself, never for the fights the hunting cards start for themselves.
      */
     private final Beside beside = new Beside();
 
@@ -289,6 +292,13 @@ public final class KillTask implements Task {
             status.set("lune.status.find.no_mobs_selected");
             return TaskStatus.FAILED;
         }
+        if (beside.yielding(ctx)) {
+            return yieldToPlayer(ctx);
+        }
+        if (!beside.mayUseHands(ctx)) {
+            // A fight is a swing, and this task leaves the mouse to the player.
+            return beside.watch(status, "lune.status.beside.needs_mouse");
+        }
 
         if (retreatTicks > 0) {
             retreatTicks--;
@@ -296,6 +306,12 @@ public final class KillTask implements Task {
         }
 
         if (isLowHealth(ctx) && (target != null || findNearest(ctx) != null)) {
+            if (!beside.mayWalk(ctx)) {
+                // Running is the answer to low health, and the legs are the player's: the fight is
+                // theirs to leave or finish.
+                clearTarget(ctx);
+                return beside.watch(status, "lune.status.kill.watching_beside");
+            }
             phase = Phase.RETREAT;
             retreatTicks = RETREAT_TICKS;
             return retreat(ctx);
@@ -305,7 +321,8 @@ public final class KillTask implements Task {
             if (!target.isAlive()) {
                 killed++;
                 ctx.debug.count("mobs_killed");
-                sweepPending = true;
+                // Without the keyboard the drop is the player's to walk over.
+                sweepPending = beside.mayWalk(ctx);
                 dropSettleTicks = DROP_SETTLE_TICKS;
             }
             clearTarget(ctx);
@@ -366,7 +383,7 @@ public final class KillTask implements Task {
             }
         }
 
-        if (shouldBackOffNow(ctx)) {
+        if (shouldBackOffNow(ctx) && beside.mayWalk(ctx)) {
             phase = Phase.BACK_OFF;
             backOffTicks = BACK_OFF_TICKS;
         }
@@ -395,9 +412,34 @@ public final class KillTask implements Task {
             phase = Phase.ATTACK;
             return attack(ctx);
         }
+        if (!beside.mayWalk(ctx)) {
+            // Out of reach, and the legs are the player's: let it go until it is in reach again.
+            clearTarget(ctx);
+            return beside.watch(status, "lune.status.kill.watching_beside");
+        }
 
         phase = (tactic == Tactic.STRAFE) ? Phase.STRAFE : Phase.APPROACH;
         return chase(ctx);
+    }
+
+    /**
+     * Beside the player with them first, and their hands on the controls: the fight is theirs.
+     * The mob is let go of, a sweep for its drop with it, and the card watches; once their hands
+     * are off it picks a target again from what is in view.
+     */
+    private TaskStatus yieldToPlayer(BotContext ctx) {
+        if (target != null || sweepPending || retreatTicks > 0) {
+            clearTarget(ctx);
+            if (sweeper != null) {
+                sweeper.stop(ctx);
+                sweeper = null;
+            }
+            sweepPending = false;
+            dropSettleTicks = 0;
+            retreatTicks = 0;
+            ctx.debug.decide("beside: your hands came first; letting the fight go and watching");
+        }
+        return beside.watch(status, "lune.status.kill.watching_beside");
     }
 
     @Override
@@ -468,7 +510,7 @@ public final class KillTask implements Task {
         // Only the first hit. Jumping before every swing is the bunny-hop that reads as a bot, and
         // it drops the attack-strength meter to no purpose once a fight is already traded.
         if (charged && aimed && !openingHitDone && CombatPolicy.usesCritical(combatStrategy)
-                && canCrit(ctx)) {
+                && canCrit(ctx) && beside.mayWalk(ctx)) {
             if (ctx.player.onGround()) {
                 ctx.input.jump = true;
                 status.set("lune.status.kill.opening_with_jump_critical");
@@ -485,9 +527,9 @@ public final class KillTask implements Task {
             ctx.input.jump = false;
             openingHitDone = true;
             ctx.gameMode.attack(ctx.player, target);
-            Hands.swing(ctx.player, net.minecraft.world.InteractionHand.MAIN_HAND);
+            ctx.gameMode.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
 
-            if (tactic == Tactic.HIT_AND_RUN && target.isAlive()) {
+            if (tactic == Tactic.HIT_AND_RUN && target.isAlive() && beside.mayWalk(ctx)) {
                 phase = Phase.BACK_OFF;
                 backOffTicks = BACK_OFF_TICKS;
             }
@@ -580,8 +622,18 @@ public final class KillTask implements Task {
                 strafeTicks = 0;
                 strafeLeft = !strafeLeft;
             }
-            ctx.input.left = strafeLeft;
-            ctx.input.right = !strafeLeft;
+            // The strafe is laid over the route, so nothing on the route looked at where it goes.
+            // A side that drifts into lava or over a drop is swapped for the other, and with
+            // neither the approach goes straight - a Blaze on a fortress bridge offers neither.
+            BlockPos feet = MovementHelper.feetPosition(ctx.player);
+            if (SafeStep.hazardousToward(ctx.level, feet, strafeSide(ctx, strafeLeft))) {
+                strafeLeft = !strafeLeft;
+                strafeTicks = 0;
+            }
+            if (!SafeStep.hazardousToward(ctx.level, feet, strafeSide(ctx, strafeLeft))) {
+                ctx.input.left = strafeLeft;
+                ctx.input.right = !strafeLeft;
+            }
         }
 
         if (result == TaskStatus.FAILED) {
@@ -618,11 +670,20 @@ public final class KillTask implements Task {
             return TaskStatus.RUNNING;
         }
 
+        // Facing it, and backwards only onto ground. Backward used to be held blind, and what is
+        // behind a fight is as often a ravine's edge or a lava pool as open floor.
         ctx.look.lookAt(ctx.player, target.getEyePosition());
-        ctx.input.backward = true;
+        SafeStep.Step step = steps.toward(ctx,
+                ctx.player.position().subtract(target.position()), true);
+        if (step != null) {
+            steps.steer(ctx, step, false);
+        }
         raiseShieldIfUseful(ctx);
 
-        status.set("lune.status.kill.backing_off_from", target.getType().getDescription().getString());
+        status.set(step != null
+                        ? "lune.status.kill.backing_off_from"
+                        : "lune.status.self_preservation.holding_ground_fighting",
+                target.getType().getDescription().getString());
         return TaskStatus.RUNNING;
     }
 
@@ -639,18 +700,29 @@ public final class KillTask implements Task {
         } else {
             away = Vec3.directionFromRotation(0, ctx.player.getYRot());
         }
-        Vec3 lookAt = ctx.player.position().add(away);
-        ctx.look.lookAt(ctx.player, lookAt);
-
-        ctx.input.forward = true;
-        ctx.input.sprint = true;
+        // A run, but only onto ground. This held forward and sprint along the head for two and a
+        // half seconds without a look at what was there, which is how a retreat at low health
+        // ends in the lava the fight was beside. With no safe step, standing is the retreat.
+        SafeStep.Step step = steps.toward(ctx, away, true);
+        if (step != null) {
+            ctx.look.lookAt(ctx.player, ctx.player.position().add(step.direction()));
+            steps.steer(ctx, step, true);
+        }
 
         if (target != null) {
-            status.set("lune.status.kill.retreating_from", target.getType().getDescription().getString());
+            status.set(step != null
+                            ? "lune.status.kill.retreating_from"
+                            : "lune.status.self_preservation.holding_safe_ground_while_evading",
+                    target.getType().getDescription().getString());
         } else {
             status.set("lune.status.kill.retreating_recover");
         }
         return TaskStatus.RUNNING;
+    }
+
+    /** The way the left or the right key moves the body, with the head where it is. */
+    private static Vec3 strafeSide(BotContext ctx, boolean left) {
+        return Vec3.directionFromRotation(0.0F, ctx.player.getYRot() + (left ? -90.0F : 90.0F));
     }
 
     private boolean isLowHealth(BotContext ctx) {
@@ -735,7 +807,9 @@ public final class KillTask implements Task {
                 status.set("lune.status.kill.shield_ready");
                 return TaskStatus.RUNNING;
             }
-            if (options.craftShield() && !shieldCraftAttempted) {
+            // Never beside the player, even with the keyboard hers: the craft walks to a crafting
+            // table, as far off as a remembered one, and that trip is theirs to decide on.
+            if (options.craftShield() && !shieldCraftAttempted && !beside.on()) {
                 shieldCraftAttempted = true;
                 preparation = CraftTask.of(Items.SHIELD, 1, true)
                         .withTableSearchRadius(REMEMBERED_TABLE_SEARCH_RADIUS);
@@ -758,7 +832,7 @@ public final class KillTask implements Task {
                 status.set("lune.status.kill.weapon_ready");
                 return TaskStatus.RUNNING;
             }
-            if (options.craftWeapon() && !weaponCraftAttempted) {
+            if (options.craftWeapon() && !weaponCraftAttempted && !beside.on()) {
                 Item craft = findCraftableWeapon(ctx);
                 weaponCraftAttempted = true;
                 if (craft != null) {
@@ -946,7 +1020,7 @@ public final class KillTask implements Task {
         }
 
         ctx.gameMode.useItem(ctx.player, InteractionHand.MAIN_HAND);
-        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+        ctx.gameMode.swing(InteractionHand.MAIN_HAND);
         status.set("lune.status.kill.placing_enderman_boat");
         return TaskStatus.RUNNING;
     }
@@ -1171,6 +1245,11 @@ public final class KillTask implements Task {
                         && targets.contains(entity.getType())
                         && !isWorthlessCalf(living)
                         && !outOfBreathFor(ctx, living)
+                        // Without the keyboard, only what can be hit from where the player stands,
+                        // and no enderman that needs a shelter walked to first.
+                        && beside.withinReach(ctx, living, REACH)
+                        && (beside.mayWalk(ctx) || !isEnderman(living)
+                                || options.endermanSafety() == KillOptions.EndermanSafety.DIRECT)
                         && Vision.isEntityVisible(ctx, living));
         return found.stream()
                 .min(Comparator.comparingDouble(entity -> entity.distanceToSqr(ctx.player)))

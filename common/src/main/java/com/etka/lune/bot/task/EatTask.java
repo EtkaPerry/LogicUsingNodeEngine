@@ -4,9 +4,9 @@ import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.bot.Beside;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
-import com.etka.lune.bot.input.HeldKeys;
 import com.etka.lune.bot.util.InventoryHelper;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.InteractionHand;
@@ -133,6 +133,13 @@ public final class EatTask implements Task {
             return TaskStatus.FAILED;
         }
 
+        // A meal is the hand and the use key, which beside the player are the mouse's.
+        TaskStatus hands = Beside.handsOnly(ctx, status);
+        if (hands != null) {
+            releaseUse(ctx);
+            return hands;
+        }
+
         if (!holdingFood(player)) {
             releaseUse(ctx);
             if (InventoryHelper.equip(ctx, this::edible) < 0) {
@@ -202,10 +209,10 @@ public final class EatTask implements Task {
             holdingUse = true;
         }
         // Asked for every tick, because the key is a shared global that anything else may have
-        // let go of - but pressed only when it is up, through HeldKeys. Under Toggle Use a press
-        // flips the key, and pressing it every tick turned it off every other tick, so a meal
-        // started again from nothing for as long as the job lasted.
-        HeldKeys.set(ctx.mc.options.keyUse, true);
+        // let go of - but pressed only when it is up, through the gate's HeldKeys. Under Toggle
+        // Use a press flips the key, and pressing it every tick turned it off every other tick, so
+        // a meal started again from nothing for as long as the job lasted.
+        ctx.gameMode.holdUse(true);
     }
 
     private void releaseUse(BotContext ctx) {
@@ -214,7 +221,7 @@ public final class EatTask implements Task {
         }
         holdingUse = false;
         // Not setDown(false), which a toggled key ignores: that left use on after the meal.
-        HeldKeys.set(ctx.mc.options.keyUse, false);
+        ctx.gameMode.holdUse(false);
         if (ctx.player.isUsingItem()) {
             ctx.gameMode.releaseUsingItem(ctx.player);
         }

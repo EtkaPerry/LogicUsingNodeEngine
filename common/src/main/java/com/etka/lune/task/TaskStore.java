@@ -432,6 +432,9 @@ public final class TaskStore {
     private static void normalize(TaskGraph task) {
         task.nodes.removeIf(java.util.Objects::isNull);
         adoptSeededId(task);
+        // Absent on every task saved before the choice existed: Lune first with both, as they ran.
+        task.besideOptions = task.besideOptions == null
+                ? new BesideOptions() : task.besideOptions.normalize();
         if (task.cableAnchors == null) {
             task.cableAnchors = new java.util.LinkedHashMap<>();
         }

@@ -10,7 +10,6 @@ import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.util.BlockPlacer;
 import com.etka.lune.bot.util.BlockScanner;
 import com.etka.lune.bot.util.InventoryHelper;
-import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.inventory.ContainerInput;
@@ -136,8 +135,7 @@ public final class NetheriteUpgradeTask implements Task {
         // stand between the bot and the smithing table it is walking to.
         if (!(ctx.player.containerMenu instanceof SmithingMenu)
                 && ctx.player.containerMenu != ctx.player.inventoryMenu) {
-            ctx.player.closeContainer();
-            Screens.open(ctx.mc, null);
+            ctx.gameMode.closeContainer();
         }
 
         if (tablePos == null || !ctx.level.getBlockState(tablePos).is(Blocks.SMITHING_TABLE)) {
@@ -349,8 +347,7 @@ public final class NetheriteUpgradeTask implements Task {
 
     private void closeMenu(BotContext ctx) {
         if (ctx.player.containerMenu != ctx.player.inventoryMenu) {
-            ctx.player.closeContainer();
-            Screens.open(ctx.mc, null);
+            ctx.gameMode.closeContainer();
         }
     }
 

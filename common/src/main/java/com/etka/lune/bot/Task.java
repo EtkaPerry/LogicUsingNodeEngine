@@ -4,7 +4,6 @@ import com.etka.lune.bot.learning.LearningContext;
 import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.learning.TaskLearning;
 
-import com.etka.lune.compat.Screens;
 import java.util.List;
 import java.util.Map;
 
@@ -65,8 +64,7 @@ public interface Task {
             ctx.gameMode.releaseUsingItem(ctx.player);
         }
         if (ctx.player.containerMenu != ctx.player.inventoryMenu) {
-            ctx.player.closeContainer();
-            Screens.open(ctx.mc, null);
+            ctx.gameMode.closeContainer();
         }
         ctx.input.reset();
     }
@@ -258,6 +256,16 @@ public interface Task {
      */
     default boolean wantsBesidePlayer() {
         return false;
+    }
+
+    /**
+     * How a run of this task beside the player shares the controls - who comes first, and what Lune
+     * may take - when it is started on its own; read once, as the run begins, with
+     * {@link #wantsBesidePlayer()}. Null means Lune first with everything, as every beside run was
+     * before there was a choice.
+     */
+    default com.etka.lune.task.BesideOptions besideOptions() {
+        return null;
     }
 
     /**

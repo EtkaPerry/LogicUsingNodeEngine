@@ -1,7 +1,6 @@
 package com.etka.lune.bot.util;
 
 import com.etka.lune.bot.BotContext;
-import com.etka.lune.compat.Hands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.attribute.EnvironmentAttributes;
@@ -104,7 +103,7 @@ public final class BucketHelper {
     /** Sends the one interaction a bucket answers to. */
     public static void use(BotContext ctx) {
         ctx.gameMode.useItem(ctx.player, InteractionHand.MAIN_HAND);
-        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+        ctx.gameMode.swing(InteractionHand.MAIN_HAND);
     }
 
     private static boolean isEmpty(BotContext ctx) {

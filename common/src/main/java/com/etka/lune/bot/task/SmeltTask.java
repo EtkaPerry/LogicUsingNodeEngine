@@ -1,7 +1,6 @@
 package com.etka.lune.bot.task;
 
 import com.etka.lune.compat.Fuel;
-import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
@@ -186,8 +185,7 @@ public final class SmeltTask implements Task {
         // furnace forever while the old 3x3 screen is still active.
         if (!(ctx.player.containerMenu instanceof AbstractFurnaceMenu)
                 && ctx.player.containerMenu != ctx.player.inventoryMenu) {
-            ctx.player.closeContainer();
-            Screens.open(ctx.mc, null);
+            ctx.gameMode.closeContainer();
         }
 
         if (furnacePos == null || !ctx.level.getBlockState(furnacePos).is(Blocks.FURNACE)) {
@@ -355,8 +353,7 @@ public final class SmeltTask implements Task {
 
     private void closeMenu(BotContext ctx) {
         if (ctx.player.containerMenu != ctx.player.inventoryMenu) {
-            ctx.player.closeContainer();
-            Screens.open(ctx.mc, null);
+            ctx.gameMode.closeContainer();
         }
     }
 

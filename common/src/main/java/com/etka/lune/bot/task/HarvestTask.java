@@ -201,6 +201,13 @@ public final class HarvestTask implements Task {
             status.set("lune.status.harvest.no_crops_selected");
             return TaskStatus.FAILED;
         }
+        if (beside.yielding(ctx)) {
+            return yieldToPlayer(ctx);
+        }
+        if (!beside.mayUseHands(ctx)) {
+            // A harvest is a swing and a planting, and this task leaves the mouse to the player.
+            return beside.watch(status, "lune.status.beside.needs_mouse");
+        }
 
         // A crop that just disappeared owns the next few ticks. This prevents the limit check
         // from finishing the task before its requested collection/replant work has happened.
@@ -272,6 +279,23 @@ public final class HarvestTask implements Task {
 
         ctx.debug.target("harvest " + ctx.level.getBlockState(target).getBlock().getName().getString(),
                 target, ctx.omniscientHarvesting() ? "omniscient mode" : Vision.inspect(ctx, target).verdict());
+
+        if (!beside.mayWalk(ctx)) {
+            // The legs are the player's, so the crop is worked from where they stand, at the
+            // hand's full reach rather than settled beside - or let go of once it is out of it.
+            if (!beside.withinReach(ctx, target)) {
+                stopBreaking(ctx);
+                clearTarget(ctx);
+                return beside.watch(status, "lune.status.harvest.watching_beside");
+            }
+            // As below: a swing from mid-jump bobs the eye ray past a short crop.
+            if (!ctx.player.onGround()) {
+                stopBreaking(ctx);
+                status.set("lune.status.harvest.settling_beside_crop");
+                return TaskStatus.RUNNING;
+            }
+            return breakTarget(ctx);
+        }
 
         // Being in interaction reach is not the same as being beside the crop. Settling close makes
         // the break, drop pickup, and replant all happen in the same small farm area.
@@ -354,7 +378,8 @@ public final class HarvestTask implements Task {
 
         java.util.function.BiPredicate<BlockPos, BlockState> filter =
                 (pos, state) -> CropHelper.isMature(state)
-                        && (ctx.omniscientHarvesting() || Vision.isVisible(ctx, pos));
+                        && (ctx.omniscientHarvesting() || Vision.isVisible(ctx, pos))
+                        && beside.withinReach(ctx, pos);
 
         // The work-site anchor keeps a farm stable while the bot moves, but it must not make the
         // bot walk around a crop that is already directly in front of it. Give the current view a
@@ -383,7 +408,8 @@ public final class HarvestTask implements Task {
         BlockPos memory = BlockMemory.get().findNearest(ctx, rankingOrigin, targets, radius,
                 (pos, state) -> CropHelper.isMature(state)
                         && !unreachable.contains(pos.asLong())
-                        && (ctx.omniscientHarvesting() || Vision.isVisible(ctx, pos)));
+                        && (ctx.omniscientHarvesting() || Vision.isVisible(ctx, pos))
+                        && beside.withinReach(ctx, pos));
         if (memory != null) {
             return memory;
         }
@@ -592,10 +618,30 @@ public final class HarvestTask implements Task {
         postBreakCrop = crop.immutable();
         postBreakType = cropType;
         replantTicks = 0;
-        if (collectDrops) {
+        // Without the keyboard the drops are the player's to walk over.
+        if (collectDrops && beside.mayWalk(ctx)) {
             collector = new LootTask(COLLECT_RADIUS, COLLECT_DEADLINE);
             collector.start(ctx);
         }
+    }
+
+    /**
+     * Beside the player with them first, and their hands on the controls: the crop in hand, its
+     * drops and its replanting are let go of, and the card watches. Once their hands are off it
+     * looks again, and takes the same crop if it is still ripe in view.
+     */
+    private TaskStatus yieldToPlayer(BotContext ctx) {
+        if (target != null || postBreakCrop != null || collector != null || farmScout != null) {
+            stopBreaking(ctx);
+            clearTarget(ctx);
+            stopCollector(ctx);
+            stopFarmScout(ctx);
+            postBreakCrop = null;
+            postBreakType = null;
+            replantTicks = 0;
+            ctx.debug.decide("beside: your hands came first; letting this crop go and watching");
+        }
+        return beside.watch(status, "lune.status.harvest.watching_beside");
     }
 
     private void clearTarget(BotContext ctx) {

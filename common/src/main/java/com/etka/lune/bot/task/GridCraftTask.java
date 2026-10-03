@@ -1,6 +1,5 @@
 package com.etka.lune.bot.task;
 
-import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
@@ -165,8 +164,7 @@ public final class GridCraftTask implements Task {
             phase = Phase.FILL;
             return TaskStatus.RUNNING;
         }
-        ctx.player.closeContainer();
-        Screens.open(ctx.mc, null);
+        ctx.gameMode.closeContainer();
         status.set("lune.status.grid_craft.closing_open_container_use_crafting_grid");
         cooldown = ACTION_COOLDOWN;
         return TaskStatus.RUNNING;
@@ -457,8 +455,7 @@ public final class GridCraftTask implements Task {
 
     private void closeMenu(BotContext ctx) {
         if (ctx.player.containerMenu != ctx.player.inventoryMenu) {
-            ctx.player.closeContainer();
-            Screens.open(ctx.mc, null);
+            ctx.gameMode.closeContainer();
         }
     }
 

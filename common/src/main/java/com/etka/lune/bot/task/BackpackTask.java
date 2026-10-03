@@ -1,11 +1,11 @@
 package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.bot.Beside;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.util.InventoryHelper;
-import com.etka.lune.compat.Screens;
 import com.etka.lune.mods.BackpackHook;
 import com.etka.lune.mods.Backpacks;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -59,6 +59,12 @@ abstract class BackpackTask implements Task {
         if (cooldown > 0) {
             cooldown--;
             return TaskStatus.RUNNING;
+        }
+        // Opening a backpack and moving things in it is the hand, which beside the player is the
+        // mouse's.
+        TaskStatus hands = Beside.handsOnly(ctx, status);
+        if (hands != null) {
+            return hands;
         }
         if (hook == null) {
             hook = Backpacks.carried(ctx.player);
@@ -130,8 +136,7 @@ abstract class BackpackTask implements Task {
 
     protected void closeMenu(BotContext ctx) {
         if (ctx.player.containerMenu != ctx.player.inventoryMenu) {
-            ctx.player.closeContainer();
-            Screens.open(ctx.mc, null);
+            ctx.gameMode.closeContainer();
         }
     }
 

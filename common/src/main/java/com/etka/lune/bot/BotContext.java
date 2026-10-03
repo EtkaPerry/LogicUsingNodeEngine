@@ -2,6 +2,8 @@ package com.etka.lune.bot;
 
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.input.BotInput;
+import com.etka.lune.bot.input.Controls;
+import com.etka.lune.bot.input.GameModeGate;
 import com.etka.lune.bot.input.LookController;
 import com.etka.lune.bot.learning.LearningSession;
 import com.etka.lune.bot.learning.LearningStore;
@@ -23,7 +25,13 @@ public final class BotContext {
     public final Minecraft mc;
     public final LocalPlayer player;
     public final ClientLevel level;
-    public final MultiPlayerGameMode gameMode;
+    /**
+     * The game mode every hand action goes through - see {@link GameModeGate}. Beside the player it
+     * passes a click on only while her cards may use the mouse.
+     */
+    public final GameModeGate gameMode;
+    /** Which of the player's controls her cards may use this tick - see {@link Controls}. */
+    public final Controls controls;
     public final BotInput input;
     public final LookController look;
     public final BotConfig config;
@@ -46,13 +54,14 @@ public final class BotContext {
     public final BlockPos runAnchor;
 
     public BotContext(Minecraft mc, LocalPlayer player, ClientLevel level, MultiPlayerGameMode gameMode,
-                      BotInput input, LookController look, BotConfig config, DebugInfo debug,
-                      LearningStore learning, LearningSession learningSession, String learningAction,
-                      BlockPos runAnchor) {
+                      Controls controls, BotInput input, LookController look, BotConfig config,
+                      DebugInfo debug, LearningStore learning, LearningSession learningSession,
+                      String learningAction, BlockPos runAnchor) {
         this.mc = mc;
         this.player = player;
         this.level = level;
-        this.gameMode = gameMode;
+        this.controls = controls == null ? Controls.ALL : controls;
+        this.gameMode = new GameModeGate(mc, player, gameMode, this.controls);
         this.input = input;
         this.look = look;
         this.config = config;

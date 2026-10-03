@@ -2,7 +2,6 @@ package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
-import com.etka.lune.compat.Hands;
 import com.etka.lune.compat.Mobs;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.Task;
@@ -14,11 +13,13 @@ import com.etka.lune.bot.learning.TaskLearning;
 import com.etka.lune.bot.catalog.BlockCatalog;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.path.MovementHelper;
+import com.etka.lune.bot.path.SafeStep;
 import com.etka.lune.bot.util.BlockBreaker;
 import com.etka.lune.bot.util.BlockPlacer;
 import com.etka.lune.bot.util.BoatHelper;
 import com.etka.lune.bot.util.BucketHelper;
 import com.etka.lune.bot.util.FireballDeflect;
+import com.etka.lune.bot.util.Hostility;
 import com.etka.lune.bot.util.InventoryHelper;
 import com.etka.lune.bot.util.Vision;
 import com.etka.lune.mods.WornItems;
@@ -34,7 +35,6 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
@@ -95,12 +95,13 @@ public final class SelfPreservationTask implements WhileMonitor {
     /** Do not let a ranged mob pin the player in a completed pillar forever. */
     private static final int RANGED_STRAFE_SWITCH_TICKS = 24;
     /**
-     * Ticks of an emergency spent on one block before the escape direction is rotated.
-     * <p>
-     * Under half a second, because a Creeper's fuse is thirty ticks and the bot has to have given
-     * up on a blocked direction and be moving down another one well inside that.
+     * Ticks on one block before the close-quarters backpedal turns into a strafe.
+     *
+     * <p>The backpedal faces the mob, so it is a walk - vanilla sprints only forward - and a walk
+     * crosses a block in about five ticks. Fewer than that would strafe partway across every block,
+     * not just when the way back is blocked.</p>
      */
-    private static final int EMERGENCY_STALL_TICKS = 8;
+    private static final int MELEE_STALL_TICKS = 6;
     /**
      * Ticks the shield may be held against an archer without the gap closing.
      *
@@ -112,8 +113,6 @@ public final class SelfPreservationTask implements WhileMonitor {
     private static final int MAX_SHIELD_HOLD_TICKS = 400;
     /** How much nearer counts as closing rather than drifting. */
     private static final double CLOSING_PROGRESS = 0.5;
-    /** How much of a step has to lie along an axis before that key is worth pressing. */
-    private static final double STEP_COMPONENT = 0.35;
 
     /**
      * How far the player must already have dropped before the clutch takes the controls, in
@@ -306,6 +305,11 @@ public final class SelfPreservationTask implements WhileMonitor {
     private int safeTicks;
     private int lastEntityScanTick = Integer.MIN_VALUE;
     private LivingEntity cachedNearest;
+    /**
+     * Who last hurt the player. Read every tick and never cleared on release: a mob that hit the
+     * player a few seconds ago is still the one that did.
+     */
+    private final Hostility.LastHit lastHit = new Hostility.LastHit();
     private LivingEntity rememberedHostile;
     private int lastHostileSeenTick = Integer.MIN_VALUE;
     private boolean confirmingSafe;
@@ -331,10 +335,8 @@ public final class SelfPreservationTask implements WhileMonitor {
     private boolean rangedStrafeLeft;
     /** Number of blocks in the current emergency wall; keep the cover bounded and useful. */
     private int coverHeight;
-    /** Where the bot was standing when an escape direction was last asked for, and for how long. */
-    private BlockPos emergencyFeet;
-    private int emergencyStallTicks;
-    private int emergencyTurnBias;
+    /** Every step on foot an escape here takes, with its own count of a stall. */
+    private final SafeStep steps = new SafeStep();
     /** How long the shield has been up without the archer getting any nearer, and how near it got. */
     private int shieldHoldTicks;
     private double shieldHoldClosest = Double.MAX_VALUE;
@@ -484,6 +486,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             status.set("lune.status.self_preservation.player_dead");
             return false;
         }
+        lastHit.observe(ctx.player);
         hostile = null;
         if (protectAir && ctx.player.isUnderWater()
                 && compare(ctx.player.getAirSupply(), airComparison, airThreshold)) {
@@ -680,6 +683,11 @@ public final class SelfPreservationTask implements WhileMonitor {
             status.set("lune.status.self_preservation.confirming_danger_gone");
             return TaskStatus.RUNNING;
         }
+        // While it answers, the keys are this card's alone. The card it guards has already been
+        // ticked and has pressed whatever its own work wanted - toward the ore, along its route -
+        // and an escape that sets only the keys it cares about walks the sum of the two, in a
+        // direction nothing checked.
+        ctx.input.reset();
         return switch (threat) {
             case AIR -> escapeWater(ctx);
             case LAVA -> escapeLava(ctx);
@@ -757,7 +765,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         } else if (episodeThreat == Threat.FIREBALL && fireball != null) {
             LivingEntity shooter = FireballDeflect.shooter(fireball);
             boolean canDeflect = FireballDeflect.swingPossible(ctx.player);
-            boolean canDodge = safeEmergencyDirection(ctx, sidestep(ctx, fireball), false) != null;
+            boolean canDodge = steps.toward(ctx, sidestep(ctx, fireball), false) != null;
             actions = SelfPreservationPolicy.fireballActions(canDeflect, canDodge);
             phase = "threat=fireball;shooter=" + (shooter == null
                             ? "unknown" : shooter.getType().getDescriptionId())
@@ -1029,7 +1037,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             fireballDodgeLeft = !fireballDodgeLeft;
         }
         ctx.input.reset();
-        Vec3 step = safeEmergencyDirection(ctx, sidestep(ctx, fireball), false);
+        SafeStep.Step step = steps.toward(ctx, sidestep(ctx, fireball), false);
         if (step == null) {
             status.set("lune.status.self_preservation.nowhere_to_step_from_fireball");
             return TaskStatus.RUNNING;
@@ -1039,9 +1047,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
         ctx.look.urgent();
         ctx.look.lookAt(ctx.player, FireballDeflect.returnAim(ctx, fireball));
-        ctx.input.steerToward(ctx.player, ctx.player.position().add(step));
-        ctx.input.sprint = true;
-        ctx.input.jump = needsEmergencyJump(ctx, step);
+        steps.steer(ctx, step, true);
         status.set(reasonKey);
         return TaskStatus.RUNNING;
     }
@@ -1560,18 +1566,16 @@ public final class SelfPreservationTask implements WhileMonitor {
                     Lang.get("lune.reason.direct_creeper_retreat_blocked"));
         }
 
-        // Placement aims at the support face, so movement is applied after it and wins for this
-        // tick. Jumping lets the player clear a one-block lip instead of standing in the fuse.
-        Vec3 safeAway = safeEmergencyDirection(ctx, away, true);
-        if (safeAway == null) {
+        // Placement aims the head at the support face, which is nothing to the feet: the step is
+        // steered wherever the head points. The head comes round along it so the run can sprint.
+        SafeStep.Step step = steps.toward(ctx, away, true);
+        if (step == null) {
             return emergencyMonsterDefense(ctx, Lang.get("lune.reason.no_safe_emergency_step"));
         }
         ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
         ctx.look.urgent();
-        ctx.look.lookAt(ctx.player, ctx.player.position().add(safeAway));
-        ctx.input.forward = true;
-        ctx.input.sprint = true;
-        ctx.input.jump = needsEmergencyJump(ctx, safeAway);
+        ctx.look.lookAt(ctx.player, ctx.player.position().add(step.direction()));
+        steps.steer(ctx, step, true);
 
         double distance = ctx.player.distanceTo(hostile);
         boolean concealed = !hasLineOfSight(ctx, hostile);
@@ -1820,7 +1824,7 @@ public final class SelfPreservationTask implements WhileMonitor {
                 && ctx.player.getAttackStrengthScale(0.0F) >= 1.0F
                 && ctx.look.isLookingAt(ctx.player, hostile.getEyePosition(), 15.0F)) {
             ctx.gameMode.attack(ctx.player, hostile);
-            Hands.swing(ctx.player, net.minecraft.world.InteractionHand.MAIN_HAND);
+            ctx.gameMode.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
             status.set("lune.status.self_preservation.fighting_from_emergency_cover", hostile.getName().getString());
             return TaskStatus.RUNNING;
         }
@@ -1887,15 +1891,21 @@ public final class SelfPreservationTask implements WhileMonitor {
         boolean attacked = ctx.player.getAttackStrengthScale(0.0F) >= 1.0F;
         if (attacked) {
             ctx.gameMode.attack(ctx.player, hostile);
-            Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+            ctx.gameMode.swing(InteractionHand.MAIN_HAND);
         }
 
         // Backpedalling is the safest default, but it can be aimed directly into the wall of a
         // one-wide shaft. After a short unchanged-block window, strafe and alternate sides so the
-        // mob cannot pin the player at the same coordinates. Jumping is retained to clear a lip;
-        // the attack above continues on every cooldown-ready tick while space is created.
+        // mob cannot pin the player at the same coordinates. The attack above continues on every
+        // cooldown-ready tick while space is created.
+        //
+        // Facing the mob the whole way. This used to turn the head along the step as well, on the
+        // same tick it had turned it to the mob: the two turns cancelled, the head crept off the mob
+        // a few degrees a tick, and forward-and-sprint along it ran the bot at the mob and round it,
+        // on ground nothing had checked - at a bastion, into the gaps and off the bridges.
         Vec3 desired = awayFrom(ctx, hostile);
-        if (meleeStallTicks >= 3) {
+        boolean strafing = meleeStallTicks >= MELEE_STALL_TICKS;
+        if (strafing) {
             if (++meleeStrafeTicks >= 8) {
                 meleeStrafeTicks = 0;
                 meleeStrafeLeft = !meleeStrafeLeft;
@@ -1904,25 +1914,19 @@ public final class SelfPreservationTask implements WhileMonitor {
                     ? new Vec3(-desired.z, 0.0, desired.x)
                     : new Vec3(desired.z, 0.0, -desired.x);
         }
-        Vec3 safeDirection = safeEmergencyDirection(ctx, desired, true);
-        if (safeDirection != null) {
-            ctx.look.urgent();
-        ctx.look.lookAt(ctx.player, ctx.player.position().add(safeDirection));
-            ctx.input.forward = true;
-            ctx.input.sprint = true;
-            ctx.input.jump = needsEmergencyJump(ctx, safeDirection);
-        } else {
-            ctx.input.reset();
+        SafeStep.Step step = steps.toward(ctx, desired, true);
+        if (step != null) {
+            steps.steer(ctx, step, false);
         }
         String name = hostile.getName().getString();
-        if (safeDirection == null) {
+        if (step == null) {
             status.set("lune.status.self_preservation.holding_ground_fighting", name);
         } else if (attacked) {
-            status.set(meleeStallTicks >= 3
+            status.set(strafing
                     ? "lune.status.self_preservation.fighting_strafing"
                     : "lune.status.self_preservation.fighting_retreating", name);
         } else {
-            status.set(meleeStallTicks >= 3
+            status.set(strafing
                     ? "lune.status.self_preservation.strafing_before_striking"
                     : "lune.status.self_preservation.retreating_before_striking", name);
         }
@@ -1943,19 +1947,17 @@ public final class SelfPreservationTask implements WhileMonitor {
             away = away.normalize();
         }
 
-        Vec3 safeAway = safeEmergencyDirection(ctx, away, true);
-        if (safeAway == null) {
+        SafeStep.Step step = steps.toward(ctx, away, true);
+        if (step == null) {
             return emergencyCreeperFallback(ctx, reason);
         }
         ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
         ctx.look.urgent();
-        ctx.look.lookAt(ctx.player, ctx.player.position().add(safeAway));
-        ctx.input.forward = true;
-        ctx.input.sprint = true;
-        ctx.input.jump = needsEmergencyJump(ctx, safeAway);
+        ctx.look.lookAt(ctx.player, ctx.player.position().add(step.direction()));
+        steps.steer(ctx, step, true);
 
         // Switch the preferred side periodically so a single blocked direction cannot turn this
-        // into a standstill; safeEmergencyDirection still rejects every unsafe candidate.
+        // into a standstill; the step still refuses every unsafe candidate.
         creeperEscapeTicks++;
 
         double distance = ctx.player.distanceTo(hostile);
@@ -1995,7 +1997,7 @@ public final class SelfPreservationTask implements WhileMonitor {
                 && ctx.player.getAttackStrengthScale(0.0F) >= 1.0F;
         if (attacked) {
             ctx.gameMode.attack(ctx.player, hostile);
-            Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+            ctx.gameMode.swing(InteractionHand.MAIN_HAND);
         }
 
         Block material = emergencyMaterial(ctx);
@@ -2033,18 +2035,16 @@ public final class SelfPreservationTask implements WhileMonitor {
         } else {
             away = away.normalize();
         }
-        Vec3 safeAway = safeEmergencyDirection(ctx, away, true);
-        if (safeAway == null) {
+        SafeStep.Step step = steps.toward(ctx, away, true);
+        if (step == null) {
             ctx.input.reset();
             status.set("lune.status.self_preservation.holding_safe_ground_while_evading", hostile.getName().getString());
             return TaskStatus.RUNNING;
         }
         ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
         ctx.look.urgent();
-        ctx.look.lookAt(ctx.player, ctx.player.position().add(safeAway));
-        ctx.input.forward = true;
-        ctx.input.sprint = true;
-        ctx.input.jump = needsEmergencyJump(ctx, safeAway);
+        ctx.look.lookAt(ctx.player, ctx.player.position().add(step.direction()));
+        steps.steer(ctx, step, true);
         status.set("lune.status.self_preservation.moving_away_from_without_building", hostile.getName().getString());
         return TaskStatus.RUNNING;
     }
@@ -2131,7 +2131,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             if (ctx.player.getAttackStrengthScale(0.0F) >= 1.0F
                     && ctx.look.isLookingAt(ctx.player, hostile.getEyePosition(), 15.0F)) {
                 ctx.gameMode.attack(ctx.player, hostile);
-                Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+                ctx.gameMode.swing(InteractionHand.MAIN_HAND);
                 status.set("lune.status.self_preservation.fighting_from_emergency_cover", name);
                 return TaskStatus.RUNNING;
             }
@@ -2159,8 +2159,8 @@ public final class SelfPreservationTask implements WhileMonitor {
             return TaskStatus.RUNNING;
         }
         toward = toward.normalize();
-        Vec3 safeDirection = safeEmergencyDirection(ctx, toward, true);
-        if (safeDirection == null) {
+        SafeStep.Step step = steps.toward(ctx, toward, true);
+        if (step == null) {
             ctx.input.reset();
             status.set("lune.status.self_preservation.holding_shield_against", name);
             return TaskStatus.RUNNING;
@@ -2176,21 +2176,9 @@ public final class SelfPreservationTask implements WhileMonitor {
         // construction not straight at the archer, so it was refused, so the bot went on standing
         // still. One measured run held this position for 456 seconds - 76% of it - on open ground,
         // at full health, with no movement key pressed at all, while the task underneath cycled
-        // uselessly. Strafe keys separate the two: the shield keeps facing the archer while the
-        // feet take whatever opening the terrain offers.
-        Vec3 facing = Vec3.directionFromRotation(0.0F, ctx.player.getYRot());
-        facing = new Vec3(facing.x, 0.0, facing.z);
-        facing = facing.lengthSqr() < 1.0E-4 ? toward : facing.normalize();
-        Vec3 leftward = new Vec3(facing.z, 0.0, -facing.x);
-        double ahead = safeDirection.dot(facing);
-        double across = safeDirection.dot(leftward);
-        ctx.input.forward = ahead > STEP_COMPONENT;
-        ctx.input.backward = ahead < -STEP_COMPONENT;
-        ctx.input.left = across > STEP_COMPONENT;
-        ctx.input.right = across < -STEP_COMPONENT;
-        // Sprinting cancels the block.
-        ctx.input.sprint = false;
-        ctx.input.jump = needsEmergencyJump(ctx, safeDirection);
+        // uselessly. Steered keys separate the two: the shield keeps facing the archer while the
+        // feet take whatever opening the terrain offers. Never at a run, which cancels the block.
+        steps.steer(ctx, step, false);
         status.set("lune.status.self_preservation.holding_shield_against", name);
         return TaskStatus.RUNNING;
     }
@@ -2260,18 +2248,16 @@ public final class SelfPreservationTask implements WhileMonitor {
             // Create space while the sword recovers instead of standing in melee range.
             desired = toHostile.scale(-1.0).add(strafe).normalize();
         }
-        Vec3 safeDirection = safeEmergencyDirection(ctx, desired, true);
-        if (safeDirection == null) {
+        SafeStep.Step step = steps.toward(ctx, desired, true);
+        if (step == null) {
             ctx.input.reset();
             status.set("lune.status.self_preservation.holding_safe_ground_while_evading", hostile.getName().getString());
             return TaskStatus.RUNNING;
         }
         ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
         ctx.look.urgent();
-        ctx.look.lookAt(ctx.player, ctx.player.position().add(safeDirection));
-        ctx.input.forward = true;
-        ctx.input.sprint = true;
-        ctx.input.jump = needsEmergencyJump(ctx, safeDirection);
+        ctx.look.lookAt(ctx.player, ctx.player.position().add(step.direction()));
+        steps.steer(ctx, step, true);
         status.set(unreachable
                         ? "lune.status.self_preservation.strafing_out_line_of_fire_from"
                         : "lune.status.self_preservation.strafing_out_arrow_line_from",
@@ -2410,12 +2396,10 @@ public final class SelfPreservationTask implements WhileMonitor {
             // A failed roof is deterministic here. Move only along a visibly safe direction and
             // keep the camera below the Enderman instead of falling into the normal attack path.
             Vec3 away = awayFrom(ctx, hostile);
-            Vec3 safeAway = safeEmergencyDirection(ctx, away, true);
-            if (safeAway != null) {
-                ctx.look.lookAt(ctx.player, ctx.player.position().add(safeAway.scale(0.75)));
-                ctx.input.forward = true;
-                ctx.input.sprint = true;
-                ctx.input.jump = needsEmergencyJump(ctx, safeAway);
+            SafeStep.Step step = steps.toward(ctx, away, true);
+            if (step != null) {
+                ctx.look.lookAt(ctx.player, ctx.player.position().add(step.direction().scale(0.75)));
+                steps.steer(ctx, step, true);
                 status.set("lune.status.self_preservation.escaping_enderman_without_eye_contact", reason);
             } else {
                 lookAtSafeGround(ctx);
@@ -2514,91 +2498,6 @@ public final class SelfPreservationTask implements WhileMonitor {
         return fallback;
     }
 
-    /** Return a horizontal direction whose next local step is visibly standable. */
-    /**
-     * A horizontal escape direction that has somewhere to land, preferring the one asked for.
-     *
-     * <h2>Why it also counts ticks</h2>
-     *
-     * <p>Every candidate here is judged by what is under the next block, and a direction can pass
-     * that test and still be a wall the bot walks into: a tree trunk, a ledge it cannot climb, the
-     * corner it is already wedged in. The check is deterministic, so the same wrong answer comes
-     * back every tick for as long as the danger lasts - and a run measured against a Creeper spent
-     * 67 ticks holding forward and sprint at one block position, "retreating", until the Creeper
-     * caught up and took 16 of its 20 health. It did it again nine hundred ticks later.</p>
-     *
-     * <p>So the feet are remembered between calls. When they have not changed for
-     * {@link #EMERGENCY_STALL_TICKS} the preference order is rotated and a different direction
-     * wins - which is the same rule the rest of the bot already follows, that being stuck is never
-     * an acceptable resting state. Anything that does move resets it, so an escape that is working
-     * is never second-guessed.</p>
-     *
-     * <p>Standing still on purpose is not being stuck, and telling them apart is the caller's job:
-     * {@code walking} is false for the branches that hold their ground. Batting a fireball back
-     * means holding position for as long as the shot takes to arrive, and counting those ticks as a
-     * stall rotated the dodge away from the sidestep it had chosen - in the run that found this,
-     * the bot took nine fireballs and caught fire in an arena where the same code had previously
-     * taken none.</p>
-     *
-     * @param walking whether the caller will press forward along whatever comes back
-     */
-    private Vec3 safeEmergencyDirection(BotContext ctx, Vec3 desired, boolean walking) {
-        if (!ctx.player.onGround() || ctx.player.isInWater() || ctx.player.isInLava()) {
-            return null;
-        }
-        Vec3 horizontal = new Vec3(desired.x, 0.0, desired.z);
-        if (horizontal.lengthSqr() < 1.0E-4) {
-            return null;
-        }
-        double baseAngle = Math.atan2(horizontal.z, horizontal.x);
-        double[] turns = {0.0, Math.PI / 4.0, -Math.PI / 4.0, Math.PI / 2.0,
-                -Math.PI / 2.0, 3.0 * Math.PI / 4.0, -3.0 * Math.PI / 4.0, Math.PI};
-        BlockPos feet = ctx.player.blockPosition();
-        if (!walking || !feet.equals(emergencyFeet)) {
-            emergencyFeet = feet.immutable();
-            emergencyStallTicks = 0;
-            emergencyTurnBias = 0;
-        } else if (++emergencyStallTicks >= EMERGENCY_STALL_TICKS) {
-            emergencyStallTicks = 0;
-            emergencyTurnBias++;
-        }
-        for (int offset = 0; offset < turns.length; offset++) {
-            double turn = turns[Math.floorMod(offset + emergencyTurnBias, turns.length)];
-            Vec3 direction = new Vec3(Math.cos(baseAngle + turn), 0.0,
-                    Math.sin(baseAngle + turn));
-            int dx = direction.x > 0.25 ? 1 : direction.x < -0.25 ? -1 : 0;
-            int dz = direction.z > 0.25 ? 1 : direction.z < -0.25 ? -1 : 0;
-            if (dx == 0 && dz == 0) {
-                continue;
-            }
-            BlockPos adjacent = feet.offset(dx, 0, dz);
-            if (safeEmergencyLanding(ctx, adjacent)
-                    || safeEmergencyLanding(ctx, adjacent.below())
-                    || safeEmergencyLanding(ctx, adjacent.above())) {
-                return direction;
-            }
-        }
-        return null;
-    }
-
-    private static boolean safeEmergencyLanding(BotContext ctx, BlockPos feet) {
-        return ctx.level.hasChunkAt(feet)
-                && MovementHelper.canStandAt(ctx.level, feet, false)
-                && !MovementHelper.nearLava(ctx.level, feet);
-    }
-
-    private static boolean needsEmergencyJump(BotContext ctx, Vec3 direction) {
-        BlockPos feet = ctx.player.blockPosition();
-        int dx = direction.x > 0.25 ? 1 : direction.x < -0.25 ? -1 : 0;
-        int dz = direction.z > 0.25 ? 1 : direction.z < -0.25 ? -1 : 0;
-        if (dx == 0 && dz == 0) {
-            return false;
-        }
-        BlockPos adjacent = feet.offset(dx, 0, dz);
-        return !safeEmergencyLanding(ctx, adjacent)
-                && safeEmergencyLanding(ctx, adjacent.above());
-    }
-
     private static Vec3 awayFrom(BotContext ctx, LivingEntity entity) {
         Vec3 away = ctx.player.position().subtract(entity.position());
         away = new Vec3(away.x, 0.0, away.z);
@@ -2660,10 +2559,15 @@ public final class SelfPreservationTask implements WhileMonitor {
         // of full block traces to answer a question about one mob. Sorting first and tracing in
         // order gives the same answer - the nearest that is visible or has just hit us - and
         // usually stops at the first.
+        //
+        // What it is does not decide on its own whether it is a threat to this player: a piglin
+        // ignores anyone in gold and a zombified piglin ignores everybody, until provoked. Swinging
+        // at either is what provokes it, and its neighbours with it, so they count once they attack.
         List<Entity> found = ctx.level.getEntities(ctx.player, box, entity ->
                 entity instanceof LivingEntity living && living.isAlive()
-                        && (isDangerousHostile(entity)
-                                || (isNeutralUntilProvoked(entity) && justAttackedThePlayer(ctx, living))
+                        && (Hostility.attacksOnSight(ctx.player, entity)
+                                || (Hostility.dangerousOnceProvoked(entity)
+                                        && justAttackedThePlayer(ctx, living))
                                 || isRecentPlayerAttacker(ctx, living)));
         cachedNearest = found.stream()
                 .map(LivingEntity.class::cast)
@@ -2685,32 +2589,6 @@ public final class SelfPreservationTask implements WhileMonitor {
     private int threatScanRadius() {
         double needed = Math.max(monsterDistance + 8.0, Math.max(CREEPER_ALERT_DISTANCE, 16.0));
         return (int) Math.min(MAX_THREAT_SCAN_RADIUS, Math.ceil(needed) + 4);
-    }
-
-    /**
-     * Safety threats include hostile mobs and neutral animals that become lethal when provoked.
-     * Polar bears do not implement vanilla's Enemy marker, so leaving this classification to
-     * that marker alone lets one kill an unattended player without ever entering the monitor.
-     */
-    private static boolean isDangerousHostile(Entity entity) {
-        return entity instanceof Enemy;
-    }
-
-    /**
-     * A neutral animal that has not done anything yet.
-     *
-     * <p>Polar bears were classed as permanently dangerous so that one could not maul an unattended
-     * player. That is the wrong shape for a mob that ignores you until provoked: the bot walled
-     * itself in beside a bear that was minding its own business and then stayed there, because the
-     * bear never stopped being a "threat" and so the escape never finished. Being left alone is the
-     * normal case.
-     *
-     * <p>They are still handled the moment one actually attacks - {@link #justAttackedThePlayer}
-     * catches that whether or not the bear is in sight - so the protection that mattered survives
-     * and the standing around does not.
-     */
-    private static boolean isNeutralUntilProvoked(Entity entity) {
-        return entity.getType().getDescriptionId().endsWith(".polar_bear");
     }
 
     private void rememberHostile(BotContext ctx, LivingEntity entity) {
@@ -3647,22 +3525,20 @@ public final class SelfPreservationTask implements WhileMonitor {
      * Whether this mob has hit the player recently, whether or not the player can see it.
      *
      * <p>Distinct from {@link #isRecentPlayerAttacker}, which only ever matched other *players*
-     * and so did nothing for the case that actually kills runs: a skeleton. For an arrow, vanilla
-     * records the shooter rather than the projectile as the last attacker, so this names the
-     * archer even when only the arrow was ever in view.
+     * and so did nothing for the case that actually kills runs: a skeleton. For an arrow, the
+     * damage names the shooter rather than the projectile, so this names the archer even when
+     * only the arrow was ever in view.
+     *
+     * <p>This used to ask {@code getLastHurtByMob}, which only the server fills in, so on the
+     * client it named nobody and no hit ever counted. {@link Hostility.LastHit} reads the damage
+     * the client is actually sent.
      */
-    private static boolean justAttackedThePlayer(BotContext ctx, LivingEntity entity) {
-        return entity == ctx.player.getLastHurtByMob()
-                && ctx.player.tickCount - ctx.player.getLastHurtByMobTimestamp()
-                        < UNSEEN_ATTACKER_TICKS;
+    private boolean justAttackedThePlayer(BotContext ctx, LivingEntity entity) {
+        return lastHit.by(entity, ctx.player, UNSEEN_ATTACKER_TICKS);
     }
 
-    private static boolean isRecentPlayerAttacker(BotContext ctx, LivingEntity entity) {
-        if (!(entity instanceof Player) || entity != ctx.player.getLastHurtByMob()) {
-            return false;
-        }
-        int age = ctx.player.tickCount - ctx.player.getLastHurtByMobTimestamp();
-        return age >= 0 && age < 100;
+    private boolean isRecentPlayerAttacker(BotContext ctx, LivingEntity entity) {
+        return entity instanceof Player && lastHit.by(entity, ctx.player, 100);
     }
 
     private static BlockPos nearestSafeGround(BotContext ctx) {
@@ -3755,6 +3631,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         meleeStallTicks = 0;
         meleeStrafeTicks = 0;
         meleeStrafeLeft = false;
+        steps.forget();
         creeperLastBlock = null;
         creeperStallTicks = 0;
         creeperEscapeTicks = 0;

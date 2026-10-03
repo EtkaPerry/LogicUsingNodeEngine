@@ -1,12 +1,12 @@
 package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.bot.Beside;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.bot.util.EquipHelper;
 import com.etka.lune.bot.util.InventoryHelper;
-import com.etka.lune.compat.Screens;
 import com.etka.lune.mods.WornItems;
 import com.etka.lune.util.Lang;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -134,6 +134,11 @@ public final class EquipTask implements Task {
         if (cooldown > 0) {
             cooldown--;
             return TaskStatus.RUNNING;
+        }
+        // Putting something on is holding it and using it, which beside the player is the mouse's.
+        TaskStatus hands = Beside.handsOnly(ctx, status);
+        if (hands != null) {
+            return hands;
         }
         return what == What.BEST_ARMOR ? bestArmor(ctx) : chosenItem(ctx);
     }
@@ -345,8 +350,7 @@ public final class EquipTask implements Task {
 
     private void closeMenu(BotContext ctx) {
         if (ctx.player.containerMenu != ctx.player.inventoryMenu) {
-            ctx.player.closeContainer();
-            Screens.open(ctx.mc, null);
+            ctx.gameMode.closeContainer();
         }
     }
 

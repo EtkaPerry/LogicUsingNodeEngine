@@ -13,6 +13,7 @@ import com.etka.lune.client.gui.LuneTab;
 import com.etka.lune.client.gui.ScaledTooltips;
 import com.etka.lune.bot.command.Param;
 import com.etka.lune.client.gui.widget.BesideButton;
+import com.etka.lune.client.gui.widget.BesidePrompt;
 import com.etka.lune.client.gui.widget.BlockPicker;
 import com.etka.lune.client.gui.widget.GuiIcons;
 import com.etka.lune.client.gui.widget.NamePrompt;
@@ -135,6 +136,7 @@ public class TasksTab extends LuneTab {
     private SoundPicker soundPicker;
     private NamePrompt namePrompt;
     private SharePrompt sharePrompt;
+    private BesidePrompt besidePrompt;
     /** Which Import a fetched share belongs to: a newer Import makes an older answer moot. */
     private int importTicket;
     /** Opens the course map; the last step's Next hands the player back to it. */
@@ -259,7 +261,7 @@ public class TasksTab extends LuneTab {
         taskList.setOnMove(this::moveTask);
         taskList.setBadge(TaskShortcutKeys::badge, TaskShortcutKeys::badgeTip, TaskGraph::displayName);
         taskList.setMark(task -> task.beside, GuiIcons.Icon.BESIDE, LuneScreen.BESIDE,
-                task -> Lang.get("lune.beside.mark_tip"));
+                task -> Lang.get("lune.beside.mark_tip") + " " + BesidePrompt.summary(task.besideOptions));
         blueprintPanel = add(new BlueprintPanel(0, 0, 10, 10, this::onStepSelected,
                 () -> TaskStore.get().save(), value -> message = value, this::removeSteps));
         palettePanel = add(new PalettePanel(0, 0, 10, 10, this::onPaletteSelect, this::onPaletteDrop));
@@ -277,7 +279,7 @@ public class TasksTab extends LuneTab {
         nameBox.setMaxLength(32);
         nameBox.setResponder(this::onRename);
         shortcutButton = add(new ShortcutButton(this::toggleShortcutListening, this::clearShortcut));
-        besideButton = add(new BesideButton(this::toggleBeside));
+        besideButton = add(new BesideButton(this::openBesideOptions));
 
         newButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.new")), b -> createTask()).size(42, 18).build());
         deleteButton = add(tipped(Button.builder(Component.literal(Lang.get("lune.gui.tasks.del")), b -> deleteTask())
@@ -393,6 +395,10 @@ public class TasksTab extends LuneTab {
 
     public void setSharePrompt(SharePrompt prompt) {
         this.sharePrompt = prompt;
+    }
+
+    public void setBesidePrompt(BesidePrompt prompt) {
+        this.besidePrompt = prompt;
     }
 
     public void setCourseMapOpener(Runnable opener) {
@@ -1126,29 +1132,45 @@ public class TasksTab extends LuneTab {
     // --- beside the player -------------------------------------------------------
 
     /**
-     * Flips whether the open task runs beside the player.
+     * Whether the open task runs beside the player, and how it shares the controls when it does -
+     * asked in the popup the switch opens, on or off. The switch itself never flips: the user asked
+     * (2026-10-02) for a click to bring up the choice, and for Cancel to leave everything as it was.
      *
-     * <p>Saved with the task and kept in the undo history like any other edit to it, because it
+     * <p>What a button commits is saved as one edit and kept in the undo history, because it
      * changes what the task is. A run already going carries on as it started: its cards were told
      * how to work when they were built, and changing that under them halfway is how a card ends up
      * searching with the player's hands on the keys.</p>
      */
-    private void toggleBeside() {
+    private void openBesideOptions() {
         TaskGraph task = taskList.getSelected();
         if (task == null || inTraining()) {
             message = Lang.get("lune.gui.tasks.pick_task_first");
             return;
         }
-        beginEdit();
-        task.beside = !task.beside;
-        recordEdit();
-        TaskStore.get().save();
-        besideButton.show(task.beside);
-        boolean running = BotEngine.get().getCurrent() instanceof TaskRunner runner
+        if (besidePrompt == null) {
+            return;
+        }
+        besidePrompt.open(task.displayName(), task.beside, task.besideOptions, choice -> {
+            if (choice.beside() == task.beside && choice.options().equals(task.besideOptions)) {
+                return;
+            }
+            beginEdit();
+            task.beside = choice.beside();
+            task.besideOptions = choice.options();
+            recordEdit();
+            TaskStore.get().save();
+            besideButton.show(task.beside, task.besideOptions);
+            message = runningNow(task) ? Lang.get("lune.beside.next_run", task.displayName())
+                    : task.beside ? Lang.get("lune.beside.options_now", task.displayName(),
+                            BesidePrompt.summary(task.besideOptions))
+                    : Lang.get("lune.beside.now_off", task.displayName());
+        });
+    }
+
+    /** Whether this task is the one running now, which goes on as it started whatever is changed. */
+    private static boolean runningNow(TaskGraph task) {
+        return BotEngine.get().getCurrent() instanceof TaskRunner runner
                 && runner.currentTask() == task;
-        message = running ? Lang.get("lune.beside.next_run", task.displayName())
-                : Lang.get(task.beside ? "lune.beside.now_on" : "lune.beside.now_off",
-                        task.displayName());
     }
 
     private static void forgetShortcuts(List<TaskGraph> tasks) {
@@ -1899,7 +1921,7 @@ public class TasksTab extends LuneTab {
         syncRunButton();
         syncShortcutButton();
         TaskGraph open = taskList.getSelected();
-        besideButton.show(open != null && open.beside);
+        besideButton.show(open != null && open.beside, open == null ? null : open.besideOptions);
         besideButton.active = open != null;
         syncTrainingControls();
         repeatButton.setMessage(Component.literal(step == null ? "-" : isWhileCompanion(step) ? "x∞" : step.describeRepeat()));

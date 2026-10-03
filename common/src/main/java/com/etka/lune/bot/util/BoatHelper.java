@@ -1,7 +1,6 @@
 package com.etka.lune.bot.util;
 
 import com.etka.lune.bot.BotContext;
-import com.etka.lune.compat.Hands;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
@@ -137,7 +136,7 @@ public final class BoatHelper {
     /** Sends the one interaction a boat item answers to. */
     public static void place(BotContext ctx) {
         ctx.gameMode.useItem(ctx.player, InteractionHand.MAIN_HAND);
-        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+        ctx.gameMode.swing(InteractionHand.MAIN_HAND);
     }
 
     public static boolean withinBoardingRange(BotContext ctx, AbstractBoat boat) {
@@ -172,6 +171,6 @@ public final class BoatHelper {
     /** One hit on the hull. Boats are picked back up by breaking them, not by clicking them. */
     public static void strike(BotContext ctx, AbstractBoat boat) {
         ctx.gameMode.attack(ctx.player, boat);
-        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+        ctx.gameMode.swing(InteractionHand.MAIN_HAND);
     }
 }

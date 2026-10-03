@@ -2,7 +2,6 @@ package com.etka.lune.bot.path;
 
 import com.etka.lune.bot.BotContext;
 import com.etka.lune.bot.StatusText;
-import com.etka.lune.compat.Hands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
@@ -234,7 +233,7 @@ public final class DoorKeeper {
         }
         ctx.input.sneak = false;
         ctx.gameMode.useItemOn(ctx.player, InteractionHand.MAIN_HAND, hit);
-        Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+        ctx.gameMode.swing(InteractionHand.MAIN_HAND);
         sinceClick = 0;
         aimTicks = 0;
         return true;

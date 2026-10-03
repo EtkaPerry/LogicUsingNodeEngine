@@ -10,6 +10,7 @@ import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskProgress;
 import com.etka.lune.bot.AutoRun;
 import com.etka.lune.bot.task.TaskRunner;
+import com.etka.lune.bot.util.Hostility;
 import com.etka.lune.bot.util.Vision;
 import com.etka.lune.config.BotConfig;
 import com.etka.lune.client.TaskShortcutKeys;
@@ -28,7 +29,6 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
-import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.phys.AABB;
@@ -857,13 +857,14 @@ public class MainTab extends LuneTab {
                 + Lang.get("lune.gui.main.sky") + mc.level.getBrightness(LightLayer.SKY, pos);
     }
 
+    /** The same enemies Self Preservation would answer: a piglin is none to a player in gold. */
     private static int visibleEnemies(Minecraft mc) {
         if (mc.player == null || mc.level == null) {
             return 0;
         }
         AABB area = mc.player.getBoundingBox().inflate(24.0);
         return mc.level.getEntities(mc.player, area,
-                entity -> entity instanceof Enemy && entity.isAlive()
+                entity -> Hostility.attacksOnSight(mc.player, entity) && entity.isAlive()
                         && Vision.isEntityVisible(mc, mc.player, mc.level, entity)).size();
     }
 

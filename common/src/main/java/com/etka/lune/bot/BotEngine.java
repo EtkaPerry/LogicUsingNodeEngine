@@ -3,6 +3,7 @@ package com.etka.lune.bot;
 import com.etka.lune.Constants;
 import com.etka.lune.bot.input.BotClientInput;
 import com.etka.lune.bot.input.BotInput;
+import com.etka.lune.bot.input.Controls;
 import com.etka.lune.bot.input.Handover;
 import com.etka.lune.bot.input.HeldKeys;
 import com.etka.lune.bot.input.LookController;
@@ -45,7 +46,28 @@ public final class BotEngine {
 
     private final Deque<Task> queue = new ArrayDeque<>();
     private final BotInput input = new BotInput();
-    private final LookController look = new LookController();
+    /**
+     * Which of the player's controls the cards may use, answered live from the run and the
+     * handover. Every answer is yes in the player's place; see {@link Controls}.
+     */
+    private final Controls controls = new Controls() {
+        @Override
+        public boolean mayTakeMouse() {
+            return !besideRun || handover.takesMouse();
+        }
+
+        @Override
+        public boolean mayTakeKeyboard() {
+            return !besideRun || handover.takesKeyboard();
+        }
+
+        @Override
+        public boolean yielding() {
+            return besideRun && handover.yielding();
+        }
+    };
+    /** Turns the head only while the camera is the cards' to turn. */
+    private final LookController look = new LookController(controls::mouse);
     private final DebugInfo debug = new DebugInfo();
     private final BotStatisticsStore statistics = BotStatisticsStore.get();
     /** The learned policy is part of the shipped bot and is shared by dev and release installs. */
@@ -66,6 +88,14 @@ public final class BotEngine {
     private boolean besideRun;
     /** Who holds the controls while {@link #besideRun}, and the passing of them between the two. */
     private final Handover handover = new Handover();
+    /**
+     * Set on the tick the player's touch took the controls back, with them first. That tick the
+     * task is ticked as usual, told it is yielding, so the cards that look for their work let go of
+     * it; only a card still holding on after that waits, untouched, for the player's hands.
+     */
+    private boolean justYielded;
+    /** Whether the last tick left the task waiting for the player's hands, said once in the trace. */
+    private boolean waitingForHands;
     /**
      * Where the bot stood when the current run began, for anything that measures "home". Taken once
      * per run and not per task, so a task of twenty nodes cannot inch away from it.
@@ -102,14 +132,22 @@ public final class BotEngine {
     // --- state ---------------------------------------------------------------
 
     /**
-     * True when the bot should be driving the player instead of the keyboard.
+     * True when Lune holds the controls - as much of them as the task lets her take.
      *
      * <p>For a run in the player's place, that is the whole run. For one beside the player, only
-     * while one of its cards has something to do: the rest of the time the keys are the player's,
-     * and {@link BotClientInput} passes them straight through.</p>
+     * while one of its cards has something to do: the rest of the time the controls are the
+     * player's, and {@link BotClientInput} passes the keys straight through.</p>
      */
     public boolean isDriving() {
         return isRunning() && (!besideRun || handover.lune());
+    }
+
+    /**
+     * True when her movement keys reach the game instead of the player's: she holds the controls,
+     * and the task lets her take the keyboard. Asked by {@link BotClientInput} every tick.
+     */
+    public boolean drivesKeyboard() {
+        return isRunning() && (!besideRun || (handover.lune() && handover.takesKeyboard()));
     }
 
     /** A task in hand and not paused, whoever holds the keys. */
@@ -421,10 +459,21 @@ public final class BotEngine {
      * the hotbar slot, attack and use - before the game sees it. See {@link Handover}.</p>
      */
     public void beforeTick(Minecraft mc) {
-        if (!besideRun || paused || current == null || !handover.lune()) {
+        if (!besideRun || paused || current == null) {
             return;
         }
-        handover.reassert(mc);
+        // With the player first, any touch of what she would take is theirs at once: everything
+        // goes back before the game reads it, and what they did stands. With her first, it is
+        // undone below, until her card is done.
+        if (handover.observe(handover.touchedByPlayer(mc))) {
+            returnControls();
+            justYielded = true;
+            debug.decide("beside: your hands came first; handing the controls back");
+            return;
+        }
+        if (handover.lune()) {
+            handover.reassert(mc);
+        }
     }
 
     /**
@@ -593,7 +642,9 @@ public final class BotEngine {
             // Asked once, as the task starts, and told before it starts so every card it builds
             // knows from its first tick. A task run from inside another is told by that one.
             besideRun = current.wantsBesidePlayer();
-            handover.forget();
+            handover.start(current.besideOptions());
+            justYielded = false;
+            waitingForHands = false;
             if (besideRun) {
                 current.runBesidePlayer();
             }
@@ -607,6 +658,19 @@ public final class BotEngine {
         }
 
         BotContext ctx = buildContext(mc, player, mc.level);
+        if (waitsForHands()) {
+            // The player comes first and their hands are on the controls, and a card is still in
+            // the middle of work it does not let go of. It is not ticked, so nothing it does reaches
+            // the game and none of its clocks run: it carries on from here once they let go.
+            if (!waitingForHands) {
+                waitingForHands = true;
+                debug.decide("beside: a card waits for your hands to be off the controls");
+            }
+            sampler.reset();
+            passTheControls(mc, player.getInventory().getSelectedSlot(), mc.options.keyUse.isDown());
+            return;
+        }
+        waitingForHands = false;
         debug.taskTicks++;
         // Beside the player, a tick the player had the keys for is the player's: the distance they
         // walked and the damage they took are not the bot's work, as with a pause.
@@ -709,7 +773,31 @@ public final class BotEngine {
                 finishRunStatistics();
             }
         }
+        if (besideRun && !controls.mouse()
+                && player.getInventory().getSelectedSlot() != slotBefore) {
+            // The mouse was not hers this tick, so neither was the hand: a card that picked a tool
+            // to check it had one leaves the player holding what they held. Before the game's own
+            // tick, so the server never hears of it and no frame shows it.
+            player.getInventory().setSelectedSlot(slotBefore);
+        }
         passTheControls(mc, slotBefore, useBefore);
+    }
+
+    /**
+     * Whether, this tick, the task waits untouched for the player's hands: they come first and are
+     * on the controls, it has been told so for a tick, and a card is still holding on to its work.
+     */
+    private boolean waitsForHands() {
+        if (!besideRun || !handover.yielding()) {
+            justYielded = false;
+            return false;
+        }
+        if (justYielded) {
+            // The tick the controls went back is one every card hears about.
+            justYielded = false;
+            return false;
+        }
+        return current.holdsControls();
     }
 
     /**
@@ -726,7 +814,14 @@ public final class BotEngine {
             besideRun = false;
             return;
         }
-        switch (handover.update(current.holdsControls())) {
+        boolean wanted = current.holdsControls();
+        if (wanted && !handover.takesMouse()) {
+            // Only the keyboard is hers to take, so a tick that pressed no key gave her nothing to
+            // hold it for. A card stuck on work that needs the mouse - a meal, a swing - would
+            // otherwise hold the player's legs still while it waited for a hand it never gets.
+            wanted = input.any();
+        }
+        switch (handover.update(wanted)) {
             case TAKE -> {
                 handover.takeOver(mc, slotBefore, useBefore);
                 // The player's own walking up to here is theirs; her ticks are counted from now.
@@ -738,11 +833,7 @@ public final class BotEngine {
                 returnControls();
                 debug.decide("beside: nothing left to do; handing the controls back");
             }
-            case NONE -> {
-                if (handover.lune()) {
-                    handover.remember(mc);
-                }
-            }
+            case NONE -> handover.remember(mc);
         }
     }
 
@@ -753,13 +844,13 @@ public final class BotEngine {
      */
     private void installInputHook(LocalPlayer player) {
         if (!(player.input instanceof BotClientInput)) {
-            player.input = new BotClientInput(player.input, this::isDriving, () -> input);
+            player.input = new BotClientInput(player.input, this::drivesKeyboard, () -> input);
         }
     }
 
     private BotContext buildContext(Minecraft mc, LocalPlayer player, ClientLevel level) {
-        return new BotContext(mc, player, level, mc.gameMode, input, look, BotConfig.get(), debug,
-                learning, learningSession, "default", runAnchor);
+        return new BotContext(mc, player, level, mc.gameMode, controls, input, look, BotConfig.get(),
+                debug, learning, learningSession, "default", runAnchor);
     }
 
     /** Mirrors this tick's state into the overlay's telemetry. */

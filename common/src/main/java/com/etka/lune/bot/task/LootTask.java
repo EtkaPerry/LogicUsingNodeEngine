@@ -12,6 +12,7 @@ import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goal;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.path.MovementHelper;
+import com.etka.lune.bot.path.SafeStep;
 import com.etka.lune.bot.util.InventoryHelper;
 import com.etka.lune.bot.util.Vision;
 import com.etka.lune.bot.util.WorkSite;
@@ -219,6 +220,17 @@ public final class LootTask implements Task {
     @Override
     public TaskStatus onTick(BotContext ctx) {
         beside.tick();
+        if (beside.yielding(ctx)) {
+            // The player's hands came first. The drop is let go of, not kept for later: they may
+            // walk over it themselves, or away from it.
+            clearTarget(ctx);
+            nudgeTicks = 0;
+            return beside.watch(status, "lune.status.loot.watching_beside");
+        }
+        if (!beside.mayWalk(ctx)) {
+            // Picking a drop up is walking onto it, and this task leaves the keyboard to the player.
+            return beside.watch(status, "lune.status.beside.needs_keyboard");
+        }
         // Nothing can be collected into a full bag; spinning here would stall the whole task.
         if (InventoryHelper.isFull(ctx.player)) {
             status.set("lune.status.loot.inventory_full_collected", collected);
@@ -360,13 +372,22 @@ public final class LootTask implements Task {
         if (distance > NUDGE_RADIUS || ++nudgeTicks > MAX_NUDGE_TICKS) {
             return false;
         }
+        // A drop the router could not reach is as often floating on lava - ancient debris does - or
+        // over an edge as it is in a hollow. The nudge may go where nobody could stand, but never
+        // there: that drop is given up.
+        if (SafeStep.hazardousToward(ctx.level, MovementHelper.feetPosition(ctx.player),
+                target.position().subtract(ctx.player.position()))) {
+            return false;
+        }
         if (approach != null) {
             approach.stop(ctx);
             approach = null;
             approachAim = null;
         }
         ctx.look.lookAt(ctx.player, target.position());
-        ctx.input.forward = true;
+        // Steered rather than walked forward, so the step goes toward the drop wherever the head
+        // is - mid-turn, or held by a player who kept the mouse.
+        ctx.input.steerToward(ctx.player, target.position());
         ctx.debug.intent = "closing the last few blocks to a drop the router could not reach";
         status.set("lune.status.loot.edging_toward_drop_blocks", distance);
         return true;

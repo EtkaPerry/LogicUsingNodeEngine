@@ -23,6 +23,11 @@ public final class BotInput {
         forward = backward = left = right = jump = sneak = sprint = false;
     }
 
+    /** Whether anything is pressed this tick. */
+    public boolean any() {
+        return forward || backward || left || right || jump || sneak || sprint;
+    }
+
     /**
      * Presses the key combination that moves toward {@code target} in world space, whatever the head
      * is doing.

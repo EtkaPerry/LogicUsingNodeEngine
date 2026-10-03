@@ -44,6 +44,12 @@ public final class TaskGraph {
      * cards. False on every task saved before it existed, which is what Gson leaves it as.</p>
      */
     public boolean beside;
+    /**
+     * How a run beside the player shares the controls: who comes first, and whether Lune may take
+     * the mouse, the keyboard or both. Kept whether or not the switch is on, so turning it off and
+     * on again does not lose the choice. See {@link BesideOptions}.
+     */
+    public BesideOptions besideOptions = new BesideOptions();
     public List<TaskNode> nodes = new ArrayList<>();
     /** Optional monitor node id active for every step in the task. */
     public String onWhile;

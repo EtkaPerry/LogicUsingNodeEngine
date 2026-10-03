@@ -1,6 +1,7 @@
 package com.etka.lune.bot.task;
 
 import com.etka.lune.bot.BotContext;
+import com.etka.lune.bot.Beside;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
@@ -107,6 +108,15 @@ public final class CompassFindTask implements Task {
 
     @Override
     public TaskStatus onTick(BotContext ctx) {
+        if (phase == Phase.SETTLING || phase == Phase.WAITING) {
+            // The compass has to stay in hand while it answers, and the hand is the mouse's beside
+            // the player. Waited out from the top: the player's slot came back with their hands.
+            TaskStatus hands = Beside.handsOnly(ctx, status);
+            if (hands != null) {
+                phase = Phase.START;
+                return hands;
+            }
+        }
         return switch (phase) {
             case START -> begin(ctx);
             case SETTLING -> ask(ctx);
@@ -132,6 +142,11 @@ public final class CompassFindTask implements Task {
         }
         if (!hook.ready()) {
             return fail("lune.status.compass.mod_missing", hook.label());
+        }
+        // A place already learned is walked to with no compass; asking one is the hand.
+        TaskStatus hands = Beside.handsOnly(ctx, status);
+        if (hands != null) {
+            return hands;
         }
         if (InventoryHelper.equip(ctx, hook::isCompass) < 0) {
             return fail("lune.status.compass.needs_item", hook.itemName());

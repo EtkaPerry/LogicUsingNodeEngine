@@ -1,6 +1,5 @@
 package com.etka.lune.bot.task;
 
-import com.etka.lune.compat.Hands;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.BotContext;
@@ -400,7 +399,7 @@ public final class BuildPortalTask implements Task {
         if (ctx.look.isLookingAt(ctx.player, hit, AIM_TOLERANCE)) {
             ctx.gameMode.useItemOn(ctx.player, InteractionHand.MAIN_HAND,
                     new BlockHitResult(hit, Direction.UP, support, false));
-            Hands.swing(ctx.player, InteractionHand.MAIN_HAND);
+            ctx.gameMode.swing(InteractionHand.MAIN_HAND);
         }
         status.set("lune.status.speedrun.lighting_portal");
         return TaskStatus.RUNNING;
