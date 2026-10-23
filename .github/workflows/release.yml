@@ -504,7 +504,9 @@ jobs:
             ids=$(printf '%s' "$TAGS" | jq -c --arg f "$file" '.[$f].ids')
             lname=$(printf '%s' "$TAGS" | jq -r --arg f "$file" '.[$f].loader')
 
-            relations='{"projects":[]}'
+            # CurseForge refuses an empty relations list, so a jar that needs
+            # nothing else goes up without one.
+            relations=null
             if [ "$loader" = "fabric" ]; then
               relations=$(jq -n -c --arg s "$FABRIC_API_SLUG" \
                 '{projects: [{slug: $s, type: "requiredDependency"}]}')
@@ -520,8 +522,8 @@ jobs:
               '{
                  changelog: $changelog, changelogType: "markdown",
                  displayName: $name, gameVersions: $ids, releaseType: $channel,
-                 modLoaders: [$loader], relations: $rel
-               }')
+                 modLoaders: [$loader]
+               } + (if $rel == null then {} else {relations: $rel} end)')
 
             # Through a file, not -F "metadata=$data": curl reads a ';' in an
             # inline value as the start of a content-type and truncates the
