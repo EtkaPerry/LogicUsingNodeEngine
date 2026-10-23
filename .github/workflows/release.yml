@@ -476,8 +476,7 @@ jobs:
             page=$(curl -sS --fail-with-body \
               -H "x-api-key: $CURSEFORGE_TOKEN" -H "Accept: application/json" \
               "https://api.curseforge.com/v1/mods/$PROJECT_ID/files?index=$index&pageSize=50")
-            existing="$existing
-$(printf '%s' "$page" | jq -r '.data[].fileName')"
+            existing="$existing"$'\n'"$(printf '%s' "$page" | jq -r '.data[].fileName')"
             index=$((index + 50))
             [ "$index" -ge "$(printf '%s' "$page" | jq '.pagination.totalCount')" ] && break
           done
