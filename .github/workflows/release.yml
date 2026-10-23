@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Build every target, check the CurseForge token, publish nothing
+        description: Build every target, check the Modrinth token, publish nothing
         type: boolean
         required: false
         default: true
@@ -26,21 +26,13 @@ permissions:
   contents: write
 
 env:
-  # CurseForge channel for every version this publishes: release, beta or alpha.
-  #
-  # Lune is published on CurseForge. Modrinth refused the project outright
-  # under its AI-content rule - "not suitable to be published publicly", do
-  # not resubmit - so nothing in this workflow posts there, and the license
-  # names CurseForge as the modpack platform instead.
+  # Modrinth channel for every version this publishes: release, beta or alpha.
   RELEASE_CHANNEL: alpha
   # The publish job has no checkout, so gh has no remote to infer this from.
   GH_REPO: ${{ github.repository }}
-  # The numeric CurseForge project id - it is in the project's curseforge.com
-  # URL, and the project has to exist before the first real publish. The
-  # console API key (console.curseforge.com) goes in the CURSEFORGE_TOKEN
-  # secret; the one key uploads files and reads the project's file list.
-  CURSEFORGE_PROJECT: "0"
-  FABRIC_API_SLUG: fabric-api
+  MODRINTH_PROJECT: logicusingnodeengine
+  MODRINTH_UA: "EtkaPerry/LogicUsingNodeEngine (github-actions release)"
+  FABRIC_API_PROJECT: P7dR8mSH
 
 jobs:
   plan:
@@ -76,10 +68,10 @@ jobs:
 
           case "$RELEASE_CHANNEL" in
             release|beta|alpha) ;;
-            *) echo "::error::RELEASE_CHANNEL is '$RELEASE_CHANNEL'; CurseForge takes release, beta or alpha."; exit 1 ;;
+            *) echo "::error::RELEASE_CHANNEL is '$RELEASE_CHANNEL'; Modrinth takes release, beta or alpha."; exit 1 ;;
           esac
           echo "channel=$RELEASE_CHANNEL" >> "$GITHUB_OUTPUT"
-          echo "Version $version, CurseForge channel $RELEASE_CHANNEL."
+          echo "Version $version, Modrinth channel $RELEASE_CHANNEL."
 
           # Compared against the commit the branch was on before this push, not
           # HEAD^: a push can carry several commits and the bump is not always
@@ -182,8 +174,8 @@ jobs:
               notes[version] = {
                 // The GitHub release body.
                 notes: body,
-                // Each CurseForge file's changelog: the same notes, and the way to the jars.
-                curseforge: `${body}\n\n---\nAll downloads and the full notes: https://github.com/${repo}/releases/tag/v${version}`,
+                // Each Modrinth version's changelog: the same notes, and the way to the jars.
+                modrinth: `${body}\n\n---\nAll downloads and the full notes: https://github.com/${repo}/releases/tag/v${version}`,
               };
             }
           };
@@ -379,25 +371,25 @@ jobs:
 
       # Before anything is uploaded, so a bad token fails while nothing has
       # been published.
-      - name: Check the CurseForge project and token
-        id: curseforge
+      - name: Check the Modrinth project and token
+        id: modrinth
         env:
-          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${CURSEFORGE_TOKEN:-}" ]; then
-            echo "::error::Secret CURSEFORGE_TOKEN is not set. It needs a CurseForge API key from console.curseforge.com - the one key uploads files and reads the project's file list."
+          if [ -z "${MODRINTH_TOKEN:-}" ]; then
+            echo "::error::Secret MODRINTH_TOKEN is not set. It needs a Modrinth PAT with the create versions, read versions and read projects scopes."
             exit 1
           fi
           body=$(curl -sS --fail-with-body \
-            -H "x-api-key: $CURSEFORGE_TOKEN" -H "Accept: application/json" \
-            "https://api.curseforge.com/v1/mods/$CURSEFORGE_PROJECT") || {
-              echo "::error::CurseForge rejected the lookup of project '$CURSEFORGE_PROJECT': $body"
+            -H "Authorization: $MODRINTH_TOKEN" -H "User-Agent: $MODRINTH_UA" \
+            "https://api.modrinth.com/v2/project/$MODRINTH_PROJECT") || {
+              echo "::error::Modrinth rejected the lookup of project '$MODRINTH_PROJECT': $body"
               exit 1
             }
-          id=$(printf '%s' "$body" | jq -r '.data.id')
+          id=$(printf '%s' "$body" | jq -r '.id')
           echo "project_id=$id" >> "$GITHUB_OUTPUT"
-          echo "CurseForge project $(printf '%s' "$body" | jq -r '.data.name') ($id)."
+          echo "Modrinth project $(printf '%s' "$body" | jq -r '.title') ($id), status $(printf '%s' "$body" | jq -r '.status')."
 
       - name: GitHub release
         if: env.DRY_RUN != 'true'
@@ -416,47 +408,23 @@ jobs:
               --latest
           fi
 
-      - name: Upload to CurseForge
+      - name: Upload to Modrinth
         if: env.DRY_RUN != 'true'
         env:
-          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
-          PROJECT_ID: ${{ steps.curseforge.outputs.project_id }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          PROJECT_ID: ${{ steps.modrinth.outputs.project_id }}
           MANIFEST: ${{ steps.inventory.outputs.manifest }}
         run: |
           set -euo pipefail
 
-          changelog=$(jq -r --arg v "$VERSION" '.[$v].curseforge' changelog/changelog.json)
-
-          # Every id CurseForge asks for - the Minecraft version, the loader
-          # and the environment tags - is an entry in its game-versions list,
-          # matched by name: "1.21.1", "NeoForge", "Client".
-          versions=$(curl -sS --fail-with-body \
-            -H "X-Api-Token: $CURSEFORGE_TOKEN" \
-            "https://minecraft.curseforge.com/api/game/versions")
-          version_id() {
-            id=$(printf '%s' "$versions" | jq -r --arg n "$1" \
-              '[.[] | select(.name == $n) | .id][0] // empty')
-            if [ -z "$id" ]; then
-              echo "::error::CurseForge has no game version named '$1'." >&2
-              return 1
-            fi
-            printf '%s' "$id"
-          }
+          changelog=$(jq -r --arg v "$VERSION" '.[$v].modrinth' changelog/changelog.json)
 
           # Keyed on the jar name rather than the version number: every version
-          # here carries the same number. Skipping what is already up finishes a
-          # partial upload. The files list pages fifty at a time.
-          existing=""
-          index=0
-          while :; do
-            page=$(curl -sS --fail-with-body \
-              -H "x-api-key: $CURSEFORGE_TOKEN" -H "Accept: application/json" \
-              "https://api.curseforge.com/v1/mods/$PROJECT_ID/files?index=$index&pageSize=50")
-            existing="$existing
-$(printf '%s' "$page" | jq -r '.data[].fileName')"
-            index=$((index + 50))
-            [ "$index" -ge "$(printf '%s' "$page" | jq '.pagination.totalCount')" ] && break
-          done
+          # here carries the same number, and Modrinth does not require it to
+          # be unique. Skipping what is already up finishes a partial upload.
+          existing=$(curl -sS --fail-with-body \
+            -H "Authorization: $MODRINTH_TOKEN" -H "User-Agent: $MODRINTH_UA" \
+            "https://api.modrinth.com/v2/project/$PROJECT_ID/version" | jq -r '.[].files[].filename')
 
           uploaded=0
           skipped=0
@@ -466,68 +434,56 @@ $(printf '%s' "$page" | jq -r '.data[].fileName')"
             file=$(printf '%s' "$row" | jq -r '.file')
 
             if printf '%s\n' "$existing" | grep -qxF "$file"; then
-              echo "  skip  $file (already on CurseForge)"
+              echo "  skip  $file (already on Modrinth)"
               skipped=$((skipped + 1))
               continue
             fi
 
-            case "$loader" in
-              fabric)   lname=Fabric ;;
-              neoforge) lname=NeoForge ;;
-              forge)    lname=Forge ;;
-              *) echo "::error::No CurseForge loader tag for '$loader'"; exit 1 ;;
-            esac
-            # Both environment tags: Lune runs on client and server and is
-            # required on neither.
-            ids=$(jq -n -c \
-              --argjson mc "$(version_id "$mc")" \
-              --argjson loader "$(version_id "$lname")" \
-              --argjson client "$(version_id Client)" \
-              --argjson server "$(version_id Server)" \
-              '[$mc, $loader, $client, $server]')
-
-            relations='{"projects":[]}'
+            deps='[]'
             if [ "$loader" = "fabric" ]; then
-              relations=$(jq -n -c --arg s "$FABRIC_API_SLUG" \
-                '{projects: [{slug: $s, type: "requiredDependency"}]}')
+              deps=$(jq -n -c --arg p "$FABRIC_API_PROJECT" \
+                '[{project_id: $p, dependency_type: "required"}]')
             fi
 
             data=$(jq -n -c \
               --arg name "Lune $VERSION for Minecraft $mc ($loader)" \
+              --arg number "$VERSION" \
               --arg changelog "$changelog" \
-              --arg loader "$lname" \
+              --arg project "$PROJECT_ID" \
+              --arg mc "$mc" \
+              --arg loader "$loader" \
               --arg channel "$CHANNEL" \
-              --argjson ids "$ids" \
-              --argjson rel "$relations" \
+              --arg file "$file" \
+              --argjson deps "$deps" \
               '{
-                 changelog: $changelog, changelogType: "markdown",
-                 displayName: $name, gameVersions: $ids, releaseType: $channel,
-                 modLoaders: [$loader], relations: $rel
+                 name: $name, version_number: $number, changelog: $changelog,
+                 dependencies: $deps, game_versions: [$mc], version_type: $channel,
+                 loaders: [$loader], featured: false, status: "listed",
+                 project_id: $project, file_parts: [$file], primary_file: $file
                }')
 
-            # Through a file, not -F "metadata=$data": curl reads a ';' in an
-            # inline value as the start of a content-type and truncates the
-            # field there.
-            printf '%s' "$data" > /tmp/curseforge-upload.json
+            # Through a file, not -F "data=$data": curl reads a ';' in an inline
+            # value as the start of a content-type and truncates the field there.
+            printf '%s' "$data" > /tmp/modrinth-version.json
             response=$(curl -sS --fail-with-body -X POST \
-              -H "X-Api-Token: $CURSEFORGE_TOKEN" \
-              -F "metadata=</tmp/curseforge-upload.json;type=application/json" \
-              -F "file=@jars/$file;type=application/java-archive" \
-              "https://minecraft.curseforge.com/api/projects/$PROJECT_ID/upload-file") || {
-                echo "::error::CurseForge rejected $file: $response"
+              -H "Authorization: $MODRINTH_TOKEN" -H "User-Agent: $MODRINTH_UA" \
+              -F "data=</tmp/modrinth-version.json;type=application/json" \
+              -F "$file=@jars/$file;type=application/java-archive" \
+              "https://api.modrinth.com/v2/version") || {
+                echo "::error::Modrinth rejected $file: $response"
                 exit 1
               }
-            echo "  up    $file -> file $(printf '%s' "$response" | jq -r '.id')"
+            echo "  up    $file -> $(printf '%s' "$response" | jq -r '.id')"
             uploaded=$((uploaded + 1))
           done < <(printf '%s' "$MANIFEST" | jq -c '.[]')
 
-          echo "CurseForge: $uploaded uploaded, $skipped already there."
-          echo "- CurseForge: $uploaded uploaded, $skipped already there" >> "$GITHUB_STEP_SUMMARY"
+          echo "Modrinth: $uploaded uploaded, $skipped already there."
+          echo "- Modrinth: $uploaded uploaded, $skipped already there" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dry run summary
         if: env.DRY_RUN == 'true'
         run: |
-          echo "Dry run: every target built, the CurseForge project and token check out, nothing was published."
+          echo "Dry run: every target built, the Modrinth project and token check out, nothing was published."
           echo "Re-run from the Actions tab with the dry_run box cleared to publish v$VERSION."
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "**Dry run** - nothing was published." >> "$GITHUB_STEP_SUMMARY"
