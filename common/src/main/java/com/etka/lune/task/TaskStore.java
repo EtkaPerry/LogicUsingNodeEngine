@@ -4,11 +4,6 @@ import com.etka.lune.Constants;
 import com.etka.lune.bot.command.CommandRegistry;
 import com.etka.lune.platform.Services;
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonDeserializationContext;
-import com.google.gson.JsonDeserializer;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 import com.google.gson.reflect.TypeToken;
 import net.minecraft.client.Minecraft;
 
@@ -31,20 +26,16 @@ import java.util.Optional;
  */
 public final class TaskStore {
 
-    private static final Gson GSON = gson().setPrettyPrinting().create();
-    /** The same, on one line: what a share code compresses, where every byte is a longer link. */
-    private static final Gson COMPACT = gson().create();
+    private static final Gson GSON = TaskJson.PRETTY;
     private static TaskStore instance;
 
-    private static GsonBuilder gson() {
-        return new GsonBuilder()
-                // Routes used to be serialised as one {x, y} anchor. Read that shape as a
-                // one-point route while writing the new repeatable {points: [...]} shape.
-                .registerTypeAdapter(TaskCableRoute.class,
-                        (JsonDeserializer<TaskCableRoute>) TaskStore::deserializeCableRoute);
-    }
-
     private final List<TaskGraph> tasks = new ArrayList<>();
+    /**
+     * The names, lower-cased, of graphs the editor is holding for somebody else - a Lumi's own,
+     * open in the Task tab. In the list so the editor and its undo treat them as they treat any
+     * task, and never the player's: never written to the file and never listed.
+     */
+    private final java.util.Set<String> scratch = new java.util.HashSet<>();
 
     public static TaskStore get() {
         if (instance == null) {
@@ -80,7 +71,42 @@ public final class TaskStore {
      * {@link #all()} still returns them, so nothing that looks a task up by name is affected.
      */
     public List<TaskGraph> listed() {
-        return tasks.stream().filter(task -> task.isListed(CommandRegistry::isAvailable)).toList();
+        return tasks.stream().filter(task -> !isScratch(task))
+                .filter(task -> task.isListed(CommandRegistry::isAvailable)).toList();
+    }
+
+    /**
+     * Holds a graph that is not the player's - a Lumi's own, open in the editor - under a name of
+     * its own, until {@link #dropScratch}. It is never written to the file and never listed, so a
+     * crash with it open leaves nothing behind.
+     */
+    public TaskGraph adoptScratch(TaskGraph task, String wantedName) {
+        normalize(task);
+        task.name = uniqueName(wantedName);
+        task.seededId = null;
+        scratch.add(task.name.toLowerCase(java.util.Locale.ROOT));
+        tasks.add(task);
+        return task;
+    }
+
+    /** Lets go of a graph {@link #adoptScratch} took. */
+    public void dropScratch(String name) {
+        if (name == null) {
+            return;
+        }
+        tasks.removeIf(task -> task.name.equalsIgnoreCase(name));
+        scratch.remove(name.toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /** What the file is given: every task but the graphs held for somebody else. */
+    List<TaskGraph> saved() {
+        return tasks.stream().filter(task -> !isScratch(task)).toList();
+    }
+
+    /** Whether this is a graph the editor holds for somebody else, rather than one of the player's tasks. */
+    public boolean isScratch(TaskGraph task) {
+        return task != null && task.name != null
+                && scratch.contains(task.name.toLowerCase(java.util.Locale.ROOT));
     }
 
     /** The names of {@link #listed()}, for pickers that offer a task to run. */
@@ -292,7 +318,7 @@ public final class TaskStore {
 
     /** The same JSON with no layout, for {@link TaskCode}. Static: it needs no saved tasks. */
     public static String exportCompact(TaskGraph task) {
-        return COMPACT.toJson(task);
+        return TaskJson.compact(task);
     }
 
     /** A snapshot of the whole task list, used for undo/redo. */
@@ -421,7 +447,7 @@ public final class TaskStore {
         try {
             Files.createDirectories(path.getParent());
             try (Writer writer = Files.newBufferedWriter(path)) {
-                GSON.toJson(tasks, writer);
+                GSON.toJson(saved(), writer);
             }
         } catch (IOException e) {
             Constants.LOG.warn("Could not write {}", path, e);
@@ -608,29 +634,6 @@ public final class TaskStore {
             }
         }
         TaskGroup.prune(task);
-    }
-
-    private static TaskCableRoute deserializeCableRoute(JsonElement json,
-                                                        java.lang.reflect.Type type,
-                                                        JsonDeserializationContext context) {
-        TaskCableRoute route = new TaskCableRoute();
-        if (!json.isJsonObject()) {
-            return route;
-        }
-        JsonObject object = json.getAsJsonObject();
-        if (object.has("points") && !object.get("points").isJsonNull()) {
-            List<TaskCableAnchor> points = context.deserialize(object.get("points"),
-                    new TypeToken<List<TaskCableAnchor>>() {}.getType());
-            if (points != null) {
-                route.points.addAll(points);
-            }
-        } else if (object.has("x") && object.has("y")) {
-            TaskCableAnchor legacyPoint = context.deserialize(json, TaskCableAnchor.class);
-            if (legacyPoint != null) {
-                route.points.add(legacyPoint);
-            }
-        }
-        return route;
     }
 
     /** Converts the old single task-level While pointer into the visible fan-out source node. */

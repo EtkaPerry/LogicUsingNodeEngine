@@ -33,6 +33,7 @@ public final class TaskSafety {
             Map.entry("monster_distance", "8"),
             Map.entry("protect_fireballs", "true"),
             Map.entry("build_cover", "true"),
+            Map.entry("fight_back", "true"),
             Map.entry("protect_health", "true"),
             Map.entry("health_compare", "At most"),
             Map.entry("health_value", "8")

@@ -32,6 +32,7 @@ public final class LuneForgeClient {
     private LuneForgeClient() {}
 
     public static void init() {
+        ClientLanguages.install();
         RegisterKeyMappingsEvent.BUS.addListener(LuneForgeClient::onRegisterKeyMappings);
 
         RegisterClientCommandsEvent.BUS.addListener(event ->

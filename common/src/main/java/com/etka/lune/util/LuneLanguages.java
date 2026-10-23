@@ -5,8 +5,6 @@ import com.etka.lune.platform.Services;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.resources.language.LanguageInfo;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
@@ -46,7 +44,30 @@ public final class LuneLanguages {
     /** Where a player's own translations go, one {@code <code>.json} per language. */
     private static final String USER_DIRECTORY = Constants.MOD_ID + "-lang";
 
+    /**
+     * What only the game client can answer, handed in by the client's entry points.
+     *
+     * <p>Behind a hook rather than asked of {@code Minecraft} here, because the text Lune shows is
+     * read on the server too - a Lumi's run keeps the same statuses there - and a dedicated server
+     * has no client classes to ask. Without one, a language is called by its file's name and only
+     * the languages in the jar are found, which is all a server or a test ever needs.</p>
+     */
+    public interface Client {
+        /** The game's own name for a language, such as "English (US)", or null when it has none. */
+        String languageName(String code);
+
+        /** The game's resources, or null while there are none yet. */
+        ResourceManager resources();
+    }
+
+    private static volatile Client client;
+
     private LuneLanguages() {}
+
+    /** Called once by the client's entry point, before any of Lune's text is shown. */
+    public static void install(Client installed) {
+        client = installed;
+    }
 
     /**
      * The folder a player drops their own language files into, or null before the loader is up.
@@ -85,9 +106,9 @@ public final class LuneLanguages {
             return Lang.get("lune.gui.config.language_game_default");
         }
         try {
-            LanguageInfo info = Minecraft.getInstance().getLanguageManager().getLanguage(code);
-            if (info != null) {
-                String name = info.name() + " (" + info.region() + ")";
+            Client game = client;
+            String name = game == null ? null : game.languageName(code);
+            if (name != null) {
                 return userSupplied().contains(code)
                         ? Lang.get("lune.gui.config.language_custom", name) : name;
             }
@@ -206,8 +227,8 @@ public final class LuneLanguages {
 
     private static ResourceManager resourceManager() {
         try {
-            Minecraft minecraft = Minecraft.getInstance();
-            return minecraft == null ? null : minecraft.getResourceManager();
+            Client game = client;
+            return game == null ? null : game.resources();
         } catch (Throwable noClient) {
             return null;
         }

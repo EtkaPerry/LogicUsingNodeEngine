@@ -4,6 +4,7 @@ import com.etka.lune.bot.BotContext;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.phys.Vec3;
 
@@ -180,12 +181,15 @@ public final class SafeStep {
     /**
      * The safest step there is from {@code feet}, nearest {@code desired} first.
      *
-     * <p>Two passes over the same order: the first takes only ground away from a lip, the second
-     * whatever ground there is. {@code turn} starts the order further round, which is how a stall
-     * makes a different direction win.</p>
+     * <p>Three passes over the same order: ground away from a lip; then, on a lip, a level step
+     * before a hop up or down, because a hop beside a hole is where a drift becomes a fall - on the
+     * bastion (2026-10-18) a step away from a Creeper hopped up beside a hole, drifted a block in the
+     * air and came down in the lava; then whatever ground there is. {@code turn} starts the order
+     * further round, which is how a stall makes a different direction win.</p>
      */
     public static Step choose(BlockGetter level, BlockPos feet, Vec3 desired, int turn) {
         List<int[]> order = preference(desired);
+        Step levelOnALip = null;
         Step onALip = null;
         for (int i = 0; i < order.size(); i++) {
             int[] way = order.get(Math.floorMod(i + turn, order.size()));
@@ -196,12 +200,29 @@ public final class SafeStep {
             if (!onTheLip(level, step.landing())) {
                 return step;
             }
+            if (levelOnALip == null && step.rise() == Rise.LEVEL) {
+                levelOnALip = step;
+            }
             if (onALip == null) {
                 onALip = step;
             }
         }
-        return onALip;
+        return levelOnALip != null ? levelOnALip : onALip;
     }
+
+    /**
+     * Where the head looks while a step is taken: along it at eye height, a few blocks on, where a
+     * player on the move looks. The keys walk the step whichever way the head points
+     * ({@link #steer}), so this is the look and nothing else. Aimed at the ground a block away it
+     * tipped the head sixty degrees down for every step, and the user, watching a run
+     * (2026-10-18), saw a bot that looked at its feet.
+     */
+    public static Vec3 lookAlong(Player player, Step step) {
+        return player.getEyePosition().add(step.direction().scale(LOOK_ALONG));
+    }
+
+    /** How far along a step the head looks, in blocks. */
+    private static final double LOOK_ALONG = 4.0;
 
     /** The step one block along {@code (dx, dz)} from {@code feet}, or null when there is no safe one. */
     public static Step along(BlockGetter level, BlockPos feet, int dx, int dz) {

@@ -88,6 +88,11 @@ public class PalettePanel extends AbstractWidget {
     private final DropTarget onDrop;
     /** While a puzzle is open, the only command ids the palette will offer. Null the rest of the time. */
     private List<String> puzzleChoices;
+    /**
+     * While the editor holds a graph some other body runs - a Lumi's - the cards that body can run,
+     * by id. Null while it holds one of the player's tasks, which is offered the player's library.
+     */
+    private Set<String> offered;
     private int scroll;
     private String filter = "";
     /** The tile the pointer picked up, kept until the button comes back up. */
@@ -125,6 +130,21 @@ public class PalettePanel extends AbstractWidget {
         return puzzleChoices != null;
     }
 
+    /**
+     * Offers only the cards another body can run, folders and all, or the player's library again
+     * when given null. Not a puzzle: everything that body can do is here, filed as usual, and the
+     * folder its own cards are in starts open.
+     */
+    public void setOffered(Set<String> cardIds, String openFolder) {
+        offered = cardIds == null ? null : Set.copyOf(cardIds);
+        scroll = 0;
+        if (offered != null && openFolder != null) {
+            expanded.replaceAll((name, ignored) -> false);
+            expanded.put(openFolder, true);
+        }
+        rebuild();
+    }
+
     private void rebuild() {
         sections.clear();
         Map<String, List<Item>> grouped = new LinkedHashMap<>();
@@ -132,7 +152,10 @@ public class PalettePanel extends AbstractWidget {
         // is not installed, because a Deposit to Backpack in a pack with no backpack mod is a card
         // that can do nothing but fail. A task built elsewhere still opens with its card intact -
         // the canvas looks the node up by id, and that does not filter.
-        for (CommandDef def : CommandRegistry.available()) {
+        for (CommandDef def : offered == null ? CommandRegistry.available() : CommandRegistry.all()) {
+            if (offered != null && !offered.contains(def.id())) {
+                continue;
+            }
             grouped.computeIfAbsent(CommandRegistry.categoryFor(def.id()), ignored -> new ArrayList<>())
                     .add(new Command(def.id(), def.name(), def.description()));
         }
@@ -168,6 +191,10 @@ public class PalettePanel extends AbstractWidget {
                     new General(TaskNode.END_COMMAND, Lang.get("lune.gui.palette.end"),
                             Lang.get("lune.gui.palette.consume_pulse_finish_circuit")))
                     : null;
+            if (handWritten != null && offered != null) {
+                handWritten = handWritten.stream()
+                        .filter(item -> offered.contains(itemId(item))).toList();
+            }
             List<Item> groupedItems = handWritten == null ? fromRegistry
                     : withRegistryExtras(handWritten, fromRegistry);
             if (groupedItems != null && !groupedItems.isEmpty()) {
@@ -176,7 +203,10 @@ public class PalettePanel extends AbstractWidget {
         }
 
         List<Item> blueprints = new ArrayList<>();
-        for (var entry : TaskBlueprints.all().entrySet()) {
+        // The player's blueprints are built of the player's cards: none of them is any use to a
+        // body that runs other cards.
+        for (var entry : offered == null ? TaskBlueprints.all().entrySet()
+                : java.util.Set.<Map.Entry<String, com.etka.lune.task.TaskGraph>>of()) {
             List<TaskNode> copies = new ArrayList<>();
             for (TaskNode node : entry.getValue().nodes) {
                 copies.add(node.copy());

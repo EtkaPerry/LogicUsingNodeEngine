@@ -72,3 +72,41 @@ include('neoforge')
 if (target.getProperty('forge_version')) {
     include('forge')
 }
+
+// ---------------------------------------------------------------------------
+// Lumi: Lune's little ones, a mod of its own that requires Lune.
+//
+// It lives in the lumi folder with Lune's own layout - common, fabric, neoforge, forge - and shares
+// this build: the convention plugins, the target file above and Lune's version. Its identity is the
+// lumi.properties file in that folder, set on every :lumi: project over Lune's identity from
+// gradle.properties. ext.set wins over a gradle.properties value; group and description are fields
+// of the project, so they are assigned directly. The distinct group matters: two
+// com.etka.lune:common modules would be one module to Gradle.
+//
+// The lumi folder stays off the public mirror until Lumi ships, and Gradle fails on an included
+// project whose directory is missing - hence the check.
+// ---------------------------------------------------------------------------
+def lumiDir = new File(rootDir, 'lumi')
+if (lumiDir.isDirectory()) {
+    def lumi = new Properties()
+    new File(lumiDir, 'lumi.properties').withInputStream { lumi.load(it) }
+    include('lumi:common')
+    include('lumi:fabric')
+    include('lumi:neoforge')
+    if (target.getProperty('forge_version')) {
+        include('lumi:forge')
+    }
+    gradle.beforeProject { project ->
+        if (project.parent?.path == ':lumi') {
+            lumi.each { key, value ->
+                if (key == 'group') {
+                    project.group = value
+                } else if (key == 'description') {
+                    project.description = value
+                } else {
+                    project.ext.set(key as String, value)
+                }
+            }
+        }
+    }
+}

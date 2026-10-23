@@ -40,6 +40,7 @@ public class LuneFabricClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        ClientLanguages.install();
         KeyMappingHelper.registerKeyMapping(LuneKeybinds.OPEN);
         KeyMappingHelper.registerKeyMapping(LuneKeybinds.PAUSE);
         KeyMappingHelper.registerKeyMapping(LuneKeybinds.TOGGLE_DEBUG);

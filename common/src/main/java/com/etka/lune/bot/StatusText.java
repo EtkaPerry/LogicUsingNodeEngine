@@ -81,6 +81,14 @@ public final class StatusText {
         return key;
     }
 
+    /**
+     * A copy of the arguments, nested statuses included - for whatever has to carry this status
+     * somewhere else whole, such as a Lumi's status on its way from the server to her owner.
+     */
+    public Object[] args() {
+        return args.clone();
+    }
+
     /** The line as the player reads it. */
     public String text() {
         if (key.isEmpty()) {

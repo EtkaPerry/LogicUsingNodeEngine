@@ -1,6 +1,8 @@
 package com.etka.lune.bot.command;
 
+import com.etka.lune.bot.StatusText;
 import com.etka.lune.bot.Task;
+import com.etka.lune.bot.task.FailTask;
 import com.etka.lune.util.Durations;
 import com.etka.lune.util.Lang;
 import com.etka.lune.bot.task.ConditionTask;
@@ -40,17 +42,29 @@ import java.util.function.Function;
 public final class CommandDef {
 
     private final String id;
+    /**
+     * Where the card's lines start: {@code lune.command.<id>} for Lune's own, and a mod built on
+     * Lune's own namespace for one of its cards - {@code lumi.command.follow_me} - so a card's words
+     * live in the language file of the mod that has it.
+     */
+    private final String keyBase;
     private final List<Param<?>> params;
     private final Function<CommandDef, Task> factory;
 
     public CommandDef(String id, List<Param<?>> params,
                       Function<CommandDef, Task> factory) {
+        this(id, "lune.command." + id, params, factory);
+    }
+
+    public CommandDef(String id, String keyBase, List<Param<?>> params,
+                      Function<CommandDef, Task> factory) {
         this.id = id;
+        this.keyBase = keyBase;
         this.params = List.copyOf(params);
         this.factory = factory;
         Set<String> switchesSoFar = new HashSet<>();
         for (Param<?> param : this.params) {
-            param.attachTo(id);
+            param.attachTo(keyBase);
             // A row under a switch that is declared after it, or not at all, could only be shown
             // by asking a question that loops or has no answer. Refused here, where the card is
             // written, rather than discovered as a row that never appears.
@@ -65,17 +79,34 @@ public final class CommandDef {
         }
     }
 
+    /**
+     * A card another body runs - a Lumi's Follow Me - declared so the editor can draw it, explain it
+     * and edit its settings. Lune never runs one for the player: built for the player's run it fails
+     * at once, saying whose card it is.
+     *
+     * @param bodyKey the line naming whose card it is, from the mod's own language file: "a Lumi"
+     */
+    public static CommandDef forBody(String id, String keyBase, List<Param<?>> params, String bodyKey) {
+        return new CommandDef(id, keyBase, params, def -> FailTask.forCard(def,
+                "lune.status.fail.addon_card", new StatusText().set(bodyKey)));
+    }
+
     public String id() {
         return id;
     }
 
+    /** Where this card's lines start; see the field. */
+    public String keyBase() {
+        return keyBase;
+    }
+
     /** The palette name, in the player's language. */
     public String name() {
-        return Lang.get("lune.command." + id + ".name");
+        return Lang.get(keyBase + ".name");
     }
 
     public String description() {
-        return Lang.get("lune.command." + id + ".desc");
+        return Lang.get(keyBase + ".desc");
     }
 
     /**
@@ -158,7 +189,10 @@ public final class CommandDef {
             case "observer" -> observerDescription();
             case "end" -> Lang.get("lune.card.lune_consumes_incoming_pulse_finishes");
             case "button" -> Lang.get("lune.card.press_button_control_send_one_pulse");
-            default -> actionDescription(lowerFirst(description()));
+            // A card of a mod built on Lune is somebody else's to do: "Lune will she keeps near her
+            // owner" was Follow Me's hover. Its description is a whole sentence of its own.
+            default -> keyBase.startsWith("lune.") ? actionDescription(lowerFirst(description()))
+                    : Lang.get("lune.card.addon_gives_success_when_action_complete", description());
         };
     }
 

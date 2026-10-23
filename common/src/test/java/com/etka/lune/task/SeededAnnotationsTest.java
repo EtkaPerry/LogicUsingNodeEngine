@@ -17,7 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The notes and frames the starter jobs explain themselves with.
+ * The notes and frames the starter jobs explain themselves with, and the one note each fast task
+ * carries ({@link FastTasks}), which is what the picker shows as its description.
  *
  * <p>They are the part of a job a player reads, so the checks here are the ones a reader would
  * notice: a note in the wrong language, a note whose last lines are cut off by its own border, a
@@ -43,11 +44,21 @@ class SeededAnnotationsTest {
         Lang.select(LuneLanguages.GAME_DEFAULT);
     }
 
+    /** Every job Lune ships: the starter shelf, then the fast tasks. */
+    private static List<TaskGraph> everyShippedJob() {
+        List<TaskGraph> jobs = new ArrayList<>(DefaultTasks.create());
+        jobs.addAll(FastTasks.create());
+        return jobs;
+    }
+
     @Test
     void everyNoteAndFrameIsTranslatedAndItsEnglishIsTheEnglishLine() {
-        for (TaskGraph task : DefaultTasks.create()) {
+        for (TaskGraph task : everyShippedJob()) {
             assertFalse(task.notes.isEmpty(), task.name + " explains nothing");
-            assertFalse(task.groups.isEmpty(), task.name + " has no frames");
+            // A fast task is a handful of cards on one lane, with nothing to name in sections.
+            if (DefaultTasks.SEEDED_NAMES.containsValue(task.seededId)) {
+                assertFalse(task.groups.isEmpty(), task.name + " has no frames");
+            }
             for (TaskNote note : task.notes) {
                 assertEquals(task.seededId + "." + note.id, note.seededId,
                         task.name + ": note " + note.id + " is not keyed by its job");
@@ -79,7 +90,7 @@ class SeededAnnotationsTest {
         List<String> overflowing = new ArrayList<>();
         for (String code : List.of("en_us", "tr_tr")) {
             Lang.select(code);
-            for (TaskGraph task : DefaultTasks.create()) {
+            for (TaskGraph task : everyShippedJob()) {
                 for (TaskNote note : task.notes) {
                     int perLine = (note.width - TEXT_ROOM) / GLYPH;
                     int lines = (note.height - TEXT_TOP - TEXT_BOTTOM) / LINE_HEIGHT;
@@ -98,7 +109,7 @@ class SeededAnnotationsTest {
     /** A note is read beside the cards, never on top of them; a frame never covers another. */
     @Test
     void notesAndFramesNeverSitOnEachOtherOrOnACard() {
-        for (TaskGraph task : DefaultTasks.create()) {
+        for (TaskGraph task : everyShippedJob()) {
             List<Box> notes = new ArrayList<>();
             for (TaskNote note : task.notes) {
                 notes.add(new Box("note " + note.id, note.x, note.y, note.right(), note.bottom()));
@@ -147,7 +158,7 @@ class SeededAnnotationsTest {
      */
     @Test
     void everyJobOpensOnItsIntroduction() {
-        for (TaskGraph task : DefaultTasks.create()) {
+        for (TaskGraph task : everyShippedJob()) {
             TaskNote intro = task.notes.stream().filter(note -> note.id.equals("intro"))
                     .findFirst().orElse(null);
             assertNotNull(intro, task.name + " has no introduction");
@@ -189,7 +200,7 @@ class SeededAnnotationsTest {
     @Test
     void aFrameIdMeansTheSameTitleInEveryJob() {
         java.util.Map<String, String> titles = new java.util.HashMap<>();
-        for (TaskGraph task : DefaultTasks.create()) {
+        for (TaskGraph task : everyShippedJob()) {
             for (TaskGroup group : task.groups) {
                 String earlier = titles.putIfAbsent(group.seededId, group.title);
                 if (earlier != null) {

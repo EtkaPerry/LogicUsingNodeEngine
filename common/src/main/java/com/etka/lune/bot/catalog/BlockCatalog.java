@@ -21,6 +21,8 @@ public final class BlockCatalog {
 
     private static List<Block> all;
     private static List<Block> ores;
+    /** {@link #ores()} again, to be asked of every block broken. */
+    private static java.util.Set<Block> oreSet;
     private static List<Block> crops;
     private static List<Block> logs;
     private static List<Block> planks;
@@ -41,6 +43,18 @@ public final class BlockCatalog {
                     .toList();
         }
         return ores;
+    }
+
+    /**
+     * Whether a block is one of {@link #ores()}: what the Mine card's picker, the storage cards'
+     * Ores filter and the run's ore count all mean by an ore. Having a depth in
+     * {@link com.etka.lune.bot.knowledge.OreKnowledge} does not make one - deepslate has a depth.
+     */
+    public static boolean isOre(Block block) {
+        if (oreSet == null) {
+            oreSet = java.util.Set.copyOf(ores());
+        }
+        return block != null && oreSet.contains(block);
     }
 
     /**

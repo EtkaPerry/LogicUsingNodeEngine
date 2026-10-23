@@ -23,6 +23,10 @@ import java.util.Set;
  * <p>
  * The data is vanilla 1.21 by default. {@link com.etka.lune.config.BotConfig#oreProfiles} can
  * override or add to it at runtime.
+ * <p>
+ * It answers "how deep is this?", which is a question about more than ores: deepslate has an
+ * entry, as the layer it is. So having a profile does not make a block an ore - the ore count asks
+ * {@link com.etka.lune.bot.catalog.BlockCatalog#isOre} for that.
  */
 public final class OreKnowledge {
 
@@ -46,23 +50,33 @@ public final class OreKnowledge {
         if (targets == null || targets.isEmpty()) {
             return OptionalInt.empty();
         }
-
         Level level = ctx.level;
         BlockPos pos = ctx.player.blockPosition();
-        String dimKey = dimensionId(level);
+        return bestYFor(targets, dimensionId(level), () -> biomeId(level, pos), pos.getY());
+    }
 
+    /**
+     * The same answer from the three facts it rests on, so it can be asked without a world: which
+     * world the bot is in, the biome under it (looked up only if a profile names one), and its Y.
+     * Of several known targets, the one whose best level is nearest wins.
+     */
+    static OptionalInt bestYFor(Set<Block> targets, String dimension,
+                                java.util.function.Supplier<String> biome, int y) {
+        if (targets == null || targets.isEmpty()) {
+            return OptionalInt.empty();
+        }
         int bestY = Integer.MIN_VALUE;
         boolean any = false;
 
         for (Block block : targets) {
             for (OreProfile profile : uniqueProfiles(block)) {
-                if (profile.dimension().isPresent() && !dimKey.equals(profile.dimension().get())) {
+                if (profile.dimension().isPresent() && !dimension.equals(profile.dimension().get())) {
                     continue;
                 }
-                if (profile.biome().isPresent() && !biomeId(level, pos).equals(profile.biome().get())) {
+                if (profile.biome().isPresent() && !biome.get().equals(profile.biome().get())) {
                     continue;
                 }
-                if (!any || closestTo(bestY, profile.bestY(), pos.getY()) == profile.bestY()) {
+                if (!any || closestTo(bestY, profile.bestY(), y) == profile.bestY()) {
                     bestY = profile.bestY();
                     any = true;
                 }
@@ -81,11 +95,17 @@ public final class OreKnowledge {
      * filter as a destination turns any request for a block this table has never heard of into a
      * staircase to bedrock. That is not a hypothetical: a job collecting plain deepslate from a
      * mountain top walked away from the deposit and dug two hundred blocks down, because deepslate
-     * itself is not an ore and has no profile here.
+     * itself is not an ore and had no profile here.
      *
      * <p>Staying level is the honest answer to "where is this?" when nothing is known: the prospect
      * then branches horizontally to expose what is around, which is what a player does with an
      * unfamiliar block, and the caller's own y-bounds still exclude anything out of range.
+     *
+     * <p>Deepslate has a profile now, and the same request aims just under Y 0, where it begins,
+     * rather than at the floor: on the surface, digging sideways could never reach it. What stops a
+     * staircase from running on is the caller's own budget - a Mine card's is eight segments of six
+     * steps, or two minutes - and a task that has further to go runs its card again. The fallback
+     * still answers for every block the table has never heard of.</p>
      */
     public static int prospectYFor(BotContext ctx, Set<Block> targets) {
         return bestYFor(ctx, targets).orElse(ctx.player.blockPosition().getY());
@@ -255,6 +275,15 @@ public final class OreKnowledge {
         put("Netherite", Set.of(Blocks.ANCIENT_DEBRIS), 15, 8, 119,
                 Optional.empty(), Optional.of("minecraft:the_nether"), false,
                 "lune.ore.found_only_nether_beds_or_tnt_help");
+
+        // Deepslate - no ore, but a layer: the stone everywhere below Y=0, thinning in from Y=8.
+        // Aimed a few blocks under the transition, so a branch dug there is deepslate all round
+        // and the lava lakes near the floor stay far below. Named to the Overworld because no
+        // other world has it, and a prospect aiming for Y=0 in the Nether digs into its lava sea.
+        // A profile is not what makes a block an ore: that is BlockCatalog.isOre.
+        put("Deepslate", Set.of(Blocks.DEEPSLATE), -4, -64, 8,
+                Optional.empty(), Optional.of("minecraft:overworld"), false,
+                "lune.ore.stone_below_y_0_only_overworld");
     }
 
     private static void put(String name, Set<Block> blocks, int bestY, int yMin, int yMax,

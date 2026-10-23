@@ -3,6 +3,7 @@ package com.etka.lune.bot;
 import com.etka.lune.bot.learning.LearningContext;
 import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.learning.TaskLearning;
+import com.etka.lune.task.runner.Step;
 
 import java.util.List;
 import java.util.Map;
@@ -10,13 +11,18 @@ import java.util.Map;
 /**
  * One unit of work the bot performs. Tasks are ticked once per client tick and drive the player
  * only through {@link com.etka.lune.bot.input.BotInput} and the vanilla interaction calls.
+ *
+ * <p>A task is a {@link Step} handed the player's context, which is all the graph runner needs of
+ * it; the lifecycle doors below are where the player's run adds what only it has - the learner
+ * and the profiler.</p>
  */
-public interface Task {
+public interface Task extends Step<BotContext> {
 
     /**
      * Shared lifecycle entry point. All callers, including parent tasks, use this rather than
      * invoking {@link #onStart(BotContext)} directly so nested jobs receive the same learner.
      */
+    @Override
     default void start(BotContext ctx) {
         // A caller that rebuilds/restarts an instance must close what the previous run learned
         // before onStart resets its counters.
@@ -26,6 +32,7 @@ public interface Task {
     }
 
     /** Shared tick entry point that measures active game ticks and captures the terminal result. */
+    @Override
     default TaskStatus tick(BotContext ctx) {
         TaskLearning.beforeTick(this, ctx);
         // Measured here rather than at each call site: every task, monitor and nested child goes
@@ -43,6 +50,7 @@ public interface Task {
     }
 
     /** Shared stop entry point; cancellation becomes an incomplete skill episode. */
+    @Override
     default void stop(BotContext ctx) {
         TaskLearning.stop(this, ctx);
         onStop(ctx);
@@ -83,6 +91,7 @@ public interface Task {
      * them going through the other's answer. Tasks override this one; {@link #status()} and
      * {@link #statusSignal()} follow from it.</p>
      */
+    @Override
     default StatusText statusLine() {
         return StatusText.EMPTY;
     }
@@ -101,6 +110,7 @@ public interface Task {
     }
 
     /** A bounded amount Lune can render as a progress bar, or {@code null} for open-ended work. */
+    @Override
     default TaskProgress progress() {
         return null;
     }
@@ -233,6 +243,7 @@ public interface Task {
      * For task looping: did the last run of this task actually do useful work? A step that
      * immediately finds nothing should not advance through the task when set to "forever".
      */
+    @Override
     default boolean madeProgress() {
         return true;
     }
@@ -277,6 +288,7 @@ public interface Task {
      * the controls - a check, a timer, a sound - says false, so its tick does not freeze somebody
      * who is walking; a card waiting for its work to come into view says false while it waits.</p>
      */
+    @Override
     default boolean holdsControls() {
         return true;
     }

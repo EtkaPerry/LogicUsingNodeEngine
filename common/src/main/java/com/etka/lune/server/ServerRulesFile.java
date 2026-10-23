@@ -21,11 +21,14 @@ import java.util.Objects;
 /**
  * {@code config/lune-server.json}: where a server keeps its rules for Lune.
  *
- * <p>Two lines an owner can read and edit without the game running:</p>
+ * <p>Two lines an owner can read and edit without the game running, and one more for each rule a
+ * mod built on Lune keeps here ({@link AddonRules}):</p>
  * <pre>
  * {
  *   "run": "operators",
- *   "cheats": "operators"
+ *   "cheats": "operators",
+ *   "lumi:command": "everyone",
+ *   "lumi:per_player": 3
  * }
  * </pre>
  *
@@ -74,7 +77,16 @@ public final class ServerRulesFile {
             return defaults;
         }
         ServerRules read = read(defaults);
-        return read == null ? defaults : read;
+        if (read == null) {
+            return defaults;
+        }
+        if (missesAddonRules()) {
+            // Written before the add-on was installed: its rules go in now, at where they start,
+            // so an owner finds them beside the others instead of having to know their names.
+            save(read);
+            Constants.LOG.info("Added the rules of the mods built on Lune to {}", path);
+        }
+        return read;
     }
 
     /**
@@ -91,9 +103,14 @@ public final class ServerRulesFile {
         return read == null || read.equals(current) ? null : read;
     }
 
-    /** Writes the rules down. Returns false, having said why in the log, when it could not. */
+    /**
+     * Writes the rules down. Returns false, having said why in the log, when it could not.
+     *
+     * <p>Into what the file already holds, so a line Lune does not know - a rule of a mod that has
+     * been taken out for now - is still there when it comes back.</p>
+     */
     public boolean save(ServerRules rules) {
-        JsonObject json = new JsonObject();
+        JsonObject json = existing();
         rules.write(json);
         try {
             Path parent = path.getParent();
@@ -127,10 +144,13 @@ public final class ServerRulesFile {
             for (ServerRules.Problem problem : problems) {
                 if (problem.found() == null) {
                     Constants.LOG.warn("{}: \"{}\" is missing; using \"{}\"", path, problem.field(),
-                            problem.used().id());
+                            problem.usedValue());
+                } else if (problem.used() == null) {
+                    Constants.LOG.warn("{}: \"{}\" is {}, which that rule does not accept; using \"{}\"",
+                            path, problem.field(), problem.found(), problem.usedValue());
                 } else {
                     Constants.LOG.warn("{}: \"{}\" is {}, which is not everyone, operators or nobody;"
-                            + " using \"{}\"", path, problem.field(), problem.found(), problem.used().id());
+                            + " using \"{}\"", path, problem.field(), problem.found(), problem.usedValue());
                 }
             }
             return rules;
@@ -138,6 +158,30 @@ public final class ServerRulesFile {
             Constants.LOG.warn("Could not read Lune's server rules from {}; the rules in force stay as"
                     + " they are: {}", path, e.toString());
             return null;
+        }
+    }
+
+    /** Whether the file lacks a line for any add-on rule registered now. */
+    private boolean missesAddonRules() {
+        JsonObject json = existing();
+        for (AddonRules.Rule rule : AddonRules.all()) {
+            if (!json.has(rule.id())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The object the file holds, or an empty one when it holds none that can be read. */
+    private JsonObject existing() {
+        if (!exists()) {
+            return new JsonObject();
+        }
+        try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            JsonElement root = JsonParser.parseReader(reader);
+            return root != null && root.isJsonObject() ? root.getAsJsonObject() : new JsonObject();
+        } catch (IOException | RuntimeException unreadable) {
+            return new JsonObject();
         }
     }
 

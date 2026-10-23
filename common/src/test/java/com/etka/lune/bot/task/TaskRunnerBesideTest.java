@@ -6,6 +6,7 @@ import com.etka.lune.bot.Task;
 import com.etka.lune.bot.TaskStatus;
 import com.etka.lune.task.TaskGraph;
 import com.etka.lune.task.TaskNode;
+import com.etka.lune.task.runner.GraphRun;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -122,7 +123,7 @@ class TaskRunnerBesideTest {
 
     private static void set(Object target, String name, Object value)
             throws ReflectiveOperationException {
-        Field field = TaskRunner.class.getDeclaredField(name);
+        Field field = GraphRun.class.getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
     }

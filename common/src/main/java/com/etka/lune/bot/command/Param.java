@@ -36,8 +36,11 @@ public abstract class Param<T> {
     }
 
     private final String id;
-    /** The command this parameter belongs to, which is half of its translation key. */
-    private String owner = "";
+    /**
+     * Where the lines of the card this parameter belongs to start - {@code lune.command.mine} - which
+     * is half of its translation key.
+     */
+    private String keyBase = "";
     /** The switch this row sits under, or null; see {@link #under}. */
     private String parentSwitch;
     protected T value;
@@ -73,8 +76,8 @@ public abstract class Param<T> {
      * palette have a "radius" - so the key needs both halves, and only the command knows
      * which one it is.</p>
      */
-    void attachTo(String owner) {
-        this.owner = owner == null ? "" : owner;
+    void attachTo(String keyBase) {
+        this.keyBase = keyBase == null ? "" : keyBase;
     }
 
     public String id() {
@@ -99,7 +102,7 @@ public abstract class Param<T> {
      * means something else by it.</p>
      */
     protected String text(String suffix) {
-        String own = "lune.command." + owner + ".param." + id + suffix;
+        String own = keyBase + ".param." + id + suffix;
         return Lang.has(own) ? Lang.get(own) : Lang.get("lune.param." + id + suffix);
     }
 
@@ -422,7 +425,15 @@ public abstract class Param<T> {
         private final List<net.minecraft.tags.TagKey<net.minecraft.world.level.block.Block>> tagCandidates;
 
         public BlockSet(String id, List<Block> candidates, Set<Block> initial) {
-            super(id, BlockTarget.ofBlocks(new LinkedHashSet<>(initial)));
+            this(id, candidates, BlockTarget.ofBlocks(new LinkedHashSet<>(initial)));
+        }
+
+        /**
+         * A block list that starts from tags too: short to store, which a Lumi's card needs - her
+         * server refuses a setting longer than it can carry - and it follows what a mod adds to them.
+         */
+        public BlockSet(String id, List<Block> candidates, BlockTarget initial) {
+            super(id, initial);
             this.candidates = List.copyOf(candidates);
             this.tagCandidates = BuiltInRegistries.BLOCK.getTags()
                     .flatMap(holderSet -> holderSet.unwrapKey().stream())

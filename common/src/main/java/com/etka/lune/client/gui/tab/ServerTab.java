@@ -5,6 +5,7 @@ import com.etka.lune.client.gui.Accessibility;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.LuneTab;
 import com.etka.lune.net.RulesPayload;
+import com.etka.lune.server.AddonRules;
 import com.etka.lune.server.ServerRules;
 import com.etka.lune.util.Lang;
 import net.minecraft.client.Minecraft;
@@ -28,9 +29,10 @@ import java.util.function.ToIntFunction;
  * of a world opened to LAN, can press anything, and nothing changes here directly: a press asks the
  * server, and the tab shows what the server answers.</p>
  *
- * <p>Three cards in the About tab's style: where the player stands, the two rules, and who has
- * Lune. The chosen answer to a rule is underlined in the accent, as the Main tab marks its chosen
- * statistics view.</p>
+ * <p>Three cards in the About tab's style: where the player stands, the rules, and who has Lune.
+ * The rules are Lune's two and then any that a mod built on Lune keeps beside them
+ * ({@link AddonRules}), each a row of answers. The chosen answer to a rule is underlined in the
+ * accent, as the Main tab marks its chosen statistics view.</p>
  */
 public class ServerTab extends LuneTab {
 
@@ -50,8 +52,8 @@ public class ServerTab extends LuneTab {
     static final int RULE_H = LINE + BUTTON_H + 12;
     /** The smallest status card that still holds its heading and three lines. */
     static final int STATUS_H = BODY_TOP + LINE * 3 + PAD;
-    /** Both rules, and two lines of footnote under them. */
-    static final int RULES_H = BODY_TOP + RULE_H * 2 + LINE * 2 + PAD;
+    /** Both of Lune's rules, and two lines of footnote under them. */
+    static final int RULES_H = rulesHeight(2);
 
     private static final int PANEL_HEADER = 0xD0222D3A;
     /** The order the answers are offered in, from the most open to the most closed. */
@@ -73,14 +75,25 @@ public class ServerTab extends LuneTab {
         }
     }
 
+    /** The rules card's height for this many rules, with the footnote under them. */
+    static int rulesHeight(int rules) {
+        return BODY_TOP + RULE_H * rules + LINE * 2 + PAD;
+    }
+
     /**
      * Where the cards and the rule buttons go, for a content area. Two columns - where the player
      * stands and who has Lune on the left, the rules on the right - and one column on a panel too
      * narrow for two. Free of Minecraft types, so the layout is tested without a client.
+     *
+     * @param ruleCount the rows of answers in the rules card: Lune's two, and the add-ons' after them
      */
-    record Frame(Card status, Card rules, Card players) {
+    record Frame(Card status, Card rules, Card players, int ruleCount) {
 
         static Frame of(int left, int top, int right, int bottom) {
+            return of(left, top, right, bottom, 2);
+        }
+
+        static Frame of(int left, int top, int right, int bottom, int ruleCount) {
             int areaWidth = right - left;
             int width = Math.min(MAX_WIDTH, Math.max(80, areaWidth - MARGIN * 2));
             int x = left + Math.max(MARGIN, (areaWidth - width) / 2);
@@ -88,16 +101,17 @@ public class ServerTab extends LuneTab {
             int height = Math.max(80, bottom - top - MARGIN * 2);
             if (width < STACK_WIDTH) {
                 Card status = new Card(x, y, width, STATUS_H);
-                Card rules = new Card(x, status.bottom() + GAP, width, RULES_H);
+                Card rules = new Card(x, status.bottom() + GAP, width, rulesHeight(ruleCount));
                 int playersTop = rules.bottom() + GAP;
-                return new Frame(status, rules, new Card(x, playersTop, width, Math.max(0, y + height - playersTop)));
+                return new Frame(status, rules, new Card(x, playersTop, width, Math.max(0, y + height - playersTop)),
+                        ruleCount);
             }
             int column = (width - GAP) / 2;
             Card status = new Card(x, y, column, Math.min(height, Math.max(STATUS_H, (height - GAP) / 2)));
             int playersTop = status.bottom() + GAP;
             Card players = new Card(x, playersTop, column, Math.max(0, y + height - playersTop));
             Card rules = new Card(x + column + GAP, y, width - column - GAP, height);
-            return new Frame(status, rules, players);
+            return new Frame(status, rules, players, ruleCount);
         }
 
         /** The top of a rule's label; its buttons sit one line under it. */
@@ -110,21 +124,38 @@ public class ServerTab extends LuneTab {
         }
 
         int footnoteY() {
-            return ruleY(2);
+            return ruleY(ruleCount);
         }
 
         int buttonWidth() {
-            return Math.max(20, (rules.width() - PAD * 2 - BUTTON_GAP * (CHOICES.length - 1)) / CHOICES.length);
+            return buttonWidth(CHOICES.length);
+        }
+
+        /** A button's width in a row of {@code count}: a limit offers more answers than three. */
+        int buttonWidth(int count) {
+            return Math.max(20, (rules.width() - PAD * 2 - BUTTON_GAP * (count - 1)) / count);
         }
 
         int buttonX(int index) {
-            return rules.x() + PAD + index * (buttonWidth() + BUTTON_GAP);
+            return buttonX(index, CHOICES.length);
+        }
+
+        int buttonX(int index, int count) {
+            return rules.x() + PAD + index * (buttonWidth(count) + BUTTON_GAP);
         }
     }
+
+    /**
+     * One add-on rule's row: its buttons, and the value each one asks for - a who-rule's three
+     * words, or a limit's presets.
+     */
+    private record AddonRow(AddonRules.Rule rule, List<Button> buttons, List<String> values) {}
 
     /** One row of answers per rule: who may run tasks, then who may use the omniscient modes. */
     private final List<Button> runButtons = new ArrayList<>();
     private final List<Button> cheatButtons = new ArrayList<>();
+    /** The add-on rules, under Lune's two; registered before any panel opens, so read once here. */
+    private final List<AddonRow> addonRows = new ArrayList<>();
 
     public ServerTab() {
         super(Component.literal(Lang.get("lune.gui.server.title")));
@@ -136,7 +167,41 @@ public class ServerTab extends LuneTab {
             cheatButtons.add(add(Button.builder(Component.literal(label(who)), button -> choose(false, who))
                     .size(60, BUTTON_H).build()));
         }
+        for (AddonRules.Rule rule : AddonRules.all()) {
+            List<String> values = new ArrayList<>();
+            if (rule.kind() == AddonRules.Kind.WHO) {
+                for (ServerRules.Who who : CHOICES) {
+                    values.add(who.id());
+                }
+            } else {
+                for (int preset : rule.presets()) {
+                    values.add(String.valueOf(preset));
+                }
+            }
+            List<Button> buttons = new ArrayList<>();
+            for (String value : values) {
+                buttons.add(add(Button.builder(Component.literal(addonLabel(rule, value)),
+                        button -> chooseAddon(rule, value)).size(60, BUTTON_H).build()));
+            }
+            addonRows.add(new AddonRow(rule, buttons, values));
+        }
         sync();
+    }
+
+    /** What an answer to an add-on rule says on its button. */
+    private static String addonLabel(AddonRules.Rule rule, String value) {
+        if (rule.kind() == AddonRules.Kind.WHO) {
+            return label(ServerRules.Who.byId(value));
+        }
+        return "0".equals(value) ? Lang.get("lune.suggestion.limit") : value;
+    }
+
+    /** Asks the server for one answer to one add-on rule, as {@link #choose} does for Lune's. */
+    private static void chooseAddon(AddonRules.Rule rule, String value) {
+        RulesPayload heard = ServerAccess.heard();
+        if (heard != null && heard.mayEdit() && !value.equals(heard.rules().addons().get(rule.id()))) {
+            ServerAccess.proposeAddon(rule.id(), value);
+        }
     }
 
     private static String label(ServerRules.Who who) {
@@ -166,7 +231,11 @@ public class ServerTab extends LuneTab {
     private void sync() {
         RulesPayload heard = shownRules();
         boolean editable = heard != null && heard.mayEdit();
-        for (List<Button> row : List.of(runButtons, cheatButtons)) {
+        List<List<Button>> rows = new ArrayList<>(List.of(runButtons, cheatButtons));
+        for (AddonRow row : addonRows) {
+            rows.add(row.buttons());
+        }
+        for (List<Button> row : rows) {
             for (Button button : row) {
                 button.visible = heard != null;
                 button.active = editable;
@@ -189,21 +258,31 @@ public class ServerTab extends LuneTab {
     @Override
     protected void layout(ScreenRectangle area) {
         sync();
-        Frame frame = Frame.of(area.left(), area.top(), area.right(), area.bottom());
+        Frame frame = frame();
         for (int index = 0; index < CHOICES.length; index++) {
-            place(runButtons.get(index), frame, 0, index);
-            place(cheatButtons.get(index), frame, 1, index);
+            place(runButtons.get(index), frame, 0, index, CHOICES.length);
+            place(cheatButtons.get(index), frame, 1, index, CHOICES.length);
+        }
+        for (int row = 0; row < addonRows.size(); row++) {
+            List<Button> buttons = addonRows.get(row).buttons();
+            for (int index = 0; index < buttons.size(); index++) {
+                place(buttons.get(index), frame, 2 + row, index, buttons.size());
+            }
         }
     }
 
-    private static void place(Button button, Frame frame, int rule, int index) {
-        button.setPosition(frame.buttonX(index), frame.buttonsY(rule));
-        button.setSize(frame.buttonWidth(), BUTTON_H);
+    private Frame frame() {
+        return Frame.of(area.left(), area.top(), area.right(), area.bottom(), 2 + addonRows.size());
+    }
+
+    private static void place(Button button, Frame frame, int rule, int index, int count) {
+        button.setPosition(frame.buttonX(index, count), frame.buttonsY(rule));
+        button.setSize(frame.buttonWidth(count), BUTTON_H);
     }
 
     @Override
     public void extractTabBackground(GuiGraphicsExtractor extractor) {
-        Frame frame = Frame.of(area.left(), area.top(), area.right(), area.bottom());
+        Frame frame = frame();
         for (Card card : List.of(frame.status(), frame.rules(), frame.players())) {
             if (card.height() > TITLE_H) {
                 LuneScreen.panel(extractor, card.x(), card.y(), card.width(), card.height());
@@ -214,11 +293,14 @@ public class ServerTab extends LuneTab {
     @Override
     public void extractTabRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY,
                                       float partialTick) {
-        Frame frame = Frame.of(area.left(), area.top(), area.right(), area.bottom());
+        Frame frame = frame();
         ServerAccess.Standing standing = ServerAccess.standing(Minecraft.getInstance());
         RulesPayload heard = shownRules();
         drawStatus(extractor, frame.status(), standing, ServerAccess.heard());
         drawRules(extractor, frame, standing, heard);
+        if (heard != null) {
+            drawAddonRules(extractor, frame, heard);
+        }
         if (frame.players().height() > TITLE_H) {
             drawPlayers(extractor, frame.players(), standing, heard);
         }
@@ -277,9 +359,33 @@ public class ServerTab extends LuneTab {
 
     /** The accent bar under a rule's current answer, the way the Main tab marks its chosen view. */
     private static void underline(GuiGraphicsExtractor extractor, Frame frame, int rule, ServerRules.Who chosen) {
-        int x = frame.buttonX(chosen.ordinal());
+        underline(extractor, frame, rule, chosen.ordinal(), CHOICES.length);
+    }
+
+    private static void underline(GuiGraphicsExtractor extractor, Frame frame, int rule, int index, int count) {
+        int x = frame.buttonX(index, count);
         int y = frame.buttonsY(rule) + BUTTON_H - 1;
-        extractor.fill(x, y, x + frame.buttonWidth(), y + 2, LuneScreen.ACCENT);
+        extractor.fill(x, y, x + frame.buttonWidth(count), y + 2, LuneScreen.ACCENT);
+    }
+
+    /**
+     * The add-on rules under Lune's, each named by its add-on. A limit whose number is none of the
+     * buttons - an owner typed it into the file - says it beside the name, and no button is marked.
+     */
+    private void drawAddonRules(GuiGraphicsExtractor extractor, Frame frame, RulesPayload heard) {
+        for (int row = 0; row < addonRows.size(); row++) {
+            AddonRow addon = addonRows.get(row);
+            String value = heard.rules().addons().get(addon.rule().id());
+            int chosen = value == null ? -1 : addon.values().indexOf(value);
+            String name = Lang.get(addon.rule().labelKey());
+            if (chosen < 0 && value != null) {
+                name = Lang.get("lune.gui.server.limit.custom", name, value);
+            }
+            line(extractor, frame.rules(), frame.ruleY(2 + row), name, LuneScreen.TEXT);
+            if (chosen >= 0) {
+                underline(extractor, frame, 2 + row, chosen, addon.buttons().size());
+            }
+        }
     }
 
     /** Who has Lune here, for those who may change the rules; for anybody else, why they cannot see. */

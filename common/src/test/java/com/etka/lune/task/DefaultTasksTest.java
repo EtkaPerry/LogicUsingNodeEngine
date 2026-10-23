@@ -43,7 +43,10 @@ class DefaultTasksTest {
             DefaultTasks.SMELTERY, DefaultTasks.NIGHT_WATCH, DefaultTasks.STUFF_BACK,
             DefaultTasks.FIND_VILLAGE, DefaultTasks.CHERRY_TIMBER);
 
-    /** Quoted in the README's table of what ships, so the doc goes stale loudly rather than quietly. */
+    /**
+     * Every job's size, pinned so a job changes only on purpose. A restore never touches a job the
+     * player already has, so a rework meant to reach them needs a new id and a new name as well.
+     */
     private static final List<Integer> EXPECTED_SIZES =
             List.of(12, 16, 10, 8, 27, 25, 34, 17, 18, 11, 56, 79, 52, 13, 16);
 
@@ -59,7 +62,7 @@ class DefaultTasksTest {
         assertEquals(CHORES, names.subList(4, 9));
         assertEquals(EXPEDITIONS, names.subList(9, 15));
         assertEquals(EXPECTED_SIZES, tasks.stream().map(task -> task.nodes.size()).toList(),
-                "a job changed size - update the README table and this list together");
+                "a job changed size - reworked? give it a new id and name; then update this list");
         for (int i = 0; i < tasks.size(); i++) {
             TaskGraph task = tasks.get(i);
             assertTrue(task.name.startsWith((i + 1) + ". "),

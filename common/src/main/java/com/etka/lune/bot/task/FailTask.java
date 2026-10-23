@@ -37,6 +37,13 @@ public final class FailTask implements Task {
         return task;
     }
 
+    /** {@link #forCommand} for any card, its title read from wherever the card keeps its lines. */
+    public static FailTask forCard(com.etka.lune.bot.command.CommandDef card, String reasonKey, Object... args) {
+        FailTask task = new FailTask(card.id(), reasonKey, args);
+        task.nameKey = card.keyBase() + ".name";
+        return task;
+    }
+
     /** For a command that exists in the registry but has no behaviour written yet. */
     public static FailTask notImplemented(String commandName) {
         return new FailTask(commandName, "lune.status.fail.not_implemented");

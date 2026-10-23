@@ -138,9 +138,12 @@ class EnderEyePolicyTest {
 
     @Test
     void aWatchCutShortIsNotReadAsAStop() {
+        // Six reports is four blocks of climb, which only a far eye does: read as far, never as a
+        // stop. It used to be unreadable, when the only way a watch was cut short was the watch
+        // itself ending; now it is the eye going out of sight, and a line that long is still a line.
         List<Vec3> path = fly(0.5, 70.9, 0.5, 2000, 0);
         EnderEyePolicy.Reading reading = EnderEyePolicy.read(0.5, 70.9, 0.5, path.subList(0, 6));
-        assertEquals(EnderEyePolicy.Kind.UNREADABLE, reading.kind());
+        assertEquals(EnderEyePolicy.Kind.FAR, reading.kind());
     }
 
     @Test
@@ -163,5 +166,48 @@ class EnderEyePolicyTest {
         double[] ahead = reading.pointAlong(100.0);
         assertNotNull(ahead);
         assertTrue(ahead[0] > 90.0, "walking on follows the line");
+    }
+
+    /** What the eyes got of a flight: the reports within so far of the hand, before it was lost. */
+    private static List<Vec3> seenWithin(List<Vec3> path, double x, double z, double reach) {
+        return path.stream().filter(point -> Math.hypot(point.x - x, point.z - z) <= reach).toList();
+    }
+
+    @Test
+    void aDiveSeenOnlyGoingInStillNamesTheCorner() {
+        // Thrown eight blocks from the corner at (16, 32), standing on ground at 70: the eye dives
+        // from its first tick and is lost to sight once it is under the feet, well before it
+        // arrives. What was seen of it is a line through the corner, going down.
+        double x = 16.0 - 7.3;
+        double z = 32.0 + 3.1;
+        List<Vec3> whole = fly(x, 70.9, z, 16, 32);
+        List<Vec3> seen = whole.stream().filter(point -> point.y > 69.5).toList();
+        assertTrue(seen.size() >= 3 && seen.size() < whole.size(), "seen " + seen.size() + " of " + whole.size());
+        EnderEyePolicy.Reading reading = EnderEyePolicy.read(x, 70.9, z, seen);
+        assertEquals(EnderEyePolicy.Kind.NEAR, reading.kind());
+        assertEquals(16, reading.nearX());
+        assertEquals(32, reading.nearZ());
+    }
+
+    @Test
+    void aClimbSeenForAFewBlocksIsReadAsFar() {
+        // Lost behind a tree four blocks out: a far eye climbs from its first tick, so what was
+        // seen says it was far and which way, and the corner is among what fits that line.
+        List<Vec3> whole = fly(0.5, 70.9, 0.5, 1504, 1200);
+        List<Vec3> seen = seenWithin(whole, 0.5, 0.5, 4.0);
+        EnderEyePolicy.Reading reading = EnderEyePolicy.read(0.5, 70.9, 0.5, seen);
+        assertEquals(EnderEyePolicy.Kind.FAR, reading.kind());
+        List<EnderEyePolicy.Candidate> candidates = EnderEyePolicy.candidates(reading,
+                StrongholdKnowledge.nearestAtMost(0.5, 0.5) + 16.0);
+        assertTrue(candidates.stream().anyMatch(c -> c.x() == 1504 && c.z() == 1200),
+                "the corner has to be among " + candidates);
+    }
+
+    @Test
+    void aFlightSeenForABlockIsStillUnreadable() {
+        // Lost almost at once: a block of climb is a direction, not a line to read a corner off.
+        List<Vec3> whole = fly(0.5, 70.9, 0.5, 1504, 1200);
+        List<Vec3> seen = seenWithin(whole, 0.5, 0.5, 1.6);
+        assertEquals(EnderEyePolicy.Kind.UNREADABLE, EnderEyePolicy.read(0.5, 70.9, 0.5, seen).kind());
     }
 }

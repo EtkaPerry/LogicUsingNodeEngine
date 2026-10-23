@@ -4,6 +4,7 @@ import net.minecraft.tags.ItemTags;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -57,6 +58,11 @@ public final class ToolCatalog {
 
         public String label() {
             return label;
+        }
+
+        /** Vanilla's harvest level: what a tool of this material gets drops from. */
+        public int harvestLevel() {
+            return harvestLevel;
         }
     }
 
@@ -184,6 +190,65 @@ public final class ToolCatalog {
             // exhaustive so that a new material cannot be added without deciding what it costs.
             case NETHERITE -> stack -> stack.is(Items.NETHERITE_INGOT);
         };
+    }
+
+    /** Whether a tool gets drops from this block: anything does where the block needs no tool. */
+    public static boolean harvests(ItemStack tool, BlockState state) {
+        return !state.requiresCorrectToolForDrops() || tool.isCorrectToolForDrops(state);
+    }
+
+    /** Whether this is a pickaxe, an axe, a shovel or a hoe. */
+    public static boolean isMiningTool(ItemStack stack) {
+        return stack.is(ItemTags.PICKAXES)
+                || stack.is(ItemTags.AXES)
+                || stack.is(ItemTags.SHOVELS)
+                || stack.is(ItemTags.HOES);
+    }
+
+    /**
+     * Which of these stacks breaks {@code state} fastest while still dropping it, as an index, or -1
+     * when none of them gets anything from it: the choice the player's own tool switching makes.
+     *
+     * <p>Two separate things matter and they are easy to conflate. Speed is how long the block takes
+     * - a shovel on stone still works, just slowly. Correctness is whether it drops anything at all:
+     * mining diamond ore with a stone pickaxe destroys it and yields nothing, so a wrong tool is not
+     * slow, it is destructive, and is never chosen.</p>
+     */
+    public static int best(List<ItemStack> stacks, BlockState state) {
+        boolean needsTool = state.requiresCorrectToolForDrops();
+        // What an empty hand would manage on this block, as the bar every tool has to beat.
+        float handSpeed = ItemStack.EMPTY.getDestroySpeed(state);
+
+        int best = -1;
+        float bestSpeed = -1.0F;
+        boolean bestIsMiningTool = false;
+        for (int index = 0; index < stacks.size(); index++) {
+            ItemStack stack = stacks.get(index);
+            if (needsTool && !stack.isCorrectToolForDrops(state)) {
+                continue;
+            }
+            float speed = stack.getDestroySpeed(state);
+            boolean miningTool = isMiningTool(stack);
+            // A tool that is no faster than bare hands is the wrong tool.
+            //
+            // Dirt, grass and sand break at the same speed with a pickaxe as with nothing at all -
+            // the pickaxe just loses durability doing it, and a staircase goes through a lot of
+            // dirt. Skipping a tool that offers no speed at all leaves the bare hand as the best
+            // option, which is what a player uses. It does not affect stone or wood, where the
+            // right tool is genuinely faster and so wins on speed anyway.
+            if (miningTool && speed <= handSpeed && !needsTool) {
+                continue;
+            }
+            // A flower, food, or other arbitrary item can tie a bare-hand speed on dirt/grass.
+            // Prefer an actual mining tool on ties so route clearing does not consume a task's
+            // decorative or edible stack and the next interaction starts with a sensible hand.
+            if (speed > bestSpeed || (speed == bestSpeed && miningTool && !bestIsMiningTool)) {
+                bestSpeed = speed;
+                best = index;
+                bestIsMiningTool = miningTool;
+            }
+        }
+        return best;
     }
 
     /** Tool names for a picker, in ladder order. */

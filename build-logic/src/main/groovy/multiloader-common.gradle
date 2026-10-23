@@ -100,7 +100,9 @@ processResources {
             'forge_version'                : forge_version,
             'forge_loader_version_range'   : forge_loader_version_range,
             'credits'                      : credits,
-            'java_version'                 : java_version
+            'java_version'                 : java_version,
+            // Lune's own version, for Lumi's dependency on Lune. Lune's templates never use it.
+            'lune_version'                 : rootProject.version.toString()
     ]
 
     var jsonExpandProps = expandProps.collectEntries {

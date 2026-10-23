@@ -19,6 +19,7 @@ import com.etka.lune.client.gui.widget.GuiIcons;
 import com.etka.lune.client.gui.widget.NamePrompt;
 import com.etka.lune.client.gui.widget.SharePrompt;
 import com.etka.lune.share.ShareService;
+import com.etka.lune.client.addon.ForeignGraph;
 import com.etka.lune.client.gui.widget.RecipePicker;
 import com.etka.lune.client.gui.widget.InventoryPicker;
 import com.etka.lune.client.gui.widget.ShortcutButton;
@@ -40,6 +41,7 @@ import com.etka.lune.task.TaskCode;
 import com.etka.lune.task.TaskWiring;
 import com.etka.lune.task.TaskNode;
 import com.etka.lune.task.TaskStore;
+import com.etka.lune.task.TaskJson;
 import com.etka.lune.config.BotConfig;
 import com.etka.lune.config.TaskShortcuts;
 import com.etka.lune.config.TaskView;
@@ -80,7 +82,7 @@ public class TasksTab extends LuneTab {
     /**
      * Height reserved at the foot of the task pane for its button block.
      *
-     * <p>Three rows: New/Delete/Run, Import/Export, Undo/Redo. Training used to sit full-width
+     * <p>Three rows: New/Delete/Run, Fast/Import/Share, Undo/Redo. Training used to sit full-width
      * above them and has moved to the menu in the tab bar, which gave the row back to the list -
      * the course is not something the player does to the task they have open.</p>
      */
@@ -141,6 +143,8 @@ public class TasksTab extends LuneTab {
     private int importTicket;
     /** Opens the course map; the last step's Next hands the player back to it. */
     private Runnable openCourseMap = () -> {};
+    /** Opens the fast tasks, which the screen keeps for this tab and the Main tab alike. */
+    private Runnable openFastTasks = () -> {};
     /** The lesson being attempted, or null when the editor is being used for real work. */
     private TrainingLesson activeLesson;
     /** Ticks spent on the current lesson, used to rotate gentle practice dialogue. */
@@ -167,6 +171,19 @@ public class TasksTab extends LuneTab {
      * presses it, and a reference kept here would go quietly stale mid-puzzle.</p>
      */
     private String lessonTaskName;
+    /**
+     * A graph somebody else runs - a Lumi's own - open in the editor, or null. See
+     * {@link #openForeign}.
+     */
+    private ForeignGraph foreign;
+    /** The scratch task it is held as, by name, for the reason {@link #lessonTaskName} is. */
+    private String foreignTaskName;
+    /** The graph as it was opened or last sent, written out, to tell whether leaving changes anything. */
+    private String foreignSent;
+    /** Where the way back goes: the tab the graph was opened from. */
+    private Runnable foreignBack = () -> {};
+    /** The task selected before the graph was opened, restored on the way out. */
+    private String taskBeforeForeign;
     private final EditBox nameBox;
     /** The open task's key in game, beside its name: both say which task this is to the player. */
     private final ShortcutButton shortcutButton;
@@ -176,6 +193,11 @@ public class TasksTab extends LuneTab {
 
     private final Button newButton;
     private final Button deleteButton;
+    /**
+     * Lune's fast tasks. Beside Import because it is the other way a task arrives ready-made; the
+     * fast tasks themselves are never in the list until one is added.
+     */
+    private final Button fastButton;
     private final Button importButton;
     private final Button shareButton;
     private final Button runButton;
@@ -183,6 +205,10 @@ public class TasksTab extends LuneTab {
     private final Button redoButton;
     /** Only there during a lesson; the way in is the menu, and this is the way back out. */
     private final Button leaveButton;
+    /** Only there while a graph somebody else runs is open: the way back to where it came from. */
+    private final Button foreignBackButton;
+    /** New while a body's graph is open: the body makes another, and it opens here. */
+    private final Button foreignNewButton;
     private final Button restartButton;
     private final Button outcomeButton;
     private final Button helpButton;
@@ -284,11 +310,19 @@ public class TasksTab extends LuneTab {
         newButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.new")), b -> createTask()).size(42, 18).build());
         deleteButton = add(tipped(Button.builder(Component.literal(Lang.get("lune.gui.tasks.del")), b -> deleteTask())
                 .size(42, 18).build(), "lune.gui.tasks.delete_whole_task_delete_card_instead"));
+        fastButton = add(ScaledTooltips.set(Button.builder(Component.literal(Lang.get("lune.fast.short")),
+                b -> openFastTasks.run()).size(36, 18).build(), Component.literal(Lang.get("lune.fast.about"))));
         importButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.import")), b -> importTask()).size(44, 18).build());
         shareButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.share")), b -> shareTask()).size(50, 18).build());
         runButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.run")), b -> runTask()).size(124, 18).build());
         leaveButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.leave_puzzle")), b -> leavePuzzle())
                 .size(104, 18).build());
+        // Its words are the graph's own owner's, given when one is opened.
+        foreignBackButton = add(Button.builder(Component.empty(), b -> leaveForeign(true)).size(104, 18).build());
+        foreignBackButton.visible = false;
+        foreignNewButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.new")), b -> createForeign())
+                .size(42, 18).build());
+        foreignNewButton.visible = false;
         restartButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.restart")), b -> restartLesson())
                 .size(96, 18).build());
         outcomeButton = add(Button.builder(Component.literal(Lang.get("lune.gui.tasks.path_success")), b -> {
@@ -405,6 +439,10 @@ public class TasksTab extends LuneTab {
         this.openCourseMap = opener == null ? () -> {} : opener;
     }
 
+    public void setFastTasksOpener(Runnable opener) {
+        this.openFastTasks = opener == null ? () -> {} : opener;
+    }
+
     // --- training ------------------------------------------------------------
 
     /** True while a puzzle is open, which is what puts the tab - and Lune - into training mode. */
@@ -468,10 +506,183 @@ public class TasksTab extends LuneTab {
         if (lesson == null || !TrainingProgress.isUnlocked(lesson)) {
             return;
         }
+        if (inForeign()) {
+            leaveForeign(false);
+        }
         if (activeLesson != null) {
             leavePuzzle();
         }
         startLesson(lesson);
+    }
+
+    // --- a graph somebody else runs -----------------------------------------------------------------
+
+    /** True while a graph somebody else runs is open - a Lumi's own - rather than one of the player's tasks. */
+    public boolean inForeign() {
+        return foreign != null;
+    }
+
+    /**
+     * Opens a graph somebody else runs in this editor: a Lumi's own, handed over by the tab of the mod
+     * that has Lumis.
+     *
+     * <p>Built on what a lesson does, for the same reason: the real editor, with every card, wire and
+     * setting it has, on a scratch task the player's own work never sees. The player's task and
+     * undo history are parked until it is left, the palette offers only what that body can run, and
+     * Run sends the graph where it belongs. Leaving - the way back, another task, a lesson, closing the
+     * panel - hands the graph back, saying whether it changed, and the mod decides what reaches the
+     * body.</p>
+     */
+    public void openForeign(ForeignGraph graph, Runnable back) {
+        if (graph == null) {
+            return;
+        }
+        if (inTraining()) {
+            leavePuzzle();
+        }
+        if (inForeign()) {
+            leaveForeign(false);
+        }
+        taskBeforeForeign = selectedTaskName;
+        parkHistory();
+        foreign = graph;
+        foreignBack = back == null ? () -> {} : back;
+        TaskGraph scratch = TaskStore.get().adoptScratch(graph.graph(), graph.title());
+        foreignTaskName = scratch.name;
+        foreignSent = fingerprint(scratch);
+        refreshTasks();
+        taskList.setSelected(scratch);
+        onTaskSelected(scratch);
+        blueprintPanel.resetView();
+        paletteSearch.setValue("");
+        palettePanel.setOffered(graph.cards(), graph.folder());
+        syncTrainingControls();
+        if (area != null && area.width() > 0) {
+            layout(area);
+        }
+        recordEdit();
+        message = "";
+    }
+
+    /**
+     * New, while a graph somebody else runs is open: this one is handed back as leaving hands it back,
+     * and the one the body makes beside it opens in its place, with the same way back.
+     */
+    private void createForeign() {
+        if (!inForeign() || !foreign.canCreate()) {
+            return;
+        }
+        ForeignGraph next = foreign.create();
+        if (next == null) {
+            return;
+        }
+        Runnable back = foreignBack;
+        leaveForeign(false);
+        openForeign(next, back);
+    }
+
+    /** The scratch task the open graph is held as, while it is the one on screen. */
+    private TaskGraph foreignTask() {
+        TaskGraph selected = taskList.getSelected();
+        return foreignTaskName != null && selected != null && selected.name.equals(foreignTaskName)
+                ? selected : TaskStore.get().byName(foreignTaskName == null ? "" : foreignTaskName).orElse(null);
+    }
+
+    /** What the graph says, without the name the editor held it under: what "changed" is judged on. */
+    private static String fingerprint(TaskGraph graph) {
+        TaskGraph copy = TaskJson.read(TaskJson.compact(graph));
+        copy.name = "";
+        return TaskJson.compact(copy);
+    }
+
+    /** A copy of the open graph, which is what its owner is handed: never the editor's own. */
+    private static TaskGraph handOver(TaskGraph scratch) {
+        TaskGraph copy = TaskJson.read(TaskJson.compact(scratch));
+        copy.name = "";
+        return copy;
+    }
+
+    /** Run, while a graph somebody else runs is open: it goes to them as it stands. */
+    private void sendForeign() {
+        TaskGraph scratch = foreignTask();
+        if (scratch == null || foreign == null) {
+            return;
+        }
+        message = foreign.send(handOver(scratch));
+        foreignSent = fingerprint(scratch);
+    }
+
+    /**
+     * Hands the open graph back and puts the editor back as it was before.
+     *
+     * @param goBack whether to return to the tab it came from: the way back does, and a task or
+     *               lesson opened in its place does not
+     */
+    private void leaveForeign(boolean goBack) {
+        if (foreign == null) {
+            return;
+        }
+        ForeignGraph leaving = foreign;
+        Runnable back = foreignBack;
+        TaskGraph scratch = foreignTask();
+        String line = scratch == null ? null
+                : leaving.left(handOver(scratch), !fingerprint(scratch).equals(foreignSent));
+        foreign = null;
+        foreignBack = () -> {};
+        foreignSent = null;
+        palettePanel.setOffered(null, null);
+        TaskStore.get().dropScratch(foreignTaskName);
+        foreignTaskName = null;
+        refreshTasks();
+        TaskGraph previous = taskBeforeForeign == null
+                ? null : TaskStore.get().byName(taskBeforeForeign).orElse(null);
+        taskBeforeForeign = null;
+        if (previous == null) {
+            restoreTaskSelection();
+        } else {
+            taskList.setSelected(previous);
+            onTaskSelected(previous);
+        }
+        restoreParkedHistory();
+        syncTrainingControls();
+        if (area != null && area.width() > 0) {
+            layout(area);
+        }
+        message = line == null ? "" : line;
+        if (goBack) {
+            back.run();
+        }
+    }
+
+    /**
+     * Puts the editor's undo history aside while a lesson or another body's graph is open, so Undo
+     * there can only take back what was done there.
+     */
+    private void parkHistory() {
+        savedUndoStack = new ArrayDeque<>(undoStack);
+        savedRedoStack = new ArrayDeque<>(redoStack);
+        undoStack.clear();
+        redoStack.clear();
+        pendingHistorySnapshot = null;
+        pendingHistoryTaskName = null;
+        pendingHistoryIdleTicks = 0;
+    }
+
+    /** Brings the parked history back, as though the detour never happened. */
+    private void restoreParkedHistory() {
+        // The baseline first, so the next edit is measured from here rather than from inside the
+        // detour.
+        recordEdit();
+        if (savedUndoStack != null) {
+            undoStack.clear();
+            undoStack.addAll(savedUndoStack);
+            savedUndoStack = null;
+        }
+        if (savedRedoStack != null) {
+            redoStack.clear();
+            redoStack.addAll(savedRedoStack);
+            savedRedoStack = null;
+        }
     }
 
     /**
@@ -491,13 +702,7 @@ public class TasksTab extends LuneTab {
             // A lesson is a disposable copy. Park the real editor's history before adopting it;
             // otherwise Undo in Step 4 can jump out of the puzzle and resurrect the user's old
             // While cards and END node.
-            savedUndoStack = new ArrayDeque<>(undoStack);
-            savedRedoStack = new ArrayDeque<>(redoStack);
-            undoStack.clear();
-            redoStack.clear();
-            pendingHistorySnapshot = null;
-            pendingHistoryTaskName = null;
-            pendingHistoryIdleTicks = 0;
+            parkHistory();
         }
         activeLesson = lesson;
         lessonSpeech = "";
@@ -559,17 +764,7 @@ public class TasksTab extends LuneTab {
         restoreTaskBeforeTraining();
         // Refresh the baseline before putting the user's history back. This makes a subsequent
         // edit behave like the training detour never happened.
-        recordEdit();
-        if (savedUndoStack != null) {
-            undoStack.clear();
-            undoStack.addAll(savedUndoStack);
-            savedUndoStack = null;
-        }
-        if (savedRedoStack != null) {
-            redoStack.clear();
-            redoStack.addAll(savedRedoStack);
-            savedRedoStack = null;
-        }
+        restoreParkedHistory();
         syncTrainingControls();
         if (area != null && area.width() > 0) {
             layout(area);
@@ -815,6 +1010,35 @@ public class TasksTab extends LuneTab {
     }
 
     /**
+     * A fast task the player asked to keep: Add to my tasks, from this tab or the Main tab.
+     *
+     * <p>It comes in the way an import does, as the player's own task under a name no other task
+     * has, and opens here, because the reason to keep a copy is to change it. One step of undo.
+     * A lesson or a graph somebody else runs is left first, as opening any task leaves them.</p>
+     */
+    public void addFastTask(TaskGraph copy) {
+        if (copy == null) {
+            return;
+        }
+        if (inForeign()) {
+            leaveForeign(false);
+        }
+        if (inTraining()) {
+            leavePuzzle();
+        }
+        beginEdit();
+        Optional<TaskGraph> added = TaskStore.get().importFrom(TaskJson.compact(copy));
+        refreshTasks();
+        if (added.isPresent()) {
+            TaskGraph task = added.get();
+            taskList.setSelected(task);
+            onTaskSelected(task);
+            message = Lang.get("lune.fast.added", task.displayName());
+        }
+        recordEdit();
+    }
+
+    /**
      * Deletes every task selected in the list, once the player has said yes.
      *
      * <p>The question names the tasks it was asked about. If the selection changes before the
@@ -963,6 +1187,10 @@ public class TasksTab extends LuneTab {
      * the state it is in can also be the one that changes it.</p>
      */
     private void runTask() {
+        if (inForeign()) {
+            sendForeign();
+            return;
+        }
         if (inTraining()) {
             blueprintPanel.sendTrainingPulse(previewFailure);
             message = Lang.get("lune.gui.tasks.wiring_preview_outcomes_one_pass_timer", (previewFailure ? Lang.get("lune.gui.blueprint.fail") : Lang.get("lune.gui.blueprint.success")));
@@ -995,6 +1223,11 @@ public class TasksTab extends LuneTab {
     }
 
     private void syncRunButton() {
+        if (inForeign()) {
+            runButton.setMessage(Component.literal(foreign.sendLabel()));
+            ScaledTooltips.set(runButton, Component.literal(foreign.about()));
+            return;
+        }
         if (inTraining()) {
             runButton.setMessage(Component.literal(Lang.get("lune.gui.tasks.send_pulse")));
             tipped(runButton, "lune.gui.tasks.preview_one_pulse_through_selected_path");
@@ -1031,7 +1264,7 @@ public class TasksTab extends LuneTab {
             return;
         }
         TaskGraph task = taskList.getSelected();
-        if (task == null || inTraining()) {
+        if (task == null || inTraining() || inForeign()) {
             message = Lang.get("lune.gui.tasks.pick_task_first");
             return;
         }
@@ -1143,7 +1376,7 @@ public class TasksTab extends LuneTab {
      */
     private void openBesideOptions() {
         TaskGraph task = taskList.getSelected();
-        if (task == null || inTraining()) {
+        if (task == null || inTraining() || inForeign()) {
             message = Lang.get("lune.gui.tasks.pick_task_first");
             return;
         }
@@ -1209,7 +1442,7 @@ public class TasksTab extends LuneTab {
     private void onTaskSelected(TaskGraph task) {
         // A key pressed now would land on a different task from the one it was asked for.
         stopListeningForShortcut();
-        if (task != null) {
+        if (task != null && !TaskStore.get().isScratch(task)) {
             lastOpenedTaskName = task.name;
             BotConfig.get().lastOpenedTask = task.name;
             BotConfig.get().save();
@@ -1237,6 +1470,9 @@ public class TasksTab extends LuneTab {
         if (task == null) {
             return;
         }
+        if (inForeign()) {
+            leaveForeign(false);
+        }
         taskList.setSelected(task);
         onTaskSelected(task);
         if (focusName) {
@@ -1246,13 +1482,27 @@ public class TasksTab extends LuneTab {
     }
 
     private void refreshTasks() {
-        taskList.setItems(TaskStore.get().listed());
+        List<TaskGraph> items = new java.util.ArrayList<>(TaskStore.get().listed());
+        // The graph somebody else runs is never one of the player's tasks, so it is in no list - but
+        // the editor goes by the list's selection, so this one holds it while it is open.
+        TaskGraph open = foreignTaskName == null ? null : TaskStore.get().byName(foreignTaskName).orElse(null);
+        if (open != null) {
+            items.add(open);
+        }
+        taskList.setItems(items);
         // Every name, hidden ones included: tick() compares this against the whole store to notice
         // a change, and a list of only the visible names would never match it.
         knownTaskList = TaskStore.get().names().toString();
     }
 
     private void restoreTaskSelection() {
+        TaskGraph open = foreignTaskName == null ? null : TaskStore.get().byName(foreignTaskName).orElse(null);
+        if (open != null) {
+            // An undo restores the store from a copy: the graph on screen is held again, not a task.
+            taskList.setSelected(open);
+            onTaskSelected(open);
+            return;
+        }
         List<TaskGraph> listed = TaskStore.get().listed();
         TaskGraph selected = lastOpenedTaskName == null
                 ? null
@@ -2018,7 +2268,7 @@ public class TasksTab extends LuneTab {
      */
     private void rememberView() {
         TaskGraph shown = blueprintPanel.getTask();
-        if (shown == null || TaskStore.isTrainingAttempt(shown)
+        if (shown == null || TaskStore.isTrainingAttempt(shown) || TaskStore.get().isScratch(shown)
                 || TaskStore.get().byName(shown.name).orElse(null) != shown) {
             return;
         }
@@ -2168,6 +2418,11 @@ public class TasksTab extends LuneTab {
             // Closing the panel mid-puzzle would otherwise write the practice task into
             // lune-tasks.json, which is the one place it must never end up.
             leavePuzzle();
+        }
+        if (inForeign()) {
+            // The graph goes back to whoever runs it, with whatever was done to it: closing the
+            // panel is leaving it as surely as the way back is.
+            leaveForeign(false);
         }
         TaskStore.get().save();
         // tick() noted where the canvas was looking; until now only in memory.
@@ -2328,7 +2583,10 @@ public class TasksTab extends LuneTab {
         // The cap is the widest interval: it has the most digits, and the seconds box accepts it.
         alwaysFrequencyButton.setWidth(textWidth(alwaysFrequencyLabel(0),
                 alwaysFrequencyLabel(TaskNode.MAX_ALWAYS_INTERVAL_SECONDS)));
-        if (inTraining()) {
+        if (inForeign()) {
+            runButton.setWidth(textWidth(foreign.sendLabel()));
+            foreignBackButton.setWidth(textWidth(foreign.leaveLabel()));
+        } else if (inTraining()) {
             runButton.setWidth(labelWidth("lune.gui.tasks.send_pulse"));
             restartButton.setWidth(labelWidth("lune.gui.tasks.restart"));
             outcomeButton.setWidth(labelWidth("lune.gui.tasks.path_success",
@@ -2376,6 +2634,10 @@ public class TasksTab extends LuneTab {
             layoutTrainingPane(rowY, left, fullW, halfW, tailW);
             return;
         }
+        if (inForeign()) {
+            layoutForeignPane(rowY, left, fullW, halfW, tailW);
+            return;
+        }
 
         // The key sits at the end of the name row and the name box takes what is left: sixteen
         // pixels for a task with no key, as much as the key's name needs for one with a key. The
@@ -2400,16 +2662,56 @@ public class TasksTab extends LuneTab {
         runButton.setSize(Math.max(28, frame.leftPane() - 2 * (topW + BUTTON_GAP)), CONTROL_H);
 
         int midY = rowY + 21;
-        importButton.setPosition(left, midY);
-        importButton.setSize(halfW, CONTROL_H);
-        shareButton.setPosition(left + halfW + BUTTON_GAP, midY);
-        shareButton.setSize(tailW, CONTROL_H);
+        int[] middle = labelledWidths(frame.leftPane(), fastButton, importButton, shareButton);
+        fastButton.setPosition(left, midY);
+        fastButton.setSize(middle[0], CONTROL_H);
+        importButton.setPosition(left + middle[0] + BUTTON_GAP, midY);
+        importButton.setSize(middle[1], CONTROL_H);
+        shareButton.setPosition(left + middle[0] + middle[1] + 2 * BUTTON_GAP, midY);
+        shareButton.setSize(middle[2], CONTROL_H);
 
         int botY = midY + 21;
         undoButton.setPosition(left, botY);
         undoButton.setSize(halfW, CONTROL_H);
         redoButton.setPosition(left + halfW + BUTTON_GAP, botY);
         redoButton.setSize(tailW, CONTROL_H);
+    }
+
+    /**
+     * Shares a row between buttons by their words: each gets its own label's width and an even
+     * share of what is left, the last one taking any odd pixel.
+     *
+     * <p>Thirds would not do for Fast, Import and Share. At the pane's own width a third is 42
+     * pixels, and Turkish <i>İçe aktar</i> needs 47: it scrolled, beside a <i>Hızlı</i> with room to
+     * spare. Shared this way all three fit at 132 pixels in both languages. A pane dragged too
+     * narrow even for the words alone falls back to thirds, and the labels scroll as vanilla
+     * scrolls any label wider than its button.</p>
+     */
+    private static int[] labelledWidths(int total, Button... buttons) {
+        var font = Minecraft.getInstance().font;
+        int[] widths = new int[buttons.length];
+        int room = total - BUTTON_GAP * (buttons.length - 1);
+        int words = 0;
+        for (int i = 0; i < buttons.length; i++) {
+            // Vanilla keeps two pixels clear either side of a label.
+            widths[i] = font.width(buttons[i].getMessage()) + 4;
+            words += widths[i];
+        }
+        int spare = room - words;
+        if (spare < 0) {
+            java.util.Arrays.fill(widths, room / buttons.length);
+            spare = room - room / buttons.length * buttons.length;
+        } else {
+            for (int i = 0; i < buttons.length; i++) {
+                widths[i] += spare / buttons.length;
+            }
+            spare %= buttons.length;
+        }
+        widths[buttons.length - 1] += spare;
+        for (int i = 0; i < buttons.length; i++) {
+            widths[i] = Math.max(16, widths[i]);
+        }
+        return widths;
     }
 
     /**
@@ -2432,6 +2734,31 @@ public class TasksTab extends LuneTab {
     }
 
     /**
+     * The same block of rows again, for a graph somebody else runs: Send where Run was, the way back
+     * under it, and the undo pair at the foot.
+     */
+    private void layoutForeignPane(int rowY, int left, int fullW, int halfW, int tailW) {
+        runButton.setPosition(left, rowY);
+        runButton.setSize(fullW, CONTROL_H);
+        int midY = rowY + 21;
+        if (foreignNewButton.visible) {
+            // The way back and New share the row, as Delete and New do for the player's own tasks.
+            foreignBackButton.setPosition(left, midY);
+            foreignBackButton.setSize(halfW, CONTROL_H);
+            foreignNewButton.setPosition(left + halfW + BUTTON_GAP, midY);
+            foreignNewButton.setSize(Math.max(28, fullW - halfW - BUTTON_GAP), CONTROL_H);
+        } else {
+            foreignBackButton.setPosition(left, midY);
+            foreignBackButton.setSize(fullW, CONTROL_H);
+        }
+        int botY = midY + 21;
+        undoButton.setPosition(left, botY);
+        undoButton.setSize(halfW, CONTROL_H);
+        redoButton.setPosition(left + halfW + BUTTON_GAP, botY);
+        redoButton.setSize(tailW, CONTROL_H);
+    }
+
+    /**
      * Which of the left pane's two occupants is on screen.
      *
      * <p>The pane holds the task list or the training brief, never both. That is the point: a
@@ -2443,8 +2770,8 @@ public class TasksTab extends LuneTab {
      * getting out of a lesson are not things to bury behind a toggle.</p>
      */
     private void syncPaneWidgets(boolean paneVisible) {
-        show(paneVisible && !inTraining(), nameBox, besideButton, shortcutButton, taskList,
-                newButton, deleteButton, importButton, shareButton);
+        show(paneVisible && !inTraining() && !inForeign(), nameBox, besideButton, shortcutButton,
+                taskList, newButton, deleteButton, fastButton, importButton, shareButton);
         show(paneVisible, undoButton, redoButton, leftSplitter);
         if (!shortcutButton.visible) {
             // Hidden with its pane, a listening button would take the next key for a task the
@@ -2479,6 +2806,13 @@ public class TasksTab extends LuneTab {
                 ? "lune.gui.tasks.course_map" : "lune.gui.tasks.next_step")));
         leaveButton.visible = training;
         leaveButton.active = training;
+        foreignBackButton.visible = inForeign();
+        foreignBackButton.active = inForeign();
+        foreignNewButton.visible = inForeign() && foreign.canCreate();
+        foreignNewButton.active = foreignNewButton.visible;
+        if (inForeign()) {
+            foreignBackButton.setMessage(Component.literal(foreign.leaveLabel()));
+        }
         syncRunButton();
     }
 
@@ -2543,8 +2877,10 @@ public class TasksTab extends LuneTab {
         }
         // Not Break in a lesson: Send pulse there is a preview that never stops at a breakpoint,
         // so the button would only put down a red dot that cannot stop anything.
-        return new CardControls(!inTraining(), card.isClockNode(), card.isSignalRelayNode(),
-                card.isButtonNode());
+        // Nor on a graph somebody else runs: the canvas's breakpoints and Button are the player's
+        // run's, and hold or press nothing on a Lumi.
+        return new CardControls(!inTraining() && !inForeign(), card.isClockNode(), card.isSignalRelayNode(),
+                card.isButtonNode() && !inForeign());
     }
 
     /** The card controls on screen, which the sync methods bring in line with the selection. */
@@ -2590,6 +2926,14 @@ public class TasksTab extends LuneTab {
                 lesson.add(leaveButton);
             }
             controls.addAll(0, lesson);
+        } else if (inForeign() && !listVisible) {
+            // Send and the way back live in the pane; with that collapsed they come here, the same
+            // way a lesson's controls do.
+            controls.add(0, foreignBackButton);
+            if (foreignNewButton.visible) {
+                controls.add(0, foreignNewButton);
+            }
+            controls.add(0, runButton);
         } else if (!listVisible) {
             // Run lives in the task pane; with that collapsed it moves here, because starting the
             // selected task is not something to hide behind a toggle.
@@ -2629,13 +2973,13 @@ public class TasksTab extends LuneTab {
         if (frame.listVisible()) {
             // The 22px gap at the top is the name box's. Training has no name box - the practice
             // task is not something to rename - so the brief gets the whole pane to sit on.
-            int paneTop = inTraining() ? frame.top() : frame.top() + 22;
+            int paneTop = inTraining() || inForeign() ? frame.top() : frame.top() + 22;
             LuneScreen.panel(extractor, frame.left(), paneTop, frame.leftPane(),
                     Math.max(20, frame.top() + frame.listHeight() - paneTop));
         }
         LuneScreen.panel(extractor, frame.flowX(), frame.flowTop(), frame.flowWidth(),
                 frame.flowHeight());
-        if (inTraining()) {
+        if (inTraining() || inForeign()) {
             // The canvas is the same widget in both modes and a practice task looks exactly
             // like a real one on it, so the frame around it is what says this is not your task.
             extractor.outline(frame.flowX(), frame.flowTop(), frame.flowWidth(),
@@ -2651,6 +2995,7 @@ public class TasksTab extends LuneTab {
     public void extractTabRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float partialTick) {
         var text = extractor.textRenderer();
         drawTrainingBrief(extractor);
+        drawForeignBrief(extractor);
         int y = area.bottom() - 12;
         // The lesson brief owns the teaching text. Keeping the answer-like critique out of this
         // single-line footer prevents it being clipped and makes the left panel the place to read
@@ -2736,6 +3081,32 @@ public class TasksTab extends LuneTab {
                 text.accept(left, y, Component.literal(line).withColor(LuneScreen.TEXT_DIM));
                 y += 10;
             }
+        }
+    }
+
+    /**
+     * Whose graph this is, drawn where the task list normally is - the same mode marker the training
+     * brief is, for the same reason: on the canvas a graph somebody else runs looks like any other.
+     */
+    private void drawForeignBrief(GuiGraphicsExtractor extractor) {
+        if (!inForeign() || !listVisible()) {
+            return;
+        }
+        Frame frame = frame(area, controlRows);
+        var text = extractor.textRenderer();
+        var font = Minecraft.getInstance().font;
+        int left = frame.left() + 5;
+        int width = Math.max(20, frame.leftPane() - 10);
+        int y = frame.top() + 4;
+        for (String line : wrapPlain(font, foreign.title(), width, 2)) {
+            text.accept(left, y, Component.literal(line).withColor(LuneScreen.ACCENT));
+            y += 12;
+        }
+        y += 2;
+        int bottom = frame.top() + frame.height() - BUTTON_ROW;
+        for (String line : wrapPlain(font, foreign.about(), width, Math.max(1, (bottom - y) / 10))) {
+            text.accept(left, y, Component.literal(line).withColor(LuneScreen.TEXT_DIM));
+            y += 10;
         }
     }
 

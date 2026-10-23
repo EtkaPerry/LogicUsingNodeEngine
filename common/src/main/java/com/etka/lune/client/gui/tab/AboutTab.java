@@ -62,7 +62,7 @@ public class AboutTab extends LuneTab {
      */
     private static final String LICENSE_SUMMARY =
             "Personal use. Play with it, read the source, change it for yourself, fork it on "
-                    + "GitHub, stream it. Free Modrinth modpacks may list it, linking to the "
+                    + "GitHub, stream it. Free CurseForge modpacks may list it, linking to the "
                     + "official project rather than bundling a copy. No other redistribution, no "
                     + "derivatives. No warranty.";
 

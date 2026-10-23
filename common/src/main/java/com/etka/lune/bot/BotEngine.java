@@ -256,11 +256,18 @@ public final class BotEngine {
 
     // --- queue control -------------------------------------------------------
 
-    public void enqueue(Task task) {
+    /**
+     * Puts this task at the back of the queue, to start when everything before it has finished -
+     * at once, when nothing is running. A failure on the way clears the queue, as it always has.
+     *
+     * @return false when the task was refused, for the reasons {@link #runNow} gives
+     */
+    public boolean enqueue(Task task) {
         if (refusedByTerms() || refusedByServer()) {
-            return;
+            return false;
         }
         queue.addLast(task);
+        return true;
     }
 
     /**

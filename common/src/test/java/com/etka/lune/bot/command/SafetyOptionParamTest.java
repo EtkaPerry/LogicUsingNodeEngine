@@ -25,7 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SafetyOptionParamTest {
 
     private static final Set<String> TACTICS = Set.of(
-            "clutch_water", "clutch_boat", "clutch_cushion", "protect_fireballs", "build_cover");
+            "clutch_water", "clutch_boat", "clutch_cushion", "protect_fireballs", "build_cover",
+            "fight_back");
     /** Dangers added to the card after tasks had already been saved with it. */
     private static final Set<String> LATER_DANGERS = Set.of("protect_fire");
 
@@ -121,6 +122,7 @@ class SafetyOptionParamTest {
         assertFalse(def.isRelevant("clutch_cushion"));
         assertFalse(def.isRelevant("protect_fireballs"));
         assertFalse(def.isRelevant("build_cover"));
+        assertFalse(def.isRelevant("fight_back"), "asking whether to hit a mob nobody watches for");
         // The thresholds go with them now: how far a fall may go, or how near a mob may come, is
         // the same unread question once nobody is watching for either.
         assertFalse(def.isRelevant("fall_threshold"));

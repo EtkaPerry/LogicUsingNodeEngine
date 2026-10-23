@@ -74,7 +74,7 @@ public final class AStarPathfinder {
      */
     private static final int STUCK_PATH_NODES = 8;
     /** Effectively "go round" unless the detour is enormous. */
-    private static final double LAVA_PROXIMITY_COST = 40.0;
+    static final double LAVA_PROXIMITY_COST = 40.0;
     /** Digging a riverbed/bank is a last resort after open swimming has failed. */
     private static final double WATER_ADJACENT_BREAK_COST = 80.0;
     /** Escape movement while already in lava; safe ground is always dramatically cheaper. */
@@ -98,8 +98,12 @@ public final class AStarPathfinder {
      * The two used to hold their own copies of this, and disagreed about the drop for as long as the
      * move existed - see that class for what the disagreement cost.
      */
-    private static final int MAX_GAP_JUMP = GapJumpPolicy.MAX_GAP;
     private static final int MAX_GAP_DROP = GapJumpPolicy.MAX_DROP;
+    /**
+     * Surcharge for a three-block gap, in blocks of walking: a running jump from the lip lands it
+     * with room, but only from the lip and at a sprint, so a way round of a few blocks more wins.
+     */
+    private static final double LONG_JUMP_COST = 4.0;
     /**
      * Surcharge for a gap jump that it would hurt to miss: lava under it, or more than a
      * {@link MovementHelper#HARMLESS_FALL harmless fall}.
@@ -108,9 +112,10 @@ public final class AStarPathfinder {
      * Nether's lava sea, or the End's void, cost the run. Nothing about the jump itself tells the
      * two apart - and a hit from whatever is chasing the bot lands mid-air as easily as on the
      * ground. Priced like walking beside lava, so a walk round wins unless it is enormous, and a
-     * gap with no way round is still crossed.</p>
+     * gap with no way round is still crossed. A run from a mob pays less for both, away from the
+     * mob ({@link Avoid#hazard}).</p>
      */
-    private static final double HURTING_GAP_COST = LAVA_PROXIMITY_COST;
+    static final double HURTING_GAP_COST = LAVA_PROXIMITY_COST;
 
     /** Horizontal neighbour offsets: 4 cardinals then 4 diagonals. */
     private static final int[][] HORIZONTAL = {
@@ -130,9 +135,26 @@ public final class AStarPathfinder {
      * @param allowJump        whether it may change elevation or jump a gap
      * @param nodeBudget       how many nodes to expand before giving up and returning a partial path
      * @param heuristicWeight  multiplier on the remaining-distance estimate; see below
+     * @param avoid            ground to keep clear of, or null; see {@link Avoid}
+     * @param maxGap           the widest gap a jump may cross, in blocks: {@link GapJumpPolicy#MAX_GAP}
+     *                         for a route that may not sprint, {@link GapJumpPolicy#MAX_SPRINT_GAP}
+     *                         for one that may
      */
     public record Settings(int maxFall, boolean allowBreak, boolean allowSwim, boolean allowJump,
-                           int nodeBudget, double heuristicWeight, Player miner) {
+                           int nodeBudget, double heuristicWeight, Player miner, Avoid avoid, int maxGap) {
+
+        /** Settings that keep clear of nothing, which is every search but a run from a mob. */
+        public Settings(int maxFall, boolean allowBreak, boolean allowSwim, boolean allowJump,
+                        int nodeBudget, double heuristicWeight, Player miner) {
+            this(maxFall, allowBreak, allowSwim, allowJump, nodeBudget, heuristicWeight, miner, null);
+        }
+
+        /** Settings that jump no further than a walk clears. */
+        public Settings(int maxFall, boolean allowBreak, boolean allowSwim, boolean allowJump,
+                        int nodeBudget, double heuristicWeight, Player miner, Avoid avoid) {
+            this(maxFall, allowBreak, allowSwim, allowJump, nodeBudget, heuristicWeight, miner, avoid,
+                    GapJumpPolicy.MAX_GAP);
+        }
 
         /** Ordinary travel: never breaks blocks, and only steps down one block at a time. */
         public static Settings walking() {
@@ -150,25 +172,150 @@ public final class AStarPathfinder {
          */
         public Settings withMiner(Player miner) {
             return new Settings(maxFall, allowBreak, allowSwim, allowJump, nodeBudget,
-                    heuristicWeight, miner);
+                    heuristicWeight, miner, avoid, maxGap);
         }
 
         /** Returns these settings with water traversal explicitly enabled or disabled. */
         public Settings withAllowSwim(boolean allowSwim) {
             return new Settings(maxFall, allowBreak, allowSwim, allowJump, nodeBudget,
-                    heuristicWeight, miner);
+                    heuristicWeight, miner, avoid, maxGap);
         }
 
         /** Returns these settings with a learned, still-safe search greediness. */
         public Settings withHeuristicWeight(double heuristicWeight) {
             return new Settings(maxFall, allowBreak, allowSwim, allowJump, nodeBudget,
-                    Math.max(1.0, heuristicWeight), miner);
+                    Math.max(1.0, heuristicWeight), miner, avoid, maxGap);
         }
 
         /** Returns these settings with voluntary elevation changes and jumping enabled or disabled. */
         public Settings withAllowJump(boolean allowJump) {
             return new Settings(maxFall, allowBreak, allowSwim, allowJump, nodeBudget,
-                    heuristicWeight, miner);
+                    heuristicWeight, miner, avoid, maxGap);
+        }
+
+        /** Returns these settings keeping clear of {@code avoid}, or of nothing when it is null. */
+        public Settings withAvoid(Avoid avoid) {
+            return new Settings(maxFall, allowBreak, allowSwim, allowJump, nodeBudget,
+                    heuristicWeight, miner, avoid, maxGap);
+        }
+
+        /**
+         * Returns these settings jumping gaps up to {@code maxGap} wide: the running jump's three for a
+         * route that may sprint, the walk's two for one that may not.
+         */
+        public Settings withMaxGap(int maxGap) {
+            return new Settings(maxFall, allowBreak, allowSwim, allowJump, nodeBudget,
+                    heuristicWeight, miner, avoid,
+                    Math.clamp(maxGap, 1, GapJumpPolicy.MAX_SPRINT_GAP));
+        }
+    }
+
+    /**
+     * Ground a route keeps clear of: the mob a run is getting away from (Self Preservation's run,
+     * with fighting back switched off). A step that ends within {@code radius} of the middle costs up
+     * to {@code cost} more, all of it at the middle and none at the edge, so a route goes round when
+     * there is a way round and still goes through when there is not - the one bridge off an island
+     * is still the way off it.
+     *
+     * <p>The search knew nothing of a chaser before this. On the lava maze's bastion (2026-10-17) the
+     * run got away fourteen times and was then hit to death on routes that wound back past the
+     * Zombie toward a point that was, as the crow flies, away from it.</p>
+     *
+     * <p>A run keeps clear of every chaser it knows of, so this is a zone per chaser, and a step
+     * inside two of them pays for both (2026-10-18: with three Zombies, a route priced round one
+     * of them ran the bot into the next).</p>
+     *
+     * <p>Out of every zone, a run pays {@code hazardShare} of what any other route pays to walk
+     * beside lava or jump a gap it would hurt to miss ({@link #hazard}). Priced in full, a jump over
+     * lava was forty blocks of walking, and on the lava maze (2026-10-18) a run to a spot fourteen
+     * blocks off walked a sixty-six block route round the islands rather than make one, and the
+     * chasers cut across and hit it twice on the way. The user, playing the same course, jumped a
+     * gap every three seconds: nothing that walks follows a body over one. Inside a zone the full
+     * price stands, because a hit there is what knocks the body in.</p>
+     */
+    public record Avoid(List<Zone> zones, double hazardShare) {
+
+        /**
+         * One mob's ground: within {@code radius} of the middle, a step costs up to {@code cost}
+         * more; and within {@code core} of it, {@link #CORE_COST} on top - ground a route takes only
+         * when there is no other way, such as the few blocks round a Creeper inside which it lights
+         * its fuse.
+         */
+        public record Zone(double x, double y, double z, double radius, double cost, double core) {
+
+            /** One mob's ground, with no core to it. */
+            public Zone(double x, double y, double z, double radius, double cost) {
+                this(x, y, z, radius, cost, 0.0);
+            }
+
+            /** The surcharge for a step that ends with the feet at {@code pos}. */
+            public double penalty(BlockPos pos) {
+                double distance = distance(pos);
+                double inside = distance < core ? CORE_COST : 0.0;
+                if (distance >= radius) {
+                    return inside;
+                }
+                double share = 1.0 - distance / radius;
+                return inside + cost * share * share;
+            }
+
+            /** Whether the feet at {@code pos} are inside this zone. */
+            public boolean contains(BlockPos pos) {
+                return distance(pos) < radius;
+            }
+
+            private double distance(BlockPos pos) {
+                double dx = pos.getX() + 0.5 - x;
+                double dy = pos.getY() - y;
+                double dz = pos.getZ() + 0.5 - z;
+                return Math.sqrt(dx * dx + dy * dy + dz * dz);
+            }
+        }
+
+        /**
+         * What a step inside a zone's core costs on top, in blocks of walking: a long way round, so
+         * a route goes through only where there is none. On the bastion (2026-10-18) a run from a
+         * Zombie took a jump past the Creeper standing beside its way, priced at a few blocks, and
+         * the Creeper blew it up in the air.
+         */
+        public static final double CORE_COST = 300.0;
+
+        public Avoid {
+            zones = List.copyOf(zones);
+            hazardShare = Math.clamp(hazardShare, 0.0, 1.0);
+        }
+
+        /** Zones round mobs, with lava and the gaps over it priced as on any other route. */
+        public Avoid(List<Zone> zones) {
+            this(zones, 1.0);
+        }
+
+        /** The ground round one mob. */
+        public Avoid(double x, double y, double z, double radius, double cost) {
+            this(List.of(new Zone(x, y, z, radius, cost)));
+        }
+
+        /**
+         * What a step that ends with the feet at {@code pos} pays for a hazard any other route pays
+         * {@code full} for - lava beside it, or a gap under it that would hurt: all of it inside a
+         * zone, {@link #hazardShare} of it outside every one.
+         */
+        public double hazard(BlockPos pos, double full) {
+            for (Zone zone : zones) {
+                if (zone.contains(pos)) {
+                    return full;
+                }
+            }
+            return full * hazardShare;
+        }
+
+        /** The surcharge for a step that ends with the feet at {@code pos}: every zone it is in, added up. */
+        public double penalty(BlockPos pos) {
+            double total = 0.0;
+            for (Zone zone : zones) {
+                total += zone.penalty(pos);
+            }
+            return total;
         }
     }
 
@@ -363,8 +510,10 @@ public final class AStarPathfinder {
      * <p>Deliberately conservative. Cardinal only, because diagonal jumps catch on corners; the
      * take-off needs solid ground and headroom; every block of the gap must be clear at both feet
      * and head height, so this cannot jump through a wall; and the landing must be somewhere the
-     * bot can stand, at the same level or one below. Vanilla clears more than this with a sprint,
-     * but a failed jump is a fall, so the reach stops short of what is theoretically possible.
+     * bot can stand, at the same level or one below. A route that may sprint also crosses three
+     * blocks, landing level - a running jump from the lip - and any route hops one block up across a
+     * single block, the way a player steps up onto a ledge on the far side of a hole; that hop needs
+     * the air over the hole and over the landing clear for the arc, a block and a quarter up.
      */
     private static void relaxGapJumps(BlockGetter level, Node current, int dx, int dz, Goal goal,
                                       Settings settings, Map<Long, Node> nodes,
@@ -374,28 +523,46 @@ public final class AStarPathfinder {
                 || !MovementHelper.isPassable(level, pos.above(2))) {
             return;
         }
-        for (int distance = 2; distance <= MAX_GAP_JUMP + 1; distance++) {
+        for (int distance = 2; distance <= settings.maxGap() + 1; distance++) {
             // Everything between take-off and landing has to be open at body height, and the gap
             // itself has to be a gap: if there were a floor here the ordinary walking move would
-            // have taken it, and jumping over solid ground is not a move worth searching.
+            // have taken it, and jumping over solid ground is not a move worth searching. Lava
+            // standing level with the take-off is jumped only on a run from a mob, which is how a
+            // player gets away from something that walks; any other route goes round it.
             boolean clear = true;
             boolean missHurts = false;
+            // The ground a route keeps clear of is kept clear of in the air too: a body over a gap
+            // cannot step aside, so a leap past a mob pays what standing beside it would.
+            double flight = 0.0;
             for (int step = 1; step < distance; step++) {
                 BlockPos over = pos.offset(dx * step, 0, dz * step);
                 if (!MovementHelper.hasBodyClearance(level, over)
                         || MovementHelper.isSolidFloor(level, over.below())
-                        || MovementHelper.isHarmful(level.getBlockState(over.below()))) {
+                        || settings.avoid() == null && MovementHelper.isHarmful(level.getBlockState(over.below()))) {
                     clear = false;
                     break;
                 }
                 missHurts |= MovementHelper.fallHurts(level, over);
+                if (settings.avoid() != null) {
+                    flight = Math.max(flight, settings.avoid().penalty(over));
+                }
             }
             if (!clear) {
                 continue;
             }
-            double cost = Goals.STEP * distance + JUMP_COST * distance
-                    + (missHurts ? HURTING_GAP_COST : 0.0);
-            for (int drop = 0; drop <= MAX_GAP_DROP; drop++) {
+            double cost = Goals.STEP * distance + JUMP_COST * distance + flight
+                    + (missHurts ? hazard(settings, pos, HURTING_GAP_COST) : 0.0)
+                    + (distance > GapJumpPolicy.MAX_GAP + 1 ? LONG_JUMP_COST : 0.0);
+            if (distance == 2) {
+                BlockPos up = pos.offset(dx * distance, GapJumpPolicy.MAX_RISE, dz * distance);
+                if (MovementHelper.canStandAt(level, up, settings.allowSwim())
+                        && MovementHelper.isPassable(level, pos.offset(dx, 2, dz))
+                        && MovementHelper.isPassable(level, up.above(2))) {
+                    relax(level, current, up, cost + JUMP_COST, goal, settings, nodes, open);
+                }
+            }
+            int lowest = distance > GapJumpPolicy.MAX_GAP + 1 ? 0 : MAX_GAP_DROP;
+            for (int drop = 0; drop <= lowest; drop++) {
                 BlockPos landing = pos.offset(dx * distance, -drop, dz * distance);
                 if (MovementHelper.canStandAt(level, landing, settings.allowSwim())) {
                     relax(level, current, landing, cost + drop * FALL_COST,
@@ -510,6 +677,11 @@ public final class AStarPathfinder {
                         continue;
                     }
                 }
+                // Never across the corner of a hole it would hurt to fall into: the body is half
+                // over it on the way, and the two straight steps go round.
+                if (MovementHelper.cutsAHurtingCorner(level, pos, dx, dz)) {
+                    continue;
+                }
             }
 
             BlockPos flat = pos.offset(dx, 0, dz);
@@ -575,8 +747,9 @@ public final class AStarPathfinder {
                 // Swim on *below* the surface, for a route that starts there - a bot that fell into
                 // a lake, or was already working under one. A crossing planned from the bank stays
                 // on the top layer, where every node is a breath away; that layer is priced as
-                // swimming in deep water and swum a block under it (SwimPolicy), so keeping a
-                // surface route is not keeping a slow one. Every node with water over it pays
+                // swimming in deep water and swum with the stroke, the feet held just under the
+                // top of the water (SwimPolicy), so keeping a surface route is not keeping a slow
+                // one. Every node with water over it pays
                 // WATER_DEPTH_COST besides, so a route that starts down here swims up to the top
                 // layer as soon as it is worth it rather than staying at its starting depth.
                 if (settings.allowSwim()
@@ -655,10 +828,10 @@ public final class AStarPathfinder {
      * also means that once the bot is in water, every step that leaves it is cheaper than every step
      * that stays in, so it heads for the nearest shore instead of wandering the surface.
      */
-    private static double hazardPenalty(BlockGetter level, BlockPos from, BlockPos to) {
+    private static double hazardPenalty(BlockGetter level, BlockPos from, BlockPos to, Settings settings) {
         double penalty = 0.0;
         if (MovementHelper.nearLava(level, to)) {
-            penalty += LAVA_PROXIMITY_COST;
+            penalty += hazard(settings, to, LAVA_PROXIMITY_COST);
         }
         if (MovementHelper.isWater(level, to)) {
             if (!MovementHelper.isWater(level, from)) {
@@ -685,6 +858,11 @@ public final class AStarPathfinder {
             }
         }
         return penalty;
+    }
+
+    /** What a hazard any route pays {@code full} for costs this one, at {@code pos}; see {@link Avoid#hazard}. */
+    private static double hazard(Settings settings, BlockPos pos, double full) {
+        return settings.avoid() == null ? full : settings.avoid().hazard(pos, full);
     }
 
     /** Cost of clearing one body column (feet and head) for a diagonal corner. */
@@ -736,7 +914,8 @@ public final class AStarPathfinder {
 
     private static void relax(BlockGetter level, Node from, BlockPos to, double cost, Goal goal,
                               Settings settings, Map<Long, Node> nodes, PriorityQueue<Node> open) {
-        double tentativeG = from.g + cost + hazardPenalty(level, from.pos, to);
+        double tentativeG = from.g + cost + hazardPenalty(level, from.pos, to, settings)
+                + (settings.avoid() == null ? 0.0 : settings.avoid().penalty(to));
         Node node = nodes.computeIfAbsent(to.asLong(), key -> new Node(to));
         // Unvisited nodes start at infinite g, so this also stops the search relaxing back into the
         // start node (g = 0) and building a parent cycle that reconstruct() would loop on forever.

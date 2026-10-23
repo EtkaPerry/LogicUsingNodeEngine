@@ -11,15 +11,18 @@ configurations {
     }
 }
 
+// The shared module beside this one: :common for Lune's loaders, :lumi:common for Lumi's.
+def commonPath = project.parent == rootProject ? ':common' : "${project.parent.path}:common"
+
 dependencies {
-    compileOnly(project(':common')) {
+    compileOnly(project(commonPath)) {
         def loaderAttribute = Attribute.of('io.github.mcgradleconventions.loader', String)
         attributes {
             attribute(loaderAttribute, 'common')
         }
     }
-    commonJava(project(path: ':common', configuration: 'commonJava'))
-    commonResources(project(path: ':common', configuration: 'commonResources'))
+    commonJava(project(path: commonPath, configuration: 'commonJava'))
+    commonResources(project(path: commonPath, configuration: 'commonResources'))
 }
 
 tasks.named('compileJava', JavaCompile) {

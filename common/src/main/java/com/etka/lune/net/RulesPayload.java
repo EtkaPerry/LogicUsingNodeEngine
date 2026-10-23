@@ -10,7 +10,9 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The server's answer to one player: its rules, and where that player stands under them.
@@ -24,9 +26,12 @@ import java.util.List;
  * @param mayEdit whether this player may change the rules, which is also whether {@code players}
  *                is filled in: who else has Lune is the operators' business
  * @param players every player on the server whose Lune has said hello, for the operators
+ * @param addonsMay this player's verdict on every who-rule a mod built on Lune keeps here, by the
+ *                  rule's name; one that is missing reads as no, like the others
  */
 public record RulesPayload(int protocol, String version, ServerRules rules, boolean mayRun,
-                           boolean mayCheat, boolean mayEdit, List<LunePlayer> players)
+                           boolean mayCheat, boolean mayEdit, List<LunePlayer> players,
+                           Map<String, Boolean> addonsMay)
         implements CustomPacketPayload {
 
     /** One player with Lune: their name, and the version they run. */
@@ -42,11 +47,24 @@ public record RulesPayload(int protocol, String version, ServerRules rules, bool
      * payload has a length limit to stay under.
      */
     public static final int MAX_PLAYERS = 64;
+    /** How many add-on verdicts are read at most: far more than anything registers. */
+    static final int MAX_ADDON_RULES = 32;
 
     public RulesPayload {
         version = version == null ? "" : version;
         rules = rules == null ? ServerRules.CLOSED : rules;
         players = players == null ? List.of() : List.copyOf(players.subList(0, Math.min(players.size(), MAX_PLAYERS)));
+        addonsMay = addonsMay == null ? Map.of() : Map.copyOf(addonsMay);
+    }
+
+    public RulesPayload(int protocol, String version, ServerRules rules, boolean mayRun, boolean mayCheat,
+                        boolean mayEdit, List<LunePlayer> players) {
+        this(protocol, version, rules, mayRun, mayCheat, mayEdit, players, Map.of());
+    }
+
+    /** This player's verdict on an add-on who-rule; no when the server gave none. */
+    public boolean may(String rule) {
+        return Boolean.TRUE.equals(addonsMay.get(rule));
     }
 
     @Override
@@ -70,6 +88,9 @@ public record RulesPayload(int protocol, String version, ServerRules rules, bool
             list.add(entry);
         }
         json.add("players", list);
+        JsonObject verdicts = new JsonObject();
+        addonsMay.forEach(verdicts::addProperty);
+        json.add("addonsMay", verdicts);
         return json;
     }
 
@@ -87,8 +108,17 @@ public record RulesPayload(int protocol, String version, ServerRules rules, bool
                 }
             }
         }
+        Map<String, Boolean> verdicts = new LinkedHashMap<>();
+        JsonElement may = json.get("addonsMay");
+        if (may != null && may.isJsonObject()) {
+            for (String rule : may.getAsJsonObject().keySet()) {
+                if (verdicts.size() < MAX_ADDON_RULES) {
+                    verdicts.put(rule, LuneNet.yes(may.getAsJsonObject(), rule));
+                }
+            }
+        }
         return new RulesPayload(LuneNet.integer(json, "protocol", 0), LuneNet.string(json, "version", "?"),
                 rules, LuneNet.yes(json, "mayRun"), LuneNet.yes(json, "mayCheat"),
-                LuneNet.yes(json, "mayEdit"), players);
+                LuneNet.yes(json, "mayEdit"), players, verdicts);
     }
 }

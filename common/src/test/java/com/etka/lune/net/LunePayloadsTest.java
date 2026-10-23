@@ -56,6 +56,20 @@ class LunePayloadsTest {
         assertEquals(rules, roundTrip(RulesPayload.CODEC, rules));
     }
 
+    /** A mod built on Lune gets its verdicts through the same notice, and a missing one is a no. */
+    @Test
+    void addonVerdictsArriveAsSentAndAMissingOneIsNo() {
+        RulesPayload rules = new RulesPayload(1, "0.9", ServerRules.CLOSED, true, false, false, List.of(),
+                java.util.Map.of("lumi:command", true, "other:rule", false));
+        RulesPayload read = roundTrip(RulesPayload.CODEC, rules);
+        assertEquals(rules, read);
+        assertTrue(read.may("lumi:command"));
+        assertFalse(read.may("other:rule"));
+        assertFalse(read.may("never:said"));
+        assertFalse(decodeRaw(RulesPayload.CODEC, "{\"addonsMay\":{\"lumi:command\":\"yes\"}}")
+                .may("lumi:command"), "only a real true is a yes");
+    }
+
     @Test
     void anEditArrivesAsSentWithTheUntouchedRuleLeftOut() {
         EditRulesPayload edit = new EditRulesPayload(ServerRules.Who.EVERYONE, null);

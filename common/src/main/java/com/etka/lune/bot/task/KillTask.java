@@ -14,6 +14,7 @@ import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.path.SafeStep;
+import com.etka.lune.bot.util.Hostility;
 import com.etka.lune.bot.util.BlockPlacer;
 import com.etka.lune.bot.util.InventoryHelper;
 import com.etka.lune.bot.util.Vision;
@@ -705,7 +706,7 @@ public final class KillTask implements Task {
         // ends in the lava the fight was beside. With no safe step, standing is the retreat.
         SafeStep.Step step = steps.toward(ctx, away, true);
         if (step != null) {
-            ctx.look.lookAt(ctx.player, ctx.player.position().add(step.direction()));
+            ctx.look.lookAt(ctx.player, SafeStep.lookAlong(ctx.player, step));
             steps.steer(ctx, step, true);
         }
 
@@ -733,8 +734,8 @@ public final class KillTask implements Task {
         if (target == null || !target.isAlive()) {
             return false;
         }
-        if (tactic == Tactic.HIT_AND_RUN && target instanceof Creeper creeper) {
-            return creeper.getSwellDir() > 0 || creeper.isIgnited();
+        if (tactic == Tactic.HIT_AND_RUN && target instanceof Creeper) {
+            return Hostility.fuseLit(target);
         }
         return false;
     }

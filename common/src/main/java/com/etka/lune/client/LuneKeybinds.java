@@ -1,14 +1,11 @@
 package com.etka.lune.client;
 
-import com.etka.lune.compat.Screens;
 import com.etka.lune.util.Lang;
 import com.etka.lune.Constants;
 import com.etka.lune.bot.BotEngine;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.LuneStatusOverlay;
-import com.etka.lune.client.gui.TermsScreen;
 import com.etka.lune.config.BotConfig;
-import com.etka.lune.config.Terms;
 import com.etka.lune.platform.BuildFeatures;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
@@ -84,8 +81,7 @@ public final class LuneKeybinds {
             while (OPEN.consumeClick()) {
                 // Reaching for the panel is the first moment the terms are anyone's business, and
                 // the only one: nothing is put in front of a player who has not asked for Lune yet.
-                Screens.open(mc, Terms.accepted() ? new LuneScreen()
-                        : new TermsScreen(null, () -> Screens.open(mc, new LuneScreen())));
+                LuneScreen.open(mc, null);
             }
             while (PAUSE.consumeClick()) {
                 boolean shift = mc.hasShiftDown();

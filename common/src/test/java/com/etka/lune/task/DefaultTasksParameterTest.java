@@ -191,9 +191,14 @@ class DefaultTasksParameterTest {
         });
     }
 
-    /** Every seeded card that runs a command, with the editor-only pulse and source cards skipped. */
+    /**
+     * Every card Lune ships that runs a command - the starter shelf's and the fast tasks' - with the
+     * editor-only pulse and source cards skipped.
+     */
     private static void forEachCommandNode(java.util.function.BiConsumer<TaskGraph, TaskNode> check) {
-        for (TaskGraph task : DefaultTasks.create()) {
+        List<TaskGraph> shipped = new java.util.ArrayList<>(DefaultTasks.create());
+        shipped.addAll(FastTasks.create());
+        for (TaskGraph task : shipped) {
             for (TaskNode node : task.nodes) {
                 if (!node.isSourceNode() && !node.isPulseNode()) {
                     check.accept(task, node);

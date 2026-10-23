@@ -11,6 +11,9 @@ import com.etka.lune.bot.learning.LearningContext;
 import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.learning.TaskLearning;
 import com.etka.lune.bot.catalog.BlockCatalog;
+import com.etka.lune.bot.path.AStarPathfinder;
+import com.etka.lune.bot.path.ChaserReach;
+import com.etka.lune.bot.path.GapJumpPolicy;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.path.SafeStep;
@@ -24,6 +27,7 @@ import com.etka.lune.bot.util.InventoryHelper;
 import com.etka.lune.bot.util.Vision;
 import com.etka.lune.mods.WornItems;
 import com.etka.lune.bot.path.WaterEscape;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.Direction;
@@ -35,6 +39,7 @@ import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
@@ -102,6 +107,85 @@ public final class SelfPreservationTask implements WhileMonitor {
      * not just when the way back is blocked.</p>
      */
     private static final int MELEE_STALL_TICKS = 6;
+    /**
+     * Ticks a run from a melee hostile follows one route, with fighting back switched off, before a
+     * fresh one is planned from where the bot and the hostile are by then: a second, in which the
+     * chaser has moved a block or two and the first route may have come to lead past it.
+     */
+    private static final int RUN_REPLAN_TICKS = 20;
+    /** Ticks on foot after a run found no route, before it searches again. A search is not cheap. */
+    private static final int RUN_RETRY_TICKS = 10;
+    /**
+     * How far round the chaser a run's routes keep clear, in blocks, and what a step at the middle of
+     * that costs, in blocks of walking. A Zombie hits from about two blocks off, and there a step
+     * costs eleven, so a route goes well round before it passes in reach - and still passes, where
+     * the one bridge off an island runs by the chaser.
+     */
+    private static final double RUN_AVOID_RADIUS = 5.0;
+    private static final double RUN_AVOID_COST = 30.0;
+    /**
+     * What a run pays, out of every chaser's reach, for walking beside lava or jumping a gap it would
+     * hurt to miss, as a share of what any other route pays: a fifth, so a jump over lava is eight
+     * blocks of walking rather than forty. A run that walked sixty-six blocks round the maze rather
+     * than jump was hit twice on the way (2026-10-18); see {@link AStarPathfinder.Avoid}.
+     */
+    private static final double RUN_HAZARD_SHARE = 0.2;
+    /** How near a run's route has to get to the spot it is making for, in blocks. */
+    private static final int RUN_GOAL_REACH = 2;
+    /**
+     * Ticks a run's route may go without getting nearer its next waypoint, with a chaser in the way,
+     * before it is planned again: a quarter of a second, where the route's own patience is three.
+     */
+    private static final int BLOCKED_TICKS = 5;
+    /**
+     * How far round a Creeper an escape keeps clear, in blocks, where every other chaser gets
+     * {@link #RUN_AVOID_RADIUS}: its blast hurts out to six, twice its power of three, and one block
+     * more is the fuse it may light as the route goes by.
+     */
+    private static final double CREEPER_RUN_BERTH = 7.0;
+    /**
+     * How near a melee chaser has to get to hurt someone, middle to middle, in blocks: a Zombie's
+     * swing reaches a block and a half or so, and half a block more is the margin. Across a gap of
+     * one it hits; across two it does not.
+     */
+    private static final double MELEE_STRIKE = 2.5;
+    /**
+     * Room, in blocks a chaser walks, from which a run with nowhere better to go stands and watches
+     * rather than stepping away: a few seconds of a Zombie's walk before it can strike.
+     */
+    private static final double HOLD_ROOM = 6.0;
+    /** How near a chaser may stand, as the crow flies, while a run holds: a step past its arm. */
+    private static final double HOLD_CLEAR = MELEE_STRIKE + 1.5;
+    /**
+     * How near a Creeper has to get to light its fuse - three blocks, by its swell goal - and half a
+     * block more. Once lit it blows within six, across any gap, so a spot it can get this near to is
+     * a spot it can blow up.
+     */
+    private static final double CREEPER_STRIKE = 3.5;
+    /**
+     * Ground round a Creeper a run's route takes only when there is no other way, in blocks: the
+     * three at which its fuse lights, and one more for its walk while the route goes by. A jump past
+     * a Creeper priced at a few blocks of walking was taken, and it blew the bot up in the air
+     * (2026-10-18).
+     */
+    private static final double CREEPER_CORE = 4.0;
+    /** How far a lit Creeper's blast reaches, in blocks: twice an ordinary Creeper's power of three. */
+    private static final double CREEPER_BLAST = 6.0;
+    /** A lit Creeper's berth: past the seven blocks at which vanilla lets its fuse go out. */
+    private static final double CREEPER_FUSE_BERTH = 9.0;
+    /**
+     * How many of the hostiles in range a scan looks at with a line from the eyes, nearest first,
+     * once it has found the nearest it can see. Every escape plans round all of them
+     * ({@link Chasers}), so it has to know where more than one is; the line is the expensive half
+     * of a scan, so it stops at a handful.
+     */
+    private static final int MAX_CHASERS_TRACED = 6;
+    /**
+     * Blocks of room a fresh run route's spot is credited for going the way the run already goes:
+     * enough that two spots near enough alike keep the run's direction, not so much that it runs on
+     * into a chaser ahead, which leaves no room at all.
+     */
+    private static final double COMMIT_BONUS = 3.0;
     /**
      * Ticks the shield may be held against an archer without the gap closing.
      *
@@ -296,6 +380,42 @@ public final class SelfPreservationTask implements WhileMonitor {
     private boolean fireballDodgeLeft;
     private int fireballDodgeTicks;
     private Task recovery;
+    /**
+     * The route a run from a melee hostile is on, kept apart from {@link #recovery}: that is also
+     * the lava escape's route and the meal the health branch eats, and a run must never tick either
+     * as if it were its own. See {@link #runFrom}.
+     */
+    private GotoTask runRoute;
+    private int runRouteTicks;
+    private int runRetryTicks;
+    /** Set when a run's route ended with the body in the air: the leap is carried to its landing. */
+    private boolean carryingLeap;
+    /**
+     * The flat way the run is going, a unit {x, z}, or null between chases: a fresh route prefers to
+     * keep it ({@link #COMMIT_BONUS}). With a chaser at each end of a corridor the run used to turn
+     * round at every replan, a second at a time, into the other end (2026-10-18).
+     */
+    private double[] runHeading;
+    /** Where the run's route is going, so a route that fails can cross it off. */
+    private BlockPos runTarget;
+    /**
+     * Spots a run's route to failed this chase, as longs: neither they nor any spot within the
+     * reach of a run's goal of one ({@link #RUN_GOAL_REACH}) is chosen again until the chase ends.
+     */
+    private final java.util.Set<Long> failedRetreats = new java.util.HashSet<>();
+    /**
+     * How often the way to the spot the run is making for has thrown the body off, across the
+     * routes rebuilt to it every second; a spot whose way keeps doing it is a failed one.
+     */
+    private final RunApproach approach = new RunApproach(RUN_GOAL_REACH);
+    /** The Creepers whose lit fuse the run's route was planned round, by id. */
+    private final java.util.Set<Integer> fusesPlannedFor = new java.util.HashSet<>();
+    /**
+     * How far the soonest chaser had to walk before it could strike the bot where it stood, as the
+     * last spot choice reckoned it ({@link #retreatPoint}); infinity-capped at
+     * {@link Chasers#OUT_OF_REACH}.
+     */
+    private double lastRoom;
     private int escapeAttempts;
     /** Retreats that succeeded against the same hostile, carried across route rebuilds. */
     private int monsterEscapes;
@@ -305,6 +425,14 @@ public final class SelfPreservationTask implements WhileMonitor {
     private int safeTicks;
     private int lastEntityScanTick = Integer.MIN_VALUE;
     private LivingEntity cachedNearest;
+    /**
+     * Hostiles seen lately, by entity id: where each was when last seen, and when. Every escape plans
+     * round all of them ({@link #chasers}); one not seen for {@link #HOSTILE_MEMORY_TICKS} is
+     * forgotten, and one out of sight is planned round where it was, never where it is.
+     */
+    private final java.util.Map<Integer, Sighting> sightings = new java.util.HashMap<>();
+
+    private record Sighting(LivingEntity entity, Vec3 at, int tick) {}
     /**
      * Who last hurt the player. Read every tick and never cleared on release: a mob that hit the
      * player a few seconds ago is still the one that did.
@@ -478,6 +606,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         if (!ctx.player.isAlive()) {
             ctx.input.reset();
             stopRecovery(ctx);
+            stopRun(ctx);
             threat = Threat.NONE;
             hostile = null;
             forgetFireball();
@@ -621,8 +750,10 @@ public final class SelfPreservationTask implements WhileMonitor {
         // coming round the wall. A Ghast fires every sixty ticks, so spending thirty of them standing
         // still after each shot would hand the job half its time for no safety at all. A fire that
         // has gone out is the same: there is nothing it could be hiding behind.
+        // A run still under way is not let go of where letting go is a fall - in the air, or at an
+        // edge it may be about to jump from - so the window waits for it to reach steady ground.
         if (threat != Threat.NONE && threat != Threat.FIREBALL && threat != Threat.FIRE
-                && safeTicks++ < SAFE_CONFIRM_TICKS) {
+                && (safeTicks++ < SAFE_CONFIRM_TICKS || runCommitted(ctx))) {
             confirmingSafe = true;
             return true;
         }
@@ -672,13 +803,39 @@ public final class SelfPreservationTask implements WhileMonitor {
         if (!ctx.player.isAlive()) {
             ctx.input.reset();
             stopRecovery(ctx);
+            stopRun(ctx);
             status.set("lune.engine.player_died");
             return TaskStatus.FAILED;
+        }
+        // A run belongs to a melee hostile. Whatever else this tick is answering - lava, a fall -
+        // stops it, and the next chase plans its own. Never in the air, though: a jump the run
+        // started is finished first. On the bastion (2026-10-17) the chase ended two ticks into a
+        // two-block leap, the route was let go of, and with nothing pressed the body came down three
+        // tenths of a block short of the landing, in lava. Lava and a fall deep enough to clutch are
+        // their own answers, and take the keys at once.
+        //
+        // The quiet after the chase does not stop it either: the run goes on along its route while
+        // the window watches (runOn). A chaser at the edge of the distance a chase is dropped at
+        // drops in and out of it, and every time the window let go of the route mid-run - once with
+        // the bot hanging over the hole it was about to jump (2026-10-18) - and every time the chase
+        // came back it planned a fresh route somewhere else.
+        boolean quietAfterChase = confirmingSafe && threat == Threat.MONSTER;
+        if (confirmingSafe || threat != Threat.MONSTER) {
+            if (threat != Threat.LAVA && threat != Threat.FALL && finishLeap(ctx)) {
+                status.set("lune.status.self_preservation.landing_jump");
+                return TaskStatus.RUNNING;
+            }
+            if (!quietAfterChase) {
+                stopRun(ctx);
+            }
         }
         if (confirmingSafe) {
             stopRecovery(ctx);
             if (recoveringClutch()) {
                 return recoverClutch(ctx);
+            }
+            if (quietAfterChase && runOn(ctx)) {
+                return TaskStatus.RUNNING;
             }
             status.set("lune.status.self_preservation.confirming_danger_gone");
             return TaskStatus.RUNNING;
@@ -706,14 +863,16 @@ public final class SelfPreservationTask implements WhileMonitor {
      * <p>The confirmation window after a danger has passed is spent watching: nothing is pressed
      * while it runs, so the player has their keys back the moment it is over and has them taken
      * again if the zombie comes round the wall after all. Picking a clutch's water, boat or cushion
-     * back up is still work, and keeps them.</p>
+     * back up is still work, and keeps them, and so is a run going on along its route.</p>
      */
     @Override
     public boolean holdsControls() {
         if (threat == Threat.NONE) {
             return false;
         }
-        return !confirmingSafe || recoveringClutch();
+        // A run is still pressing the keys that carry it on and land its jumps, quiet after the
+        // chase or not.
+        return !confirmingSafe || recoveringClutch() || runRoute != null || carryingLeap;
     }
 
     /** A fall is over but what broke it - water, a boat, a cushion - is still to be picked back up. */
@@ -755,13 +914,18 @@ public final class SelfPreservationTask implements WhileMonitor {
             boolean ranged = isRangedThreat(hostile);
             boolean canBuild = emergencyMaterial(ctx) != null;
             boolean canFight = InventoryHelper.anyMatch(ctx.player, InventoryHelper::isCombatWeapon);
-            actions = SelfPreservationPolicy.monsterActions(
-                    creeper, enderman, ranged, canBuild, canFight);
+            // A card that may not fight back has one answer to a melee hostile, the run, and the
+            // learner is not offered choices the card would not make; its rows are its own.
+            boolean runs = !options.fightBack() && !creeper && !enderman && !ranged;
+            actions = runs ? List.of(SelfPreservationPolicy.RETREAT_FIRST)
+                    : SelfPreservationPolicy.monsterActions(
+                            creeper, enderman, ranged, canBuild, canFight && options.fightBack());
             phase = "threat=monster;kind=" + hostile.getType().getDescriptionId()
                     + ";distance=" + SelfPreservationPolicy.distanceBucket(
                             ctx.player.distanceTo(hostile))
                     + ";health=" + SelfPreservationPolicy.healthBucket(ctx.player.getHealth())
-                    + ";build=" + canBuild + ";weapon=" + canFight;
+                    + ";build=" + canBuild + ";weapon=" + canFight
+                    + (options.fightBack() ? "" : ";fight=off");
         } else if (episodeThreat == Threat.FIREBALL && fireball != null) {
             LivingEntity shooter = FireballDeflect.shooter(fireball);
             boolean canDeflect = FireballDeflect.swingPossible(ctx.player);
@@ -1438,11 +1602,19 @@ public final class SelfPreservationTask implements WhileMonitor {
             status.set("lune.status.self_preservation.threat_gone");
             return TaskStatus.SUCCESS;
         }
-        if (hostile instanceof Creeper) {
-            return escapeCreeper(ctx);
-        }
         if (isEnderman(hostile)) {
             return escapeEnderman(ctx);
+        }
+        // With fighting back switched off, the answer to anything that has to reach the bot is to
+        // keep running; see runFrom. An archer is still the defence's below: it cannot be outrun,
+        // and the strafe and the shield there never hit it. A Creeper is run from too, along routes
+        // that keep the berth of its blast and jump what the maze puts in the way, where the direct
+        // sprint below steps one block at a time and stops at the first gap (2026-10-18).
+        if (!options.fightBack() && !isRangedThreat(hostile)) {
+            return runFrom(ctx);
+        }
+        if (hostile instanceof Creeper) {
+            return escapeCreeper(ctx);
         }
         if (SelfPreservationPolicy.COVER_FIRST.equals(recoveryStrategy)) {
             return emergencyMonsterDefense(ctx, Lang.get("lune.reason.learned_cover_first"));
@@ -1459,7 +1631,9 @@ public final class SelfPreservationTask implements WhileMonitor {
                 return TaskStatus.RUNNING;
             }
         }
-        if (SelfPreservationPolicy.COUNTERATTACK_FIRST.equals(recoveryStrategy)) {
+        // A learned counterattack is still an attack: with fighting back switched off the retreat
+        // below is the answer, whatever the learner thought of it.
+        if (SelfPreservationPolicy.COUNTERATTACK_FIRST.equals(recoveryStrategy) && options.fightBack()) {
             return emergencyMeleeCombat(ctx);
         }
         // An archer cannot be outrun, and this is where the bot kept trying. The first answer to a
@@ -1482,7 +1656,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             return emergencyMonsterDefense(ctx, Lang.get("lune.reason.retreat_limit_reached"));
         }
         if (recovery == null) {
-            BlockPos away = retreatPoint(ctx, hostile);
+            BlockPos away = retreatPoint(ctx, chasers(ctx), null);
             if (away == null) {
                 return emergencyMonsterDefense(ctx, Lang.get("lune.reason.no_walking_route"));
             }
@@ -1491,6 +1665,292 @@ public final class SelfPreservationTask implements WhileMonitor {
         }
         return tickRecovery(ctx, "lune.status.self_preservation.escaping_hostile",
                 hostile.getName().getString());
+    }
+
+    /**
+     * With fighting back switched off, the whole answer to a melee hostile: get away along a route,
+     * planned afresh every {@link #RUN_REPLAN_TICKS} from where the bot and the hostile are by then.
+     *
+     * <p>The ordinary answer is a route for twenty ticks and then the close-quarters backpedal, which
+     * suits a card that swings - the swings make the room - and kills one that may not. On the lava
+     * maze's bastion (2026-10-17) the backpedal held the bot in a pocket of lava with a wall at its
+     * back for eight seconds while a Zombie hit it to death: every step away was lava or wall, and a
+     * step is all a backpedal ever looks at. A route looks further - round the Zombie, along a
+     * bridge, over a gap to the next island - so a run keeps planning them, as many as the chase
+     * takes, and only between them, or where no route goes anywhere, turns and sprints on whatever
+     * ground the step check allows.</p>
+     *
+     * <p>A route is never cut short in the air or at an edge, where it may be halfway into a jump:
+     * the fresh one waits for the feet to be on ground with no drop beside them, or for this one to
+     * end. The quiet after the chase does not cut it short either; it goes on along it
+     * ({@link #runOn}).</p>
+     */
+    private TaskStatus runFrom(BotContext ctx) {
+        if (finishLeap(ctx)) {
+            status.set("lune.status.self_preservation.escaping_hostile", hostile.getName().getString());
+            return TaskStatus.RUNNING;
+        }
+        if (runRoute != null && ++runRouteTicks >= RUN_REPLAN_TICKS && steady(ctx)) {
+            runRoute.stop(ctx);
+            runRoute = null;
+        }
+        if (runRoute == null) {
+            if (runRetryTicks > 0) {
+                runRetryTicks--;
+            } else {
+                planRun(ctx);
+            }
+        }
+        String name = hostile.getName().getString();
+        if (runRoute != null) {
+            // A player running from something turns their head in a hurry, and so does the run: the
+            // hold before a jump that turns at its edge is a tick, not the five or more an unhurried
+            // turn takes - five that let a Creeper's fuse run out beside the bot (2026-10-18).
+            ctx.look.urgent();
+            TaskStatus result = runRoute.tick(ctx);
+            // Pressed against a chaser standing on the way: no headway for a quarter of a second
+            // and one in front, within a step and an arm. The route would press on for its own
+            // three seconds; the user asked for a fresh one at once (2026-10-18), after a run had
+            // pushed into a Zombie for thirteen ticks while a Creeper's fuse ran out behind it. It
+            // is planned round where they all stand now, and never to that spot again this chase.
+            if (result == TaskStatus.RUNNING && blocked(ctx) && steady(ctx)) {
+                runRoute.stop(ctx);
+                runRoute = null;
+                if (runTarget != null) {
+                    failedRetreats.add(runTarget.asLong());
+                }
+                approach.clear();
+                ctx.input.reset();
+                planRun(ctx);
+                if (runRoute == null) {
+                    return betweenRoutes(ctx);
+                }
+                result = runRoute.tick(ctx);
+            }
+            // A Creeper near the run has lit its fuse since the route was planned: the route was
+            // priced round a Creeper that walks, and this one is about to go off where it stands.
+            // Planned again at once, round its blast (CREEPER_BLAST), with the second and a half
+            // its fuse leaves.
+            if (result == TaskStatus.RUNNING && newFuseNear(ctx) && steady(ctx)) {
+                runRoute.stop(ctx);
+                runRoute = null;
+                approach.clear();
+                ctx.input.reset();
+                planRun(ctx);
+                if (runRoute == null) {
+                    return betweenRoutes(ctx);
+                }
+                result = runRoute.tick(ctx);
+            }
+            // A way that keeps throwing the body off - over a hole's lip, by a hit - is planned again
+            // to the same place each time round, and the spot is chosen again every second. Twice
+            // thrown off on the way there, the spot is one the run failed to reach (RunApproach),
+            // once the feet are steady: never cut in the air or at an edge.
+            if (result == TaskStatus.RUNNING && approach.failed(runRoute.offRouteReplans()) && steady(ctx)) {
+                runRoute.stop(ctx);
+                runRoute = null;
+                if (runTarget != null) {
+                    failedRetreats.add(runTarget.asLong());
+                }
+                approach.clear();
+                runRetryTicks = 0;
+                return betweenRoutes(ctx);
+            }
+            if (result == TaskStatus.RUNNING) {
+                if (runRoute.statusLine().isBlank()) {
+                    status.set("lune.status.self_preservation.escaping_hostile", name);
+                } else {
+                    status.set("lune.status.detail",
+                            Lang.get("lune.status.self_preservation.escaping_hostile", name), runRoute.statusLine());
+                }
+                return TaskStatus.RUNNING;
+            }
+            runRoute.stop(ctx);
+            runRoute = null;
+            if (result == TaskStatus.SUCCESS) {
+                // Got there. The chase is still on, so the next route is planned on the next tick.
+                monsterEscapes++;
+            } else {
+                runRetryTicks = RUN_RETRY_TICKS;
+                if (runTarget != null) {
+                    failedRetreats.add(runTarget.asLong());
+                }
+            }
+        }
+        return betweenRoutes(ctx);
+    }
+
+    /**
+     * What a run does while it has no route - a tick after one ends, or while nowhere is worth
+     * going: where nothing round it was better than where it stands ({@link #lastRoom}) and no
+     * chaser is near, it stands and watches the one it answers; otherwise it steps away
+     * ({@link #evadeMeleeThreat}). The user, watching the maze (2026-10-18), saw a bot that looked
+     * at its feet, ran a block and stopped, over and over: the step-away, taken on every tick
+     * between routes whether anything was near or not - and one of those steps, on the bastion,
+     * hopped it into the lava beside an island no chaser could reach.
+     */
+    private TaskStatus betweenRoutes(BotContext ctx) {
+        double nearest = chasers(ctx).nearest(ctx.player.getX(), ctx.player.getY(), ctx.player.getZ());
+        if (lastRoom >= HOLD_ROOM && nearest >= HOLD_CLEAR) {
+            stopRecovery(ctx);
+            steps.forget();
+            ctx.input.reset();
+            ctx.look.lookAt(ctx.player, hostile.getEyePosition());
+            status.set("lune.status.self_preservation.holding_safe_ground_while_evading",
+                    hostile.getName().getString());
+            return TaskStatus.RUNNING;
+        }
+        return evadeMeleeThreat(ctx);
+    }
+
+    /**
+     * Chooses where the run goes next and starts its route there; when nowhere is worth going, waits
+     * {@link #RUN_RETRY_TICKS} before asking again, because a search is not cheap.
+     */
+    private void planRun(BotContext ctx) {
+        runRouteTicks = 0;
+        fusesPlannedFor.clear();
+        fusesPlannedFor.addAll(litFusesNear(ctx));
+        Chasers chasers = chasers(ctx);
+        AStarPathfinder.Avoid avoid = chasers.avoid(RUN_AVOID_COST, RUN_HAZARD_SHARE);
+        BlockPos away = retreatPoint(ctx, chasers, avoid);
+        if (away == null) {
+            runRetryTicks = RUN_RETRY_TICKS;
+            return;
+        }
+        // The spot was chosen by the way there, which the route is priced the same as: round each
+        // chaser where it was last seen, and planned again in a second.
+        runTarget = away;
+        approach.begin(away);
+        double headingX = away.getX() + 0.5 - ctx.player.getX();
+        double headingZ = away.getZ() + 0.5 - ctx.player.getZ();
+        double length = Math.hypot(headingX, headingZ);
+        runHeading = length > 1.0E-6 ? new double[] {headingX / length, headingZ / length} : null;
+        runRoute = new GotoTask(new Goals.Near(away, RUN_GOAL_REACH), true, false).avoiding(avoid);
+        runRoute.start(ctx);
+    }
+
+    /** Ids of the Creepers near the bot with their fuse lit, among the hostiles seen lately. */
+    private java.util.Set<Integer> litFusesNear(BotContext ctx) {
+        java.util.Set<Integer> lit = new java.util.HashSet<>();
+        for (Sighting sighting : sightings.values()) {
+            LivingEntity entity = sighting.entity();
+            if (entity.isAlive() && Hostility.fuseLit(entity)
+                    && entity.distanceTo(ctx.player) <= CREEPER_FUSE_BERTH) {
+                lit.add(entity.getId());
+            }
+        }
+        return lit;
+    }
+
+    /** Whether a Creeper near the bot has lit its fuse since the run's route was planned. */
+    private boolean newFuseNear(BotContext ctx) {
+        for (int id : litFusesNear(ctx)) {
+            if (!fusesPlannedFor.contains(id)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether the run's route is pressed against a chaser: no nearer its next waypoint for
+     * {@link #BLOCKED_TICKS}, with one standing in the way to it ({@link Chasers#inTheWay}).
+     */
+    private boolean blocked(BotContext ctx) {
+        if (runRoute == null || runRoute.noProgressTicks() < BLOCKED_TICKS) {
+            return false;
+        }
+        BlockPos waypoint = runRoute.nextWaypoint();
+        return waypoint != null && chasers(ctx).inTheWay(ctx.player.getX(), ctx.player.getY(), ctx.player.getZ(),
+                waypoint.getX() + 0.5, waypoint.getZ() + 0.5);
+    }
+
+    private void stopRun(BotContext ctx) {
+        if (runRoute != null) {
+            runRoute.stop(ctx);
+            runRoute = null;
+        }
+        runTarget = null;
+        runHeading = null;
+        failedRetreats.clear();
+        approach.clear();
+        fusesPlannedFor.clear();
+        lastRoom = 0.0;
+        runRouteTicks = 0;
+        runRetryTicks = 0;
+        carryingLeap = false;
+    }
+
+    /**
+     * The quiet after a chase, spent going on along the run's route rather than standing wherever
+     * the chase happened to drop: still getting away while the window makes sure, and never letting
+     * go at a take-off. Says whether there was a route to go on along. The route is not planned
+     * again meanwhile - the window has no hostile to plan round - and if the chase comes back, the
+     * run carries on with this one until its next replan.
+     */
+    private boolean runOn(BotContext ctx) {
+        if (runRoute == null) {
+            return false;
+        }
+        // The guarded card has pressed its own keys this tick; the run's are the only ones.
+        ctx.input.reset();
+        ctx.look.urgent();
+        TaskStatus result = runRoute.tick(ctx);
+        if (result != TaskStatus.RUNNING) {
+            stopRun(ctx);
+            return false;
+        }
+        if (runRoute.statusLine().isBlank()) {
+            status.set("lune.status.self_preservation.confirming_danger_gone");
+        } else {
+            status.set("lune.status.detail",
+                    Lang.get("lune.status.self_preservation.confirming_danger_gone"), runRoute.statusLine());
+        }
+        return true;
+    }
+
+    /** Feet on the ground and nothing that hurts beside them: where a run may be planned again or let go of. */
+    private static boolean steady(BotContext ctx) {
+        return ctx.player.onGround()
+                && !SafeStep.onTheLip(ctx.level, MovementHelper.feetPosition(ctx.player));
+    }
+
+    /** A run under way somewhere letting go of it would be a fall. */
+    private boolean runCommitted(BotContext ctx) {
+        return (runRoute != null || carryingLeap) && !steady(ctx);
+    }
+
+    /**
+     * Finishes a jump a run is in the middle of, and says whether it did: the route steers it while
+     * it has one, and once the route is done - its goal reached in mid-air, a block short of the
+     * landing - the keys carry on along the way the body is going until the feet are down.
+     *
+     * <p>A jump is a body off the ground, out of any fluid and off any ladder, that has not yet
+     * dropped further than a jump does; anything deeper is the fall clutch's.</p>
+     */
+    private boolean finishLeap(BotContext ctx) {
+        LocalPlayer player = ctx.player;
+        boolean leaping = !player.onGround() && !player.isInWater() && !player.isInLava()
+                && !player.onClimbable() && player.fallDistance < COMMITTED_FALL;
+        if (!leaping || (runRoute == null && !carryingLeap)) {
+            carryingLeap = false;
+            return false;
+        }
+        ctx.input.reset();
+        if (runRoute != null) {
+            if (runRoute.tick(ctx) == TaskStatus.RUNNING) {
+                return true;
+            }
+            runRoute.stop(ctx);
+            runRoute = null;
+        }
+        carryingLeap = true;
+        Vec3 motion = player.getDeltaMovement();
+        if (motion.x * motion.x + motion.z * motion.z > 1.0E-4) {
+            ctx.input.steerToward(player, player.position().add(motion.x * 8.0, 0.0, motion.z * 8.0));
+        }
+        return true;
     }
 
     /**
@@ -1511,14 +1971,8 @@ public final class SelfPreservationTask implements WhileMonitor {
             creeperStallTicks = 0;
         }
 
-        Vec3 away = ctx.player.position().subtract(hostile.position());
-        away = new Vec3(away.x, 0.0, away.z);
-        if (away.lengthSqr() < 1.0E-4) {
-            away = Vec3.directionFromRotation(0.0F, ctx.player.getYRot() + 180.0F);
-            away = new Vec3(away.x, 0.0, away.z);
-        } else {
-            away = away.normalize();
-        }
+        // Away from every hostile seen lately, not only the one being answered (Chasers).
+        Vec3 away = awayFromChasers(ctx);
 
         Block material = emergencyMaterial(ctx);
 
@@ -1526,7 +1980,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         // carried, close under a zig-zag immediately and let the normal attack check finish the
         // fight; repeatedly rebuilding cover while the skeleton keeps a firing lane was slower
         // than the arrows. Cover remains the fallback for a player with no weapon at all.
-        if (isRangedThreat(hostile)) {
+        if (isRangedThreat(hostile) && options.fightBack()) {
             ItemStack held = ctx.player.getItemInHand(InteractionHand.MAIN_HAND);
             if (InventoryHelper.isCombatWeapon(held)) {
                 return evadeRangedThreat(ctx);
@@ -1574,7 +2028,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         }
         ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
         ctx.look.urgent();
-        ctx.look.lookAt(ctx.player, ctx.player.position().add(step.direction()));
+        ctx.look.lookAt(ctx.player, SafeStep.lookAlong(ctx.player, step));
         steps.steer(ctx, step, true);
 
         double distance = ctx.player.distanceTo(hostile);
@@ -1721,16 +2175,23 @@ public final class SelfPreservationTask implements WhileMonitor {
             return recoverHealth(ctx);
         }
 
+        if (isEnderman(hostile)) {
+            return defendEnderman(ctx, reason);
+        }
+
+        // However this was reached - a route that failed, a health branch with nothing to eat - a
+        // card that may not fight back runs, and does not stand in reach backpedalling. From a
+        // Creeper as from anything else that has to reach it.
+        if (!options.fightBack() && !isRangedThreat(hostile)) {
+            return runFrom(ctx);
+        }
+
         // A creeper is an explosive threat, not a normal melee mob. Once the route is blocked,
         // standing still to place a pillar leaves the player inside the blast radius. Keep the
         // emergency branch moving horizontally and change the strafe side when the direct path
         // stalls; cover remains the opportunistic first attempt in escapeCreeper().
         if (hostile instanceof Creeper) {
             return emergencyCreeperRetreat(ctx, reason);
-        }
-
-        if (isEnderman(hostile)) {
-            return defendEnderman(ctx, reason);
         }
 
         // A wall or pillar is useful only while there is room to place it. Once a melee hostile
@@ -1769,7 +2230,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             // the player standing in the skeleton's firing lane (a one-block wall can still be
             // shot around or over). Use the new cover as a chance to get a real retreat route;
             // if that route is unavailable, the weapon handoff below gets a chance to fight.
-            BlockPos away = retreatPoint(ctx, hostile);
+            BlockPos away = retreatPoint(ctx, chasers(ctx), null);
             if (away != null && !rangedRetreatTried) {
                 rangedRetreatTried = isRangedThreat(hostile);
                 recovery = new GotoTask(new Goals.Near(away, 2), true, false);
@@ -1807,8 +2268,9 @@ public final class SelfPreservationTask implements WhileMonitor {
         // swinging the currently selected block/tool in that state burns the few emergency ticks
         // available and lets a skeleton keep shooting. This monitor is shared by every task,
         // so the emergency handoff must repair the hand state here rather than rely on callers.
+        // None of it when the card may not fight back: a weapon is only ever wanted to swing.
         ItemStack held = ctx.player.getItemInHand(InteractionHand.MAIN_HAND);
-        if (!InventoryHelper.isCombatWeapon(held)) {
+        if (options.fightBack() && !InventoryHelper.isCombatWeapon(held)) {
             if (equippedSomethingBetter(ctx, held)) {
                 status.set("lune.status.self_preservation.equipping_weapon_fight", hostile.getName().getString());
                 return TaskStatus.RUNNING;
@@ -1818,15 +2280,17 @@ public final class SelfPreservationTask implements WhileMonitor {
         // Do not give up; defend with the equipped weapon (or, only if none exists, the current
         // item) until the hostile dies, moves, or a path opens. Attack before building a pillar
         // when the mob has already reached the player.
-        ctx.look.urgent();
-        ctx.look.lookAt(ctx.player, hostile.getEyePosition());
-        if (ctx.player.distanceTo(hostile) <= EMERGENCY_ATTACK_REACH
-                && ctx.player.getAttackStrengthScale(0.0F) >= 1.0F
-                && ctx.look.isLookingAt(ctx.player, hostile.getEyePosition(), 15.0F)) {
-            ctx.gameMode.attack(ctx.player, hostile);
-            ctx.gameMode.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
-            status.set("lune.status.self_preservation.fighting_from_emergency_cover", hostile.getName().getString());
-            return TaskStatus.RUNNING;
+        if (options.fightBack()) {
+            ctx.look.urgent();
+            ctx.look.lookAt(ctx.player, hostile.getEyePosition());
+            if (ctx.player.distanceTo(hostile) <= EMERGENCY_ATTACK_REACH
+                    && ctx.player.getAttackStrengthScale(0.0F) >= 1.0F
+                    && ctx.look.isLookingAt(ctx.player, hostile.getEyePosition(), 15.0F)) {
+                ctx.gameMode.attack(ctx.player, hostile);
+                ctx.gameMode.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+                status.set("lune.status.self_preservation.fighting_from_emergency_cover", hostile.getName().getString());
+                return TaskStatus.RUNNING;
+            }
         }
 
         // A pillar is not cover from arrows: once it is secured, staying still just gives a
@@ -1854,7 +2318,11 @@ public final class SelfPreservationTask implements WhileMonitor {
         return evadeMeleeThreat(ctx);
     }
 
-    /** Strike at close range while backpedalling so a melee hostile cannot pin the player in place. */
+    /**
+     * Strike at close range while backpedalling so a melee hostile cannot pin the player in place.
+     * With fighting back switched off it is the backpedal alone: facing the mob, stepping where the
+     * ground was checked, and never a swing.
+     */
     private TaskStatus emergencyMeleeCombat(BotContext ctx) {
         stopRecovery(ctx);
 
@@ -1867,7 +2335,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         }
 
         ItemStack held = ctx.player.getItemInHand(InteractionHand.MAIN_HAND);
-        if (!InventoryHelper.isCombatWeapon(held)) {
+        if (options.fightBack() && !InventoryHelper.isCombatWeapon(held)) {
             if (equippedSomethingBetter(ctx, held)) {
                 status.set("lune.status.self_preservation.equipping_weapon_while_retreating_from", hostile.getName().getString());
                 // Equip changes the selected hotbar slot immediately. Re-read the hand so the
@@ -1888,7 +2356,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         // a zombie free to hit us while the retreat turn is still settling.  The server validates
         // the entity reach on the attack packet, so an out-of-reach packet is harmless, while a
         // charged in-reach swing is the only useful action when backpedalling is blocked.
-        boolean attacked = ctx.player.getAttackStrengthScale(0.0F) >= 1.0F;
+        boolean attacked = options.fightBack() && ctx.player.getAttackStrengthScale(0.0F) >= 1.0F;
         if (attacked) {
             ctx.gameMode.attack(ctx.player, hostile);
             ctx.gameMode.swing(InteractionHand.MAIN_HAND);
@@ -1903,7 +2371,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         // same tick it had turned it to the mob: the two turns cancelled, the head crept off the mob
         // a few degrees a tick, and forward-and-sprint along it ran the bot at the mob and round it,
         // on ground nothing had checked - at a bastion, into the gaps and off the bridges.
-        Vec3 desired = awayFrom(ctx, hostile);
+        Vec3 desired = awayFromChasers(ctx);
         boolean strafing = meleeStallTicks >= MELEE_STALL_TICKS;
         if (strafing) {
             if (++meleeStrafeTicks >= 8) {
@@ -1919,7 +2387,11 @@ public final class SelfPreservationTask implements WhileMonitor {
             steps.steer(ctx, step, false);
         }
         String name = hostile.getName().getString();
-        if (step == null) {
+        if (!options.fightBack()) {
+            status.set(step == null ? "lune.status.self_preservation.holding_safe_ground_while_evading"
+                    : strafing ? "lune.status.self_preservation.sidestepping_from"
+                    : "lune.status.self_preservation.backing_away_from", name);
+        } else if (step == null) {
             status.set("lune.status.self_preservation.holding_ground_fighting", name);
         } else if (attacked) {
             status.set(strafing
@@ -1938,14 +2410,8 @@ public final class SelfPreservationTask implements WhileMonitor {
         stopRecovery(ctx);
         ctx.input.reset();
 
-        Vec3 away = ctx.player.position().subtract(hostile.position());
-        away = new Vec3(away.x, 0.0, away.z);
-        if (away.lengthSqr() < 1.0E-4) {
-            away = Vec3.directionFromRotation(0.0F, ctx.player.getYRot() + 180.0F);
-            away = new Vec3(away.x, 0.0, away.z);
-        } else {
-            away = away.normalize();
-        }
+        // Away from every hostile seen lately, not only the one being answered (Chasers).
+        Vec3 away = awayFromChasers(ctx);
 
         SafeStep.Step step = steps.toward(ctx, away, true);
         if (step == null) {
@@ -1953,7 +2419,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         }
         ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
         ctx.look.urgent();
-        ctx.look.lookAt(ctx.player, ctx.player.position().add(step.direction()));
+        ctx.look.lookAt(ctx.player, SafeStep.lookAlong(ctx.player, step));
         steps.steer(ctx, step, true);
 
         // Switch the preferred side periodically so a single blocked direction cannot turn this
@@ -1984,7 +2450,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         }
 
         ItemStack held = ctx.player.getItemInHand(InteractionHand.MAIN_HAND);
-        if (!InventoryHelper.isCombatWeapon(held)) {
+        if (options.fightBack() && !InventoryHelper.isCombatWeapon(held)) {
             if (equippedSomethingBetter(ctx, held)) {
                 held = ctx.player.getItemInHand(InteractionHand.MAIN_HAND);
             }
@@ -1993,7 +2459,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
         ctx.look.urgent();
         ctx.look.lookAt(ctx.player, hostile.getEyePosition());
-        boolean attacked = ctx.player.distanceTo(hostile) <= EMERGENCY_ATTACK_REACH
+        boolean attacked = options.fightBack() && ctx.player.distanceTo(hostile) <= EMERGENCY_ATTACK_REACH
                 && ctx.player.getAttackStrengthScale(0.0F) >= 1.0F;
         if (attacked) {
             ctx.gameMode.attack(ctx.player, hostile);
@@ -2027,14 +2493,8 @@ public final class SelfPreservationTask implements WhileMonitor {
     /** Move away from a melee hostile when no route or building material remains. */
     private TaskStatus evadeMeleeThreat(BotContext ctx) {
         stopRecovery(ctx);
-        Vec3 away = ctx.player.position().subtract(hostile.position());
-        away = new Vec3(away.x, 0.0, away.z);
-        if (away.lengthSqr() < 1.0E-4) {
-            away = Vec3.directionFromRotation(0.0F, ctx.player.getYRot() + 180.0F);
-            away = new Vec3(away.x, 0.0, away.z);
-        } else {
-            away = away.normalize();
-        }
+        // Away from every hostile seen lately, not only the one being answered (Chasers).
+        Vec3 away = awayFromChasers(ctx);
         SafeStep.Step step = steps.toward(ctx, away, true);
         if (step == null) {
             ctx.input.reset();
@@ -2043,7 +2503,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         }
         ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
         ctx.look.urgent();
-        ctx.look.lookAt(ctx.player, ctx.player.position().add(step.direction()));
+        ctx.look.lookAt(ctx.player, SafeStep.lookAlong(ctx.player, step));
         steps.steer(ctx, step, true);
         status.set("lune.status.self_preservation.moving_away_from_without_building", hostile.getName().getString());
         return TaskStatus.RUNNING;
@@ -2128,7 +2588,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             shieldHoldTicks = 0;
             shieldHoldClosest = distance;
             ctx.input.reset();
-            if (ctx.player.getAttackStrengthScale(0.0F) >= 1.0F
+            if (options.fightBack() && ctx.player.getAttackStrengthScale(0.0F) >= 1.0F
                     && ctx.look.isLookingAt(ctx.player, hostile.getEyePosition(), 15.0F)) {
                 ctx.gameMode.attack(ctx.player, hostile);
                 ctx.gameMode.swing(InteractionHand.MAIN_HAND);
@@ -2158,7 +2618,9 @@ public final class SelfPreservationTask implements WhileMonitor {
             status.set("lune.status.self_preservation.holding_shield_against", name);
             return TaskStatus.RUNNING;
         }
-        toward = toward.normalize();
+        // Walking it down is for the sword at the end of the walk. A card that may not fight back
+        // backs away behind the shield instead, still facing the arrows.
+        toward = options.fightBack() ? toward.normalize() : toward.normalize().scale(-1.0);
         SafeStep.Step step = steps.toward(ctx, toward, true);
         if (step == null) {
             ctx.input.reset();
@@ -2240,6 +2702,9 @@ public final class SelfPreservationTask implements WhileMonitor {
             // Nothing to close on. Stay lateral - the fireball branch is what actually hurts a
             // Ghast, and it needs the bot alive and on the ground to take the swing.
             desired = strafe;
+        } else if (!options.fightBack()) {
+            // Never closing on something it may not hit: open the range while the angle changes.
+            desired = toHostile.scale(-1.0).add(strafe).normalize();
         } else if (distance > EMERGENCY_ATTACK_REACH + 0.4) {
             // A lateral-only strafe survives arrows but never reaches the shooter. Close while
             // changing the firing angle, then the attack check above takes over at sword range.
@@ -2256,7 +2721,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         }
         ctx.look.setMaxTurnPerTick(CLUTCH_TURN_SPEED);
         ctx.look.urgent();
-        ctx.look.lookAt(ctx.player, ctx.player.position().add(step.direction()));
+        ctx.look.lookAt(ctx.player, SafeStep.lookAlong(ctx.player, step));
         steps.steer(ctx, step, true);
         status.set(unreachable
                         ? "lune.status.self_preservation.strafing_out_line_of_fire_from"
@@ -2395,7 +2860,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         if (++endermanShelterTicks > MAX_ENDERMAN_SHELTER_TICKS) {
             // A failed roof is deterministic here. Move only along a visibly safe direction and
             // keep the camera below the Enderman instead of falling into the normal attack path.
-            Vec3 away = awayFrom(ctx, hostile);
+            Vec3 away = awayFromChasers(ctx);
             SafeStep.Step step = steps.toward(ctx, away, true);
             if (step != null) {
                 ctx.look.lookAt(ctx.player, ctx.player.position().add(step.direction().scale(0.75)));
@@ -2498,16 +2963,6 @@ public final class SelfPreservationTask implements WhileMonitor {
         return fallback;
     }
 
-    private static Vec3 awayFrom(BotContext ctx, LivingEntity entity) {
-        Vec3 away = ctx.player.position().subtract(entity.position());
-        away = new Vec3(away.x, 0.0, away.z);
-        if (away.lengthSqr() < 1.0E-4) {
-            away = Vec3.directionFromRotation(0.0F, ctx.player.getYRot() + 180.0F);
-            return new Vec3(away.x, 0.0, away.z);
-        }
-        return away.normalize();
-    }
-
     private static boolean isRangedThreat(LivingEntity entity) {
         if (entity == null) {
             return false;
@@ -2569,13 +3024,88 @@ public final class SelfPreservationTask implements WhileMonitor {
                                 || (Hostility.dangerousOnceProvoked(entity)
                                         && justAttackedThePlayer(ctx, living))
                                 || isRecentPlayerAttacker(ctx, living)));
-        cachedNearest = found.stream()
+        //
+        // The nearest it can see is the one the guard answers. Every one it sees is remembered where
+        // it stood, because an escape plans round all of them, so the tracing goes on past the
+        // nearest to a handful (MAX_CHASERS_TRACED).
+        List<LivingEntity> nearestFirst = found.stream()
                 .map(LivingEntity.class::cast)
                 .sorted(Comparator.comparingDouble(entity -> entity.distanceToSqr(ctx.player)))
-                .filter(living -> hasLineOfSight(ctx, living) || justAttackedThePlayer(ctx, living))
-                .findFirst()
-                .orElse(null);
+                .toList();
+        cachedNearest = null;
+        int traced = 0;
+        for (LivingEntity living : nearestFirst) {
+            if (cachedNearest != null && traced >= MAX_CHASERS_TRACED) {
+                break;
+            }
+            traced++;
+            if (hasLineOfSight(ctx, living) || justAttackedThePlayer(ctx, living)) {
+                sightings.put(living.getId(), new Sighting(living, living.position(), ctx.player.tickCount));
+                if (cachedNearest == null) {
+                    cachedNearest = living;
+                }
+            }
+        }
         return cachedNearest;
+    }
+
+    /**
+     * Every hostile seen lately, as an escape knows them: each where it was last seen, the one being
+     * answered where it is, and a Creeper with the berth of its blast.
+     */
+    private Chasers chasers(BotContext ctx) {
+        int now = ctx.player.tickCount;
+        boolean runs = GotoTask.mayRun(ctx);
+        List<Chasers.Chaser> known = new ArrayList<>();
+        boolean answered = false;
+        java.util.Iterator<Sighting> remembered = sightings.values().iterator();
+        while (remembered.hasNext()) {
+            Sighting sighting = remembered.next();
+            LivingEntity entity = sighting.entity();
+            if (!entity.isAlive() || entity.level() != ctx.player.level()
+                    || now < sighting.tick() || now - sighting.tick() > HOSTILE_MEMORY_TICKS) {
+                remembered.remove();
+                continue;
+            }
+            if (entity == hostile) {
+                answered = true;
+                known.add(chaser(entity, entity.position(), runs));
+            } else {
+                known.add(chaser(entity, sighting.at(), runs));
+            }
+        }
+        if (!answered && hostile != null && hostile.isAlive()) {
+            known.add(chaser(hostile, hostile.position(), runs));
+        }
+        return new Chasers(known);
+    }
+
+    /**
+     * One hostile as a run knows it. Its pace is read off its own movement speed, which the server
+     * sends with every mob - so a baby Zombie, faster than a walking player, is reckoned as fast as
+     * it is, and a modded mob as whatever its speed says.
+     */
+    private static Chasers.Chaser chaser(LivingEntity entity, Vec3 at, boolean runs) {
+        double pace = Chasers.pace(entity.getAttributeValue(Attributes.MOVEMENT_SPEED), runs);
+        if (Hostility.fuseLit(entity)) {
+            // Lit, it stands where it is and goes off there: everything its blast reaches is the
+            // core, and the route goes on past the seven blocks at which the fuse goes out.
+            return new Chasers.Chaser(at.x, at.y, at.z, CREEPER_FUSE_BERTH, CREEPER_BLAST, pace, CREEPER_BLAST);
+        }
+        if (entity instanceof Creeper) {
+            return new Chasers.Chaser(at.x, at.y, at.z, CREEPER_RUN_BERTH, CREEPER_STRIKE, pace, CREEPER_CORE);
+        }
+        return new Chasers.Chaser(at.x, at.y, at.z, RUN_AVOID_RADIUS, MELEE_STRIKE, pace);
+    }
+
+    /** The flat way away from every chaser, as a unit vector; behind the head when they cancel out. */
+    private Vec3 awayFromChasers(BotContext ctx) {
+        double[] away = chasers(ctx).away(ctx.player.getX(), ctx.player.getZ());
+        if (away != null) {
+            return new Vec3(away[0], 0.0, away[1]);
+        }
+        Vec3 back = Vec3.directionFromRotation(0.0F, ctx.player.getYRot() + 180.0F);
+        return new Vec3(back.x, 0.0, back.z).normalize();
     }
 
     /**
@@ -3560,29 +4090,156 @@ public final class SelfPreservationTask implements WhileMonitor {
         return null;
     }
 
-    private static BlockPos retreatPoint(BotContext ctx, LivingEntity hostile) {
-        double awayX = ctx.player.getX() - hostile.getX();
-        double awayZ = ctx.player.getZ() - hostile.getZ();
-        double length = Math.max(0.001, Math.hypot(awayX, awayZ));
-        double baseAngle = Math.atan2(awayZ, awayX);
+    /**
+     * Where to run to: of the standable spots round the bot, not beside lava, the one the bot gets to
+     * with the most room left - straight away from the chasers first, and round as far as straight
+     * back, because with chasers on both sides the way out can be to one side. Null when nowhere the
+     * bot can get to leaves more room than where it stands.
+     *
+     * <p>Room is how far the chasers have to walk before they are near enough to hurt someone on the
+     * spot, read off the ground each covers on foot ({@link ChaserReach#toStrike}), not how far it
+     * is as the crow flies: a spot across a gap they cannot jump is a long way round for them, or out
+     * of their reach altogether, however near it looks - so long as the gap is wider than their arm,
+     * or their fuse. That is what the user played on the maze (2026-10-18) - a jump every three
+     * seconds, an island every six, five minutes untouched - and why spots three blocks off, a
+     * landing across a gap, are looked at too.</p>
+     *
+     * <p>A spot is weighed by the way there, the way the route will go ({@link ChaserReach#runner},
+     * priced by {@code avoid} as the route is): by the room it still has once the bot has run that
+     * far and each chaser has walked its pace of it ({@link Chasers#lead}), and never by a way a
+     * chaser gets to first ({@link Chasers#cutOff}) while there is another. A spot fourteen blocks
+     * off was once a sixty-six block route round the islands, and the chasers cut across it. When
+     * every way is cut off - pinned in a corridor with a chaser at each end - the way they come
+     * nearest to striking last is taken ({@link Chasers#worstLead}): taking none stood the bot still
+     * to be struck. A run keeps its way when two spots are near enough alike
+     * ({@link #COMMIT_BONUS}), and never picks a spot its route has already failed to reach.</p>
+     *
+     * @param avoid what the route there keeps clear of, or null for a route that keeps clear of
+     *              nothing
+     */
+    private BlockPos retreatPoint(BotContext ctx, Chasers chasers, AStarPathfinder.Avoid avoid) {
+        com.etka.lune.bot.LuneProfiler.push("retreat point");
+        try {
+            return pickRetreat(ctx, chasers, avoid);
+        } finally {
+            com.etka.lune.bot.LuneProfiler.pop();
+        }
+    }
+
+    private BlockPos pickRetreat(BotContext ctx, Chasers chasers, AStarPathfinder.Avoid avoid) {
+        double fromX = ctx.player.getX();
+        double fromZ = ctx.player.getZ();
+        double[] away = chasers.away(fromX, fromZ);
+        Vec3 back = Vec3.directionFromRotation(0.0F, ctx.player.getYRot() + 180.0F);
+        double baseAngle = away != null ? Math.atan2(away[1], away[0]) : Math.atan2(back.z, back.x);
         double[] turns = {0.0, Math.PI / 6, -Math.PI / 6, Math.PI / 3, -Math.PI / 3,
-                Math.PI / 2, -Math.PI / 2};
-        for (int distance : new int[]{14, 11, 8, 5}) {
+                Math.PI / 2, -Math.PI / 2, 2 * Math.PI / 3, -2 * Math.PI / 3,
+                5 * Math.PI / 6, -5 * Math.PI / 6, Math.PI};
+        // One field per chaser, because each strikes from its own distance and walks at its own pace.
+        List<Chasers.Chaser> known = chasers.all();
+        List<ChaserReach> fields = new ArrayList<>(known.size());
+        for (BlockPos stand : chasers.feet()) {
+            fields.add(ChaserReach.from(ctx.level, List.of(stand)));
+        }
+        java.util.Map<Long, double[]> struck = new java.util.HashMap<>();
+        java.util.function.Function<BlockPos, double[]> toStrike = spot -> struck.computeIfAbsent(spot.asLong(),
+                key -> {
+                    double[] walks = new double[fields.size()];
+                    for (int i = 0; i < fields.size(); i++) {
+                        walks[i] = fields.get(i).toStrike(spot, known.get(i).strike());
+                    }
+                    return walks;
+                });
+        BlockPos feet = MovementHelper.feetPosition(ctx.player);
+        double here = Math.min(Chasers.OUT_OF_REACH, soonest(toStrike.apply(feet)));
+        lastRoom = here;
+        ChaserReach runner = ChaserReach.runner(ctx.level, feet,
+                GotoTask.mayRun(ctx) ? GapJumpPolicy.MAX_SPRINT_GAP : GapJumpPolicy.MAX_GAP, avoid);
+        BlockPos best = null;
+        double bestScore = Double.NEGATIVE_INFINITY;
+        // The least bad of the ways a chaser gets to first, for when there is no other: pinned
+        // between two of them, a body that takes no way at all is struck where it stands.
+        BlockPos leastBad = null;
+        double leastBadWorst = Double.NEGATIVE_INFINITY;
+        for (int distance : new int[]{14, 11, 8, 5, 3}) {
             for (double turn : turns) {
                 double angle = baseAngle + turn;
-                int x = (int) Math.floor(ctx.player.getX() + Math.cos(angle) * distance);
-                int z = (int) Math.floor(ctx.player.getZ() + Math.sin(angle) * distance);
+                int x = (int) Math.floor(fromX + Math.cos(angle) * distance);
+                int z = (int) Math.floor(fromZ + Math.sin(angle) * distance);
                 BlockPos candidate = MovementHelper.findStandableNearY(ctx.level, x, z,
                         ctx.player.blockPosition().getY(), ctx.level.getMinY(),
                         ctx.level.getMaxY() - 2, 5);
-                if (candidate != null && !MovementHelper.nearLava(ctx.level, candidate)
-                        && candidate.distSqr(hostile.blockPosition())
-                        > ctx.player.blockPosition().distSqr(hostile.blockPosition())) {
-                    return candidate;
+                if (candidate == null || MovementHelper.nearLava(ctx.level, candidate)
+                        || failedNear(candidate)) {
+                    continue;
+                }
+                double[] walks = toStrike.apply(candidate);
+                if (Math.min(Chasers.OUT_OF_REACH, soonest(walks)) <= here + 1.0E-6) {
+                    continue;
+                }
+                // The way there, and how far the bot has run at each block of it. A body standing
+                // nowhere a way can start from - mid-fall, in water - has only the straight line.
+                List<BlockPos> way = runner.isEmpty() ? List.of(feet, candidate) : runner.way(candidate);
+                if (way.isEmpty()) {
+                    continue;
+                }
+                double[] run = new double[way.size()];
+                double[][] along = new double[way.size()][];
+                for (int k = 0; k < way.size(); k++) {
+                    BlockPos step = way.get(k);
+                    run[k] = runner.isEmpty()
+                            ? Math.hypot(step.getX() + 0.5 - fromX, step.getZ() + 0.5 - fromZ)
+                            : runner.walked(step);
+                    along[k] = chasers.clearByDistance(step.getX() + 0.5, step.getZ() + 0.5, run[k])
+                            ? null : toStrike.apply(step);
+                }
+                double worst = chasers.worstLead(run, along);
+                if (worst < 0.0) {
+                    if (worst > leastBadWorst + 1.0E-6) {
+                        leastBad = candidate;
+                        leastBadWorst = worst;
+                    }
+                    continue;
+                }
+                double toX = candidate.getX() + 0.5;
+                double toZ = candidate.getZ() + 0.5;
+                double score = chasers.lead(walks, run[run.length - 1]);
+                if (runHeading != null) {
+                    double length = Math.hypot(toX - fromX, toZ - fromZ);
+                    if (length > 1.0E-6
+                            && ((toX - fromX) * runHeading[0] + (toZ - fromZ) * runHeading[1]) / length > 0.5) {
+                        score += COMMIT_BONUS;
+                    }
+                }
+                if (score > bestScore + 1.0E-6) {
+                    best = candidate;
+                    bestScore = score;
                 }
             }
         }
-        return null;
+        return best != null ? best : leastBad;
+    }
+
+    /**
+     * Whether {@code spot} is one the run already failed to reach this chase, or within the reach of
+     * its goal of one: a spot a block from a failed one is mostly the same goal, and the same way.
+     */
+    private boolean failedNear(BlockPos spot) {
+        for (long failed : failedRetreats) {
+            if (approach.near(BlockPos.of(failed), spot)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The soonest of a block's walks to strike it. */
+    private static double soonest(double[] walks) {
+        double soonest = Double.POSITIVE_INFINITY;
+        for (double walk : walks) {
+            soonest = Math.min(soonest, walk);
+        }
+        return soonest;
     }
 
     private static boolean compare(double actual, String comparison, double expected) {
@@ -3598,6 +4255,7 @@ public final class SelfPreservationTask implements WhileMonitor {
     public void onControlReleased(BotContext ctx) {
         finishLearningEpisode(ctx, ctx.player.isAlive() ? TaskStatus.SUCCESS : TaskStatus.FAILED);
         stopRecovery(ctx);
+        stopRun(ctx);
         ctx.debug.safety = "";
         threat = Threat.NONE;
         hostile = null;

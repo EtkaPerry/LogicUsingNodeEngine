@@ -93,6 +93,7 @@ import net.minecraft.world.level.block.Blocks;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -341,6 +342,19 @@ public final class CommandRegistry {
             "find_structure", () -> CompassHook.EXPLORER.installed(),
             "backpack_deposit", Backpacks::anyInstalled,
             "backpack_take", Backpacks::anyInstalled);
+
+    /** Whose a card of a mod built on Lune is, and the folder the editor shows it in. */
+    private record AddonCard(String addon, String folder) {}
+
+    /**
+     * Cards a mod built on Lune brings for a body of its own - Lumi's Follow Me - by card id.
+     *
+     * <p>Registered like every other card, so a graph holding one opens, draws and explains itself,
+     * and its settings are edited with the same panel. Never offered in the player's palette: the
+     * player's run can do nothing with one but fail, and a card that can only fail is not offered
+     * (see {@link #MOD_CARDS}). The editor offers them only while it holds a graph of that mod's.</p>
+     */
+    private static final Map<String, AddonCard> ADDON_CARDS = new LinkedHashMap<>();
 
     static {
         register(new CommandDef("mine", List.of(
@@ -963,6 +977,7 @@ public final class CommandRegistry {
                 new Param.Ints("monster_distance", 8, 1, 64).under("protect_monsters"),
                 new Param.Bool("protect_fireballs", true).under("protect_monsters"),
                 new Param.Bool("build_cover", true).under("protect_monsters"),
+                new Param.Bool("fight_back", true).under("protect_monsters"),
                 new Param.Bool("protect_health", true),
                 new Param.Choice("health_compare", List.of("At most", "Less than", "At least", "Greater than"), "At most")
                         .under("protect_health"),
@@ -980,7 +995,8 @@ public final class CommandRegistry {
                         def.boolValue("clutch_boat"),
                         def.boolValue("clutch_cushion"),
                         def.boolValue("protect_fireballs"),
-                        def.boolValue("build_cover")))));
+                        def.boolValue("build_cover"),
+                        def.boolValue("fight_back")))));
 
         register(new CommandDef("stay_near", List.of(
                 new Param.Choice("anchor", List.of(StayNearTask.FROM_RUN_START, StayNearTask.FROM_WAYPOINT),
@@ -998,6 +1014,48 @@ public final class CommandRegistry {
 
     private static void register(CommandDef def) {
         COMMANDS.add(def);
+    }
+
+    /**
+     * Adds a card of a mod built on Lune, from that mod's client entry point and before any panel
+     * opens. The same card twice is nothing; a card under a name already taken is refused, since a
+     * saved graph names its cards by id.
+     *
+     * @param addon  the mod's id, which {@link #addonCards} is asked by
+     * @param folder the folder the editor files it under, in English like Lune's own folders
+     */
+    public static synchronized void registerAddon(String addon, String folder, CommandDef def) {
+        if (byId(def.id()) != null) {
+            if (ADDON_CARDS.containsKey(def.id())) {
+                return;
+            }
+            throw new IllegalArgumentException("A card is already called " + def.id());
+        }
+        COMMANDS.add(def);
+        ADDON_CARDS.put(def.id(), new AddonCard(addon, folder));
+    }
+
+    /** Takes an add-on's card away again. For tests only: a mod's cards stay while the game runs. */
+    static synchronized void forgetAddon(String id) {
+        if (ADDON_CARDS.remove(id) != null) {
+            COMMANDS.removeIf(def -> def.id().equals(id));
+        }
+    }
+
+    /** Whether a card belongs to a mod built on Lune, and so to that mod's bodies alone. */
+    public static boolean isAddonCard(String id) {
+        return ADDON_CARDS.containsKey(id);
+    }
+
+    /** The cards one mod built on Lune has registered, in the order it registered them. */
+    public static synchronized List<CommandDef> addonCards(String addon) {
+        List<CommandDef> cards = new ArrayList<>();
+        ADDON_CARDS.forEach((id, card) -> {
+            if (card.addon().equals(addon)) {
+                cards.add(byId(id));
+            }
+        });
+        return cards;
     }
 
     /**
@@ -1035,6 +1093,10 @@ public final class CommandRegistry {
      * useful in a way that a card that is not there is not.</p>
      */
     public static boolean isAvailable(String id) {
+        if (ADDON_CARDS.containsKey(id)) {
+            // Somebody else's card: offered only in the editor of that body's graph.
+            return false;
+        }
         BooleanSupplier gate = MOD_CARDS.get(id);
         return gate == null || gate.getAsBoolean();
     }
@@ -1057,7 +1119,8 @@ public final class CommandRegistry {
 
     /** Returns the task-palette folder for a command. */
     public static String categoryFor(String id) {
-        return COMMAND_CATEGORIES.getOrDefault(id, "Other");
+        AddonCard addon = ADDON_CARDS.get(id);
+        return addon != null ? addon.folder() : COMMAND_CATEGORIES.getOrDefault(id, "Other");
     }
 
     /** Looks up a command by its stored id; null when a task names one that no longer exists. */

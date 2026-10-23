@@ -4,6 +4,7 @@ import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.animal.polarbear.PolarBear;
+import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.monster.piglin.Piglin;
 import net.minecraft.world.entity.monster.piglin.PiglinAi;
@@ -67,6 +68,16 @@ public final class Hostility {
      */
     public static boolean dangerousOnceProvoked(Entity entity) {
         return entity instanceof Enemy || entity instanceof PolarBear;
+    }
+
+    /**
+     * Whether this is a Creeper with its fuse lit: swelling - which the server sends every client,
+     * and which a Creeper does, standing still, from three blocks until its target is seven off -
+     * or set alight by flint and steel. Lit, it goes off a second and a half later wherever it
+     * stands, and its blast reaches about twice its power, six blocks for an ordinary Creeper.
+     */
+    public static boolean fuseLit(Entity entity) {
+        return entity instanceof Creeper creeper && (creeper.getSwellDir() > 0 || creeper.isIgnited());
     }
 
     /**

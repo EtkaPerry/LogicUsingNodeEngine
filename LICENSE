@@ -1,5 +1,5 @@
 Lune (Logic Using Node Engine) — Personal Use License
-Version 1.2
+Version 1.3
 
 Copyright (c) 2026 Etka. All rights reserved.
 
@@ -30,28 +30,29 @@ routines and documentation. "The Author" means the copyright holder named above.
       enough to rebuild the Software — when discussing it, reviewing it,
       reporting a bug, or asking for or giving help.
 
-   g. Add Lune to a free modpack published on Modrinth by listing it: the
-      modpack's entry points at the Author's own Modrinth project, and Modrinth
-      delivers the Author's own file to the player. That is the whole permission.
-      You are adding Lune to a list, not shipping a copy of it — the file never
-      leaves the Author's project page, and the launcher fetches it from there.
+   g. Add Lune to a free modpack published on CurseForge by listing it: the
+      modpack's entry points at the Author's own CurseForge project, and
+      CurseForge delivers the Author's own file to the player. That is the
+      whole permission. You are adding Lune to a list, not shipping a copy of
+      it — the file never leaves the Author's project page, and the launcher
+      fetches it from there.
 
       So this does not let you bundle the jar inside the pack, in an overrides
       folder or anywhere else, upload it as a project of your own, or rename,
       repackage or modify it. The modpack must credit Lune, link to the official
       repository, and must not present Lune as someone else's work.
 
-      The Author publishes the Software on a Modrinth project page under the
-      Author's control, and Modrinth may host and deliver it for that page and
-      for the modpack listings above.
+      The Author publishes the Software on a CurseForge project page under the
+      Author's control, and CurseForge may host and deliver it for that page
+      and for the modpack listings above.
 
 
 2. WHAT YOU MAY NOT DO
 
    a. Publish, redistribute, mirror, re-upload or otherwise make the Software
       available to anyone else, in source or compiled form, whole or in part,
-      modified or unmodified, except for the Modrinth permissions in section
-      1(g). This includes other mod portals, launchers, modpacks, file hosts,
+      modified or unmodified, except for the CurseForge permissions in
+      section 1(g). This includes other mod portals, launchers, modpacks, file hosts,
       archives, and any repository other than a platform fork permitted by
       section 1(e).
 

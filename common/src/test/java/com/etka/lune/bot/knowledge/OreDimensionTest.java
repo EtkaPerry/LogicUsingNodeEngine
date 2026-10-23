@@ -16,9 +16,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The one ore profile that names a world, and the form that name has to be in.
+ * The ore profile that names a world, and the form that name has to be in.
  *
- * <p>Ancient Debris is the only entry in the table with a dimension, and the filter that reads it
+ * <p>Ancient Debris was the first entry in the table with a dimension, and the filter that reads it
  * compared {@code ResourceKey.toString()} - which prints
  * {@code ResourceKey[minecraft:dimension / minecraft:the_nether]} - against the plain id a profile
  * holds. They never matched, so the profile was skipped everywhere including the Nether, and a
@@ -65,10 +65,17 @@ class OreDimensionTest {
         assertNull(WorldDimension.byId("someothermod:moon"));
     }
 
-    /** Every other entry generates wherever the bot is standing, and says so by saying nothing. */
+    /**
+     * The ores generate wherever the bot is standing, and say so by saying nothing. Deepslate, a
+     * layer rather than an ore, names the Overworld in the same form; {@link OreDepthTest} says why.
+     */
     @Test
-    void nothingElseInTheTableNamesAWorld() {
+    void theOresNameNoWorldAndDeepslateNamesItsOwn() {
         assertTrue(OreKnowledge.forBlock(Blocks.DIAMOND_ORE).orElseThrow().dimension().isEmpty());
         assertTrue(OreKnowledge.forBlock(Blocks.IRON_ORE).orElseThrow().dimension().isEmpty());
+        assertEquals(Level.OVERWORLD.identifier().toString(),
+                OreKnowledge.forBlock(Blocks.DEEPSLATE).orElseThrow().dimension().orElseThrow());
+        assertEquals(WorldDimension.OVERWORLD, WorldDimension.byId(
+                OreKnowledge.forBlock(Blocks.DEEPSLATE).orElseThrow().dimension().orElseThrow()));
     }
 }

@@ -438,6 +438,46 @@ class AStarPathfinderTest {
                 "never on top of the fence: " + result.path());
     }
 
+    /**
+     * A loot barrel in a modpack that guards them, in a corridor walled with obsidian beside it.
+     * The cheapest dig is through the barrel; once the server has refused it, a route that may dig
+     * goes through the obsidian instead of planning the barrel again (2026-10-13). Far off in z,
+     * because the refusal is remembered for the session and every test shares it.
+     */
+    @Test
+    void aRouteThatMayDigGoesRoundABlockTheServerRefused() {
+        int z = 7_000;
+        TestLevel level = TestLevel.scene()
+                .floor(0, 8, z, z + 2, 63)
+                .fill(4, 4, 64, 65, z + 1, z + 2, Blocks.OBSIDIAN)
+                .fill(4, 4, 64, 65, z, z, Blocks.BARREL);
+        BlockPos from = new BlockPos(0, 64, z);
+        Goal goal = new Goals.Block(new BlockPos(8, 64, z));
+
+        Set<BlockPos> barrels = Set.of(new BlockPos(4, 64, z), new BlockPos(4, 65, z));
+
+        List<BlockPos> before = AStarPathfinder.find(level, from, goal, digging()).path();
+        assertTrue(dug(level, before).stream().anyMatch(barrels::contains),
+                "a barrel digs quicker than obsidian: " + before);
+
+        barrels.forEach(pos -> com.etka.lune.bot.memory.RefusedBreaks.get()
+                .remember(pos, level.getBlockState(pos)));
+        AStarPathfinder.Result after = AStarPathfinder.find(level, from, goal, digging());
+
+        assertTrue(after.reachedGoal(), after.path().toString());
+        assertTrue(dug(level, after.path()).stream().noneMatch(barrels::contains),
+                "never the refused barrel again: " + after.path());
+    }
+
+    /** Every block a route clears, in the order the executor would clear them. */
+    private static List<BlockPos> dug(BlockGetter level, List<BlockPos> path) {
+        List<BlockPos> dug = new java.util.ArrayList<>();
+        for (int step = 1; step < path.size(); step++) {
+            dug.addAll(MovementHelper.stepClearance(level, path.get(step - 1), path.get(step)));
+        }
+        return dug;
+    }
+
     /** Standing in an open doorway, the way out is straight along it, not across the door's slab. */
     @Test
     void aDoorwayIsLeftTheWayItWasComeInBy() {
@@ -537,5 +577,227 @@ class AStarPathfinderTest {
         assertTrue(result.path().size() > 1, "a partial route is still worth walking");
         assertTrue(result.path().get(result.path().size() - 1).getX() > 0,
                 "it should end up nearer the goal than it started");
+    }
+
+    /** The nearest the route comes to a point, horizontally, from the middle of each waypoint. */
+    private static double closestApproach(List<BlockPos> path, double x, double z) {
+        double closest = Double.MAX_VALUE;
+        for (BlockPos node : path) {
+            closest = Math.min(closest, Math.hypot(node.getX() + 0.5 - x, node.getZ() + 0.5 - z));
+        }
+        return closest;
+    }
+
+    /**
+     * A run from a mob: the straight way to where it is going passes the mob, and there is room to go
+     * round. Without the mob in the search the route walks through it; with it, the route bends.
+     */
+    @Test
+    void aRouteKeepsClearOfTheMobItIsRunningFrom() {
+        TestLevel level = TestLevel.scene().floor(0, 12, -6, 6, 63);
+        BlockPos from = new BlockPos(0, 64, 0);
+        BlockPos to = new BlockPos(12, 64, 0);
+        AStarPathfinder.Avoid zombie = new AStarPathfinder.Avoid(6.5, 64.0, 0.5, 5.0, 30.0);
+
+        AStarPathfinder.Result plain = AStarPathfinder.find(level, from, new Goals.Block(to),
+                AStarPathfinder.Settings.walking());
+        AStarPathfinder.Result clear = AStarPathfinder.find(level, from, new Goals.Block(to),
+                AStarPathfinder.Settings.walking().withAvoid(zombie));
+
+        assertTrue(plain.reachedGoal());
+        assertTrue(clear.reachedGoal());
+        assertTrue(closestApproach(plain.path(), 6.5, 0.5) < 1.0, "nothing said there was a mob there");
+        assertTrue(closestApproach(clear.path(), 6.5, 0.5) > 2.0,
+                "a Zombie hits from two blocks off: " + clear.path());
+    }
+
+    /**
+     * A run from two mobs in a row (2026-10-18: priced round one Zombie of three, the route ran the
+     * bot into the next). Both are kept clear of, and ground near both pays for both.
+     */
+    @Test
+    void aRouteKeepsClearOfEveryMobItIsRunningFrom() {
+        TestLevel level = TestLevel.scene().floor(0, 12, -6, 6, 63);
+        AStarPathfinder.Avoid two = new AStarPathfinder.Avoid(List.of(
+                new AStarPathfinder.Avoid.Zone(4.5, 64.0, 0.5, 5.0, 30.0),
+                new AStarPathfinder.Avoid.Zone(8.5, 64.0, 0.5, 5.0, 30.0)));
+        AStarPathfinder.Result clear = AStarPathfinder.find(level, new BlockPos(0, 64, 0),
+                new Goals.Block(new BlockPos(12, 64, 0)), AStarPathfinder.Settings.walking().withAvoid(two));
+
+        assertTrue(clear.reachedGoal());
+        assertTrue(closestApproach(clear.path(), 4.5, 0.5) > 2.0, "the first: " + clear.path());
+        assertTrue(closestApproach(clear.path(), 8.5, 0.5) > 2.0, "and the second: " + clear.path());
+        assertEquals(2 * 30.0 * 0.6 * 0.6, two.penalty(new BlockPos(6, 64, 0)), 1.0E-9,
+                "two blocks from each, a step there pays for both");
+    }
+
+    /**
+     * "People jump 4 blocks wide sometimes" (the user, 2026-10-18): three blocks of gap between two
+     * floors, and a long way round. A route that may sprint jumps it; one that may not goes round.
+     * The trench is two blocks deep, so a miss would not hurt and the jump is priced as a jump.
+     */
+    @Test
+    void aRouteThatMayRunJumpsThreeBlocksAndOneThatMayNotGoesRound() {
+        TestLevel level = TestLevel.scene().floor(-2, 0, 0, 0, 63).floor(4, 8, 0, 0, 63)
+                .floor(1, 3, 0, 0, 61)
+                .floor(-2, -2, 0, 6, 63).floor(-2, 8, 6, 6, 63).floor(8, 8, 0, 6, 63);
+        BlockPos from = new BlockPos(0, 64, 0);
+        BlockPos to = new BlockPos(8, 64, 0);
+
+        AStarPathfinder.Result ran = AStarPathfinder.find(level, from, new Goals.Block(to),
+                AStarPathfinder.Settings.walking().withMaxGap(GapJumpPolicy.MAX_SPRINT_GAP));
+        AStarPathfinder.Result walked = AStarPathfinder.find(level, from, new Goals.Block(to),
+                AStarPathfinder.Settings.walking());
+
+        assertTrue(ran.reachedGoal() && walked.reachedGoal());
+        assertTrue(ran.path().contains(new BlockPos(4, 64, 0)) && ran.path().size() < 8,
+                "over the gap: " + ran.path());
+        assertTrue(walked.path().stream().anyMatch(node -> node.getZ() == 6), "round: " + walked.path());
+    }
+
+    /**
+     * Two islands with lava under the gap between them and a bridge eight blocks along: any other
+     * route walks round to the bridge rather than jump the lava, and a run from a mob, which pays a
+     * fifth of that away from the mob, jumps - unless the mob stands at the take-off (2026-10-18).
+     */
+    @Test
+    void aRunJumpsOverLavaWhereAWalkGoesRound() {
+        TestLevel level = TestLevel.scene()
+                .floor(-2, 0, -2, 7, 63).floor(2, 6, -2, 7, 63).floor(-2, 6, 8, 10, 63)
+                .fill(1, 1, 62, 62, -2, 2, Blocks.LAVA);
+        BlockPos from = new BlockPos(0, 64, 0);
+        Goal across = new Goals.Block(new BlockPos(2, 64, 0));
+
+        AStarPathfinder.Result walked = AStarPathfinder.find(level, from, across, AStarPathfinder.Settings.walking());
+        AStarPathfinder.Avoid farOff = new AStarPathfinder.Avoid(List.of(
+                new AStarPathfinder.Avoid.Zone(-20.5, 64.0, -20.5, 5.0, 30.0)), 0.2);
+        AStarPathfinder.Result ran = AStarPathfinder.find(level, from, across,
+                AStarPathfinder.Settings.walking().withAvoid(farOff));
+        AStarPathfinder.Avoid atTheLip = new AStarPathfinder.Avoid(List.of(
+                new AStarPathfinder.Avoid.Zone(-1.5, 64.0, 0.5, 5.0, 30.0)), 0.2);
+        AStarPathfinder.Result besideIt = AStarPathfinder.find(level, from, across,
+                AStarPathfinder.Settings.walking().withAvoid(atTheLip));
+
+        assertTrue(walked.reachedGoal() && ran.reachedGoal() && besideIt.reachedGoal());
+        assertTrue(walked.path().stream().anyMatch(node -> node.getZ() >= 8), "round: " + walked.path());
+        assertEquals(List.of(from, new BlockPos(2, 64, 0)), ran.path(), "over the lava");
+        assertTrue(besideIt.path().stream().anyMatch(node -> node.getZ() >= 8),
+                "a jump from beside the mob is priced in full: " + besideIt.path());
+    }
+
+    /**
+     * A Creeper on the straight way across open ground (2026-10-18): a run's route goes round
+     * outside the four blocks in which it lights its fuse, never through them.
+     */
+    @Test
+    void aRunKeepsOutOfACreepersCore() {
+        TestLevel level = TestLevel.scene().floor(-2, 14, -9, 9, 63);
+        AStarPathfinder.Avoid creeper = new AStarPathfinder.Avoid(List.of(
+                new AStarPathfinder.Avoid.Zone(6.5, 64.0, 0.5, 7.0, 30.0, 4.0)), 0.2);
+        AStarPathfinder.Result run = AStarPathfinder.find(level, new BlockPos(0, 64, 0),
+                new Goals.Block(new BlockPos(12, 64, 0)), AStarPathfinder.Settings.walking().withAvoid(creeper));
+        assertTrue(run.reachedGoal(), run.path().toString());
+        assertTrue(run.path().stream().allMatch(node -> Math.hypot(node.getX() + 0.5 - 6.5, node.getZ() + 0.5 - 0.5) >= 4.0),
+                "round the core: " + run.path());
+    }
+
+    /**
+     * A body over a gap cannot step aside, so a jump that flies past a mob's core pays what standing
+     * in it would, even with the take-off and the landing outside it; with no core in the way the
+     * same jump is the short way.
+     */
+    @Test
+    void aJumpPaysForTheGroundItFliesOver() {
+        // Two ledges three blocks apart, joined the long way round by strips and a bridge at z = 6.
+        TestLevel level = TestLevel.scene().floor(-3, 0, 0, 0, 63).floor(-3, -3, 0, 6, 63)
+                .floor(4, 7, 0, 0, 63).floor(7, 7, 0, 6, 63).floor(-3, 7, 6, 6, 63);
+        BlockPos from = new BlockPos(0, 64, 0);
+        Goal across = new Goals.Block(new BlockPos(4, 64, 0));
+        AStarPathfinder.Settings running = AStarPathfinder.Settings.walking().withMaxGap(GapJumpPolicy.MAX_SPRINT_GAP);
+        AStarPathfinder.Avoid overTheGap = new AStarPathfinder.Avoid(List.of(
+                new AStarPathfinder.Avoid.Zone(2.5, 64.0, 0.5, 1.2, 1.0, 1.2)), 0.2);
+        AStarPathfinder.Avoid nothing = new AStarPathfinder.Avoid(List.of(
+                new AStarPathfinder.Avoid.Zone(-20.5, 64.0, -20.5, 1.0, 1.0)), 0.2);
+
+        AStarPathfinder.Result jumped = AStarPathfinder.find(level, from, across, running.withAvoid(nothing));
+        AStarPathfinder.Result round = AStarPathfinder.find(level, from, across, running.withAvoid(overTheGap));
+
+        assertEquals(List.of(from, new BlockPos(4, 64, 0)), jumped.path(), "over the gap");
+        assertTrue(round.path().stream().anyMatch(node -> node.getZ() >= 6), "round by the bridge: " + round.path());
+    }
+
+    /**
+     * A one-block gap of lava standing level with the floor, the only way across: the lowest floor
+     * of the maze is all gaps like it. Only a run from a mob jumps it (2026-10-18).
+     */
+    @Test
+    void onlyARunJumpsLavaLevelWithTheFloor() {
+        TestLevel level = TestLevel.scene().floor(-2, 0, -2, 2, 63).floor(2, 6, -2, 2, 63)
+                .fill(1, 1, 63, 63, -2, 2, Blocks.LAVA);
+        BlockPos from = new BlockPos(0, 64, 0);
+        Goal across = new Goals.Block(new BlockPos(2, 64, 0));
+        assertFalse(AStarPathfinder.find(level, from, across, AStarPathfinder.Settings.walking()).reachedGoal(),
+                "an ordinary route goes round, and there is no round");
+        AStarPathfinder.Avoid run = new AStarPathfinder.Avoid(List.of(
+                new AStarPathfinder.Avoid.Zone(-20.5, 64.0, -20.5, 5.0, 30.0)), 0.2);
+        AStarPathfinder.Result ran = AStarPathfinder.find(level, from, across,
+                AStarPathfinder.Settings.walking().withAvoid(run));
+        assertEquals(List.of(from, new BlockPos(2, 64, 0)), ran.path(), "jumped");
+    }
+
+    /**
+     * A one-block hole beside the way, lava at its bottom: the bastion of 2026-10-18 dropped a run
+     * into a pocket like it off a diagonal step that cut its corner. A route goes round by the two
+     * straight steps; a hole whose fall does no harm is cut across as before.
+     */
+    @Test
+    void aRouteGoesRoundTheCornerOfAHoleThatHurts() {
+        BlockPos from = new BlockPos(0, 64, 0);
+        BlockPos to = new BlockPos(1, 64, 1);
+        TestLevel lava = TestLevel.scene().floor(-2, 3, -2, 3, 63)
+                .set(1, 63, 0, Blocks.AIR).set(1, 62, 0, Blocks.AIR).set(1, 61, 0, Blocks.LAVA);
+        AStarPathfinder.Result round = AStarPathfinder.find(lava, from, new Goals.Block(to),
+                AStarPathfinder.Settings.walking());
+        assertEquals(List.of(from, new BlockPos(0, 64, 1), to), round.path(), "round the pocket");
+
+        TestLevel shallow = TestLevel.scene().floor(-2, 3, -2, 3, 63)
+                .set(1, 63, 0, Blocks.AIR).set(1, 62, 0, Blocks.STONE);
+        AStarPathfinder.Result cut = AStarPathfinder.find(shallow, from, new Goals.Block(to),
+                AStarPathfinder.Settings.walking());
+        assertEquals(List.of(from, to), cut.path(), "a block deep, no harm in it");
+    }
+
+    /** A ledge one block up across a hole, the only way on: hopped onto, the way a player does. */
+    @Test
+    void aHopUpOneBlockAcrossAHoleIsARoute() {
+        TestLevel level = TestLevel.scene().floor(-3, 0, 0, 0, 63).floor(2, 5, 0, 0, 64);
+        AStarPathfinder.Result result = AStarPathfinder.find(level, new BlockPos(0, 64, 0),
+                new Goals.Block(new BlockPos(5, 65, 0)), AStarPathfinder.Settings.walking());
+        assertTrue(result.reachedGoal(), result.path().toString());
+        int at = result.path().indexOf(new BlockPos(0, 64, 0));
+        assertEquals(new BlockPos(2, 65, 0), result.path().get(at + 1), result.path().toString());
+    }
+
+    @Test
+    void theOneWayPastAMobIsStillAWay() {
+        // A one-wide bridge with the mob on it: no way round, so the route goes by it after all.
+        TestLevel level = TestLevel.scene().floor(0, 12, 0, 0, 63);
+        AStarPathfinder.Avoid zombie = new AStarPathfinder.Avoid(6.5, 64.0, 0.5, 5.0, 30.0);
+        AStarPathfinder.Result result = AStarPathfinder.find(level, new BlockPos(0, 64, 0),
+                new Goals.Block(new BlockPos(12, 64, 0)), AStarPathfinder.Settings.walking().withAvoid(zombie));
+        assertTrue(result.reachedGoal(), "priced, never forbidden");
+    }
+
+    @Test
+    void theGroundRoundAMobCostsMostAtTheMiddleAndNothingAtTheEdge() {
+        AStarPathfinder.Avoid zombie = new AStarPathfinder.Avoid(0.5, 64.0, 0.5, 5.0, 30.0);
+        assertEquals(30.0, zombie.penalty(new BlockPos(0, 64, 0)), 1.0E-9);
+        assertEquals(0.0, zombie.penalty(new BlockPos(5, 64, 0)), 1.0E-9);
+        assertEquals(0.0, zombie.penalty(new BlockPos(9, 64, 0)), 1.0E-9);
+        double near = zombie.penalty(new BlockPos(2, 64, 0));
+        double far = zombie.penalty(new BlockPos(3, 64, 0));
+        assertTrue(near > far && far > 0.0, near + " then " + far);
+        assertEquals(zombie, AStarPathfinder.Settings.walking().withAvoid(zombie).withAllowSwim(false).avoid(),
+                "every other setting keeps the mob");
     }
 }

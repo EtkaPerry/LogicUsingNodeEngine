@@ -1,11 +1,14 @@
 package com.etka.lune.bot.util;
 
 import com.etka.lune.bot.BotContext;
-import net.minecraft.tags.ItemTags;
+import com.etka.lune.bot.catalog.ToolCatalog;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Picks the right tool for a block and makes sure it is actually in the player's hand.
@@ -17,7 +20,8 @@ import net.minecraft.world.level.block.state.BlockState;
  * tool the player doesn\u2019t have are refused rather than mined.
  * <p>
  * The whole inventory is searched, not just the hotbar, so a freshly crafted tool that lands in the
- * main pack is still usable. When needed it is swapped into the selected hotbar slot.
+ * main pack is still usable. When needed it is swapped into the selected hotbar slot. Which tool is
+ * {@link ToolCatalog#best}'s answer, the one a Lumi's hands use too.
  */
 public final class ToolSelector {
 
@@ -31,49 +35,11 @@ public final class ToolSelector {
      */
     public static int bestSlot(Player player, BlockState state) {
         Inventory inventory = player.getInventory();
-        boolean needsTool = state.requiresCorrectToolForDrops();
-
-        // What an empty hand would manage on this block, as the bar every tool has to beat.
-        float handSpeed = ItemStack.EMPTY.getDestroySpeed(state);
-
-        int best = NO_SLOT;
-        float bestSpeed = -1.0F;
-        boolean bestIsMiningTool = false;
+        List<ItemStack> stacks = new ArrayList<>(inventory.getContainerSize());
         for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-            ItemStack stack = inventory.getItem(slot);
-            // A wrong tool here isn\u2019t slow, it\u2019s destructive - skip it entirely.
-            if (needsTool && !stack.isCorrectToolForDrops(state)) {
-                continue;
-            }
-            float speed = stack.getDestroySpeed(state);
-            boolean isMiningTool = isMiningTool(stack);
-            // A tool that is no faster than bare hands is the wrong tool.
-            //
-            // Dirt, grass and sand break at the same speed with a pickaxe as with nothing at all -
-            // the pickaxe just loses durability doing it, and a staircase goes through a lot of
-            // dirt. Skipping a tool that offers no speed at all leaves the bare hand as the best
-            // option, which is what a player uses. It does not affect stone or wood, where the
-            // right tool is genuinely faster and so wins on speed anyway.
-            if (isMiningTool && speed <= handSpeed && !needsTool) {
-                continue;
-            }
-            // A flower, food, or other arbitrary item can tie a bare-hand speed on dirt/grass.
-            // Prefer an actual mining tool on ties so route clearing does not consume a task's
-            // decorative or edible stack and the next interaction starts with a sensible hand.
-            if (speed > bestSpeed || (speed == bestSpeed && isMiningTool && !bestIsMiningTool)) {
-                bestSpeed = speed;
-                best = slot;
-                bestIsMiningTool = isMiningTool;
-            }
+            stacks.add(inventory.getItem(slot));
         }
-        return best;
-    }
-
-    private static boolean isMiningTool(ItemStack stack) {
-        return stack.is(ItemTags.PICKAXES)
-                || stack.is(ItemTags.AXES)
-                || stack.is(ItemTags.SHOVELS)
-                || stack.is(ItemTags.HOES);
+        return ToolCatalog.best(stacks, state);
     }
 
     /** Whether this block can be mined for drops with anything in the player's inventory. */

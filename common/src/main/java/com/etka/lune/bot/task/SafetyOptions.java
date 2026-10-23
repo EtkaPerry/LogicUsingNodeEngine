@@ -17,17 +17,24 @@ package com.etka.lune.bot.task;
  * <p>Every one defaults to on, and that is what makes them safe to add. A card saved before these
  * existed has none of them stored, and {@code CommandDef.apply} leaves a parameter absent from the
  * file at its declared default - so an old task keeps doing exactly what it always did.
+ *
+ * @param fightBack whether a hostile that has the bot cornered is hit. Off, the card only ever gets
+ *                  away - backs off facing it, steps aside, builds cover - and never swings at a mob
+ *                  or takes a weapon into the hand to. The user asked for this (2026-10-17) to test
+ *                  the escape on its own: a chase that ends with the chaser punched into the lava
+ *                  says nothing about whether the bot could have run.
  */
 public record SafetyOptions(
         boolean waterClutch,
         boolean boatClutch,
         boolean cushionClutch,
         boolean answerFireballs,
-        boolean buildCover
+        boolean buildCover,
+        boolean fightBack
 ) {
 
     /** Everything on, which is what the card ships as and what an older saved card reads back as. */
     public static SafetyOptions all() {
-        return new SafetyOptions(true, true, true, true, true);
+        return new SafetyOptions(true, true, true, true, true, true);
     }
 }

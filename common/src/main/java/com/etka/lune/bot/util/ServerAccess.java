@@ -249,6 +249,41 @@ public final class ServerAccess {
         return true;
     }
 
+    /**
+     * Whether one of an add-on's who-rules lets this player through on the server in hand - for an
+     * add-on's own screens to say so before anything is asked. The server holds itself to these
+     * rules, whatever this says: an add-on rule is about what the server does.
+     *
+     * <p>The player's own world lets its owner through, as Lune's rules do. A server that has not
+     * answered, or never will, lets nobody through: a mod built on Lune is only there because Lune
+     * is there too, so a server with no answer has not given one yet.</p>
+     */
+    public static boolean addonAllows(Minecraft mc, String rule) {
+        if (mc == null) {
+            return false;
+        }
+        synchronized (ServerAccess.class) {
+            bind(mc.getConnection());
+            return mc.hasSingleplayerServer() || heard != null && heard.may(rule);
+        }
+    }
+
+    /** An add-on rule's value as the server last said it, or null when it has said none. */
+    public static synchronized String addonValue(String rule) {
+        return heard == null ? null : heard.rules().addons().get(rule);
+    }
+
+    /** Asks the server to change one add-on rule, as {@link #propose} asks for Lune's. */
+    public static boolean proposeAddon(String rule, String value) {
+        synchronized (ServerAccess.class) {
+            if (heard == null || !heard.mayEdit() || !canSend(EditRulesPayload.TYPE)) {
+                return false;
+            }
+        }
+        send(new EditRulesPayload(null, null, java.util.Map.of(rule, value)));
+        return true;
+    }
+
     private static boolean canSend(CustomPacketPayload.Type<?> type) {
         try {
             return link.canSend(type);

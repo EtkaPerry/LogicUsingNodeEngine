@@ -34,7 +34,7 @@ class SwitchGroupTest {
             "protect_air", "protect_lava", "protect_fire", "protect_fall", "protect_monsters",
             "protect_health");
     private static final List<String> CLUTCHES = List.of("clutch_water", "clutch_boat", "clutch_cushion");
-    private static final List<String> MOB_TACTICS = List.of("protect_fireballs", "build_cover");
+    private static final List<String> MOB_TACTICS = List.of("protect_fireballs", "build_cover", "fight_back");
 
     /** Every definition doubles as the palette's live editing state; each test puts it back. */
     private final Map<String, Map<String, String>> saved = new HashMap<>();

@@ -17,6 +17,7 @@ import com.etka.lune.client.TaskShortcutKeys;
 import com.etka.lune.client.gui.Accessibility;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.LuneTab;
+import com.etka.lune.client.gui.ScaledTooltips;
 import com.etka.lune.client.gui.widget.DashboardStatsPanel;
 import com.etka.lune.client.gui.widget.GuiIcons;
 import com.etka.lune.client.gui.widget.ListPanel;
@@ -49,11 +50,21 @@ public class MainTab extends LuneTab {
     private static final int BODY_TOP = DashboardFrame.BODY_TOP;
     private static final int BUTTON_GAP = DashboardFrame.BUTTON_GAP;
     private static final int PANEL_HEADER = 0xD0222D3A;
+    /** The Fast tasks button sits inside the saved tasks card's title bar, so it is shorter. */
+    private static final int HEADER_BUTTON_H = 14;
+    /** What the Fast tasks button leaves the card's title however narrow the card is dragged. */
+    private static final int MIN_TITLE_ROOM = 40;
 
     private final Button pauseButton;
     private final Button clearButton;
     private final Button stopButton;
     private final ListPanel<TaskGraph> launchList;
+    /**
+     * Lune's fast tasks, beside the saved ones and never among them: a button in the card's title
+     * bar opens them, so the list below stays the player's own.
+     */
+    private final Button fastButton;
+    private Runnable fastTasksOpener = () -> {};
     private final DashboardStatsPanel statisticsPanel;
     private final Button statisticsCurrentButton;
     private final Button statisticsLastButton;
@@ -102,6 +113,9 @@ public class MainTab extends LuneTab {
         // The same gesture as on the Tasks tab, on the same order: held for a second, a task
         // lifts, and carried to another place it stays there in both lists.
         launchList.setOnMove((moved, order) -> TaskStore.get().reorder(order));
+        fastButton = add(ScaledTooltips.set(Button.builder(Component.literal(Lang.get("lune.fast.title")),
+                        b -> fastTasksOpener.run()).size(70, HEADER_BUTTON_H).build(),
+                Component.literal(Lang.get("lune.fast.about"))));
         statisticsPanel = add(new DashboardStatsPanel(0, 0, 10, 10));
         statisticsCurrentButton = add(Button.builder(Component.literal(Lang.get("lune.gui.main.current")),
                 b -> selectStatistics(StatisticsScope.CURRENT)).size(62, 16).build());
@@ -121,6 +135,11 @@ public class MainTab extends LuneTab {
     /** Connects the dashboard's row actions to the screen's existing task editor. */
     public void setTaskEditorOpener(BiConsumer<TaskGraph, Boolean> opener) {
         taskEditorOpener = opener == null ? (task, rename) -> {} : opener;
+    }
+
+    /** Connects the Fast tasks button to the screen's picker. */
+    public void setFastTasksOpener(Runnable opener) {
+        fastTasksOpener = opener == null ? () -> {} : opener;
     }
 
     private void togglePause() {
@@ -207,6 +226,11 @@ public class MainTab extends LuneTab {
         launchList.setPosition(tasks.x() + 8, tasks.y() + TITLE_H + 6);
         launchList.setSize(Math.max(1, tasks.width() - 16),
                 Math.max(1, tasks.height() - TITLE_H - 14));
+        // At the right end of the title bar, as wide as its words. A narrow card shortens the
+        // title before the button: the list under it already says these are the saved tasks.
+        int fastWidth = Math.max(24, Math.min(fastButtonWidth(), tasks.width() - 12 - MIN_TITLE_ROOM));
+        place(fastButton, tasks.x() + tasks.width() - 3 - fastWidth, tasks.y() + 2, fastWidth,
+                HEADER_BUTTON_H);
 
         DashboardFrame.Card statistics = frame.statistics();
         int tabY = statistics.y() + TITLE_H + 2;
@@ -309,6 +333,11 @@ public class MainTab extends LuneTab {
         place(button, x, y, width, CONTROL_H);
     }
 
+    /** Wide enough for its words with room either side; vanilla scrolls a label any tighter. */
+    private static int fastButtonWidth() {
+        return Minecraft.getInstance().font.width(Lang.get("lune.fast.title")) + 12;
+    }
+
     private static void place(Button button, int x, int y, int width, int height) {
         button.setPosition(x, y);
         button.setSize(width, height);
@@ -321,6 +350,9 @@ public class MainTab extends LuneTab {
         panel(extractor, frame.recentActivity());
         panel(extractor, frame.workingNode());
         panel(extractor, frame.tasks());
+        // This card's title bar holds a button, so the bar goes down with the backgrounds, before
+        // the widgets. Drawn with the other cards' bars, after them, it would cover the button.
+        headerBar(extractor, frame.tasks().x(), frame.tasks().y(), frame.tasks().width());
         panel(extractor, frame.safetyVitals());
         panel(extractor, frame.safetyWorld());
         panel(extractor, frame.statistics());
@@ -385,7 +417,7 @@ public class MainTab extends LuneTab {
         extractor.textRenderer().accept(stateX + 9, card.y() + 7,
                 Component.literal(fit(state, Math.max(1, stateWidth - 18))).withColor(stateColour));
 
-        drawRows(extractor, card, 62, List.of(
+        List<Row> rows = new ArrayList<>(List.of(
                 new Row(1, Lang.get("lune.gui.main.current"), current == null ? Lang.get("lune.gui.main.nothing_running") : current.name(),
                         LuneScreen.TEXT),
                 new Row(2, "", current == null ? Lang.get("lune.gui.main.ready_task")
@@ -395,8 +427,14 @@ public class MainTab extends LuneTab {
                         : new Row(3, Lang.get("lune.gui.main.queue_next"),
                                 debug.nextTask.isBlank() ? Lang.get("lune.gui.main.nothing_queued") : debug.nextTask,
                                 LuneScreen.TEXT),
-                new Row(4, Lang.get("lune.gui.main.last"), firstNonBlank(engine.getLastMessage(), Lang.get("lune.gui.main.recent_activity")),
+                new Row(5, Lang.get("lune.gui.main.last"), firstNonBlank(engine.getLastMessage(), Lang.get("lune.gui.main.recent_activity")),
                         Accessibility.dim())));
+        if (current instanceof TaskRunner && !debug.nextTask.isBlank()) {
+            // The flow row has the queue's place while a task runs, and a fast task added to the
+            // queue behind it would then be nowhere on the card. Ahead of Last: it is what is next.
+            rows.add(new Row(4, Lang.get("lune.gui.main.queue_next"), debug.nextTask, LuneScreen.TEXT));
+        }
+        drawRows(extractor, card, 62, rows);
     }
 
     private void drawRecentActivityCard(GuiGraphicsExtractor extractor, DashboardFrame.Card card,
@@ -445,13 +483,18 @@ public class MainTab extends LuneTab {
     /** Draws the heading for the persistent task list in the left bottom column. */
     private void drawSavedTasksHeader(GuiGraphicsExtractor extractor, DashboardFrame.Card card,
                                       BotEngine engine) {
-        drawPanelHeader(extractor, card, Lang.get("lune.gui.main.saved_tasks"));
+        // Only the words: the bar itself is drawn with the background, under the Fast tasks button,
+        // and the title stops short of that button.
+        String title = Lang.get("lune.gui.main.saved_tasks");
+        int right = fastButton.getX() - 6;
+        headerTitle(extractor, card.x(), card.y(), title, right - (card.x() + 9));
         var font = Minecraft.getInstance().font;
         int count = engine.getQueue().size();
         String subtitle = count == 0 ? Lang.get("lune.gui.main.press_start_run_task")
                 : count + (count == 1 ? Lang.get("lune.gui.main.task_waiting") : Lang.get("lune.gui.main.tasks_waiting"));
-        if (font.width(Lang.get("lune.gui.main.saved_tasks")) + font.width(subtitle) + 28 <= card.width()) {
-            extractor.textRenderer().accept(card.x() + card.width() - 10 - font.width(subtitle),
+        // Between the title and the button, and only when it fits there whole.
+        if (card.x() + 9 + font.width(title) + 10 + font.width(subtitle) <= right) {
+            extractor.textRenderer().accept(right - font.width(subtitle),
                     card.y() + 6, Component.literal(subtitle).withColor(Accessibility.dim()));
         }
     }
@@ -893,9 +936,19 @@ public class MainTab extends LuneTab {
     }
 
     private void drawPanelHeader(GuiGraphicsExtractor extractor, int x, int y, int width, String title) {
+        headerBar(extractor, x, y, width);
+        headerTitle(extractor, x, y, title, width - 18);
+    }
+
+    private static void headerBar(GuiGraphicsExtractor extractor, int x, int y, int width) {
         extractor.fill(x + 1, y + 1, x + width - 1, y + TITLE_H, PANEL_HEADER);
+    }
+
+    /** A title bar's words, stopping at {@code titleRoom}: short of a button, on a bar that holds one. */
+    private static void headerTitle(GuiGraphicsExtractor extractor, int x, int y, String title,
+                                    int titleRoom) {
         extractor.textRenderer().accept(x + 9, y + 5,
-                Component.literal(fit(title, Math.max(1, width - 18))).withColor(LuneScreen.ACCENT));
+                Component.literal(fit(title, Math.max(1, titleRoom))).withColor(LuneScreen.ACCENT));
     }
 
     private static void panel(GuiGraphicsExtractor extractor, DashboardFrame.Card card) {

@@ -11,6 +11,7 @@ import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.AStarPathfinder;
 import com.etka.lune.bot.path.DoorKeeper;
 import com.etka.lune.bot.path.Doorways;
+import com.etka.lune.bot.path.GapJumpPolicy;
 import com.etka.lune.bot.path.Goal;
 import com.etka.lune.bot.path.MovementHelper;
 import com.etka.lune.bot.path.PathExecutor;
@@ -110,6 +111,8 @@ public final class GotoTask implements Task {
      * card failed. See {@link #keepDry()}.</p>
      */
     private boolean keepDry;
+    /** Ground every search of this walk keeps clear of, or null; see {@link #avoiding}. */
+    private AStarPathfinder.Avoid avoid;
 
     private PathExecutor executor;
     /** False when the current route came from the preferred open walking/swimming search. */
@@ -138,6 +141,7 @@ public final class GotoTask implements Task {
     private final DoorKeeper doors = new DoorKeeper();
     private int waterRecoveryTicks;
     private int repaths;
+    private int offRouteReplans;
     private double bestGoalHeuristic = Double.POSITIVE_INFINITY;
     private BlockPos lastProgressFeet;
     private int goalNoProgressTicks;
@@ -212,6 +216,15 @@ public final class GotoTask implements Task {
         return this;
     }
 
+    /**
+     * Keeps every route of this walk, its replans included, clear of {@code avoid} - a mob being run
+     * from - by pricing the ground round it; see {@link AStarPathfinder.Avoid}.
+     */
+    public GotoTask avoiding(AStarPathfinder.Avoid avoid) {
+        this.avoid = avoid;
+        return this;
+    }
+
     @Override
     public String name() {
         return Lang.get("lune.task.goto.name", goal.describe());
@@ -221,6 +234,30 @@ public final class GotoTask implements Task {
     @Override
     public String learningId() {
         return Task.learningName("Go to " + goal.describe());
+    }
+
+    /**
+     * How many times this walk was carried off its route and planned it again from where the feet
+     * were ({@link PathExecutor#OFF_ROUTE}). A caller that keeps making for one place reads it to
+     * tell a way that keeps throwing the body off from one that is merely long; see
+     * {@code RunApproach}.
+     */
+    public int offRouteReplans() {
+        return offRouteReplans;
+    }
+
+    /**
+     * Ticks the current route has gone without getting nearer its next waypoint, or 0 between
+     * routes. The route itself gives up only after {@code PathExecutor}'s three seconds; a caller
+     * with a reason to be quicker reads this.
+     */
+    public int noProgressTicks() {
+        return executor == null ? 0 : executor.getNoProgressTicks();
+    }
+
+    /** The waypoint the current route is walking to, or null between routes. */
+    public BlockPos nextWaypoint() {
+        return executor == null ? null : executor.getCurrentTarget();
     }
 
     @Override
@@ -435,10 +472,23 @@ public final class GotoTask implements Task {
                 if (goal.isReached(MovementHelper.feetPosition(ctx.player))) {
                     return arrived(ctx);
                 }
-                // End of a partial path - keep going from here.
+                // End of a partial path - keep going from here, on this same tick. The executor
+                // reports DONE before it presses anything, so the seam between two routes used to
+                // be a tick with no key down - and that is the tick vanilla drops a swimmer's
+                // sprint on, and the stroke with it, which cost a fresh dive at every seam across
+                // an ocean: seven of eighteen dives in one crossing (2026-10-10), thirty ticks of
+                // eyes under each. On land the same tick lost the sprint, merely more cheaply. The
+                // new route's first step is pressed now; whatever else its first tick reports, the
+                // next tick reports again.
                 if (!repath(ctx, MovementHelper.feetPosition(ctx.player))) {
                     status.set("lune.status.goto.no_route_found");
                     return TaskStatus.FAILED;
+                }
+                if (executor != null) {
+                    executor.tick(ctx, sprint && ctx.config.allowSprint, executorAllowsBreak);
+                    ctx.debug.pathIndex = executor.getIndex();
+                    ctx.debug.currentNode = executor.getCurrentTarget();
+                    ctx.debug.noProgressTicks = executor.getNoProgressTicks();
                 }
                 return TaskStatus.RUNNING;
             }
@@ -450,6 +500,9 @@ public final class GotoTask implements Task {
                 return TaskStatus.FAILED;
             }
             case REPLAN -> {
+                if (PathExecutor.OFF_ROUTE.equals(executor.getBlockedBy().key())) {
+                    offRouteReplans++;
+                }
                 status.set(executor.getBlockedBy());
                 executor.stop(ctx);
                 executor = null;
@@ -462,6 +515,20 @@ public final class GotoTask implements Task {
             case HAZARD -> {
                 status.set(executor.getBlockedBy());
                 return TaskStatus.FAILED;
+            }
+            case REFUSED -> {
+                // The server keeps that block - a claim, or a modpack's guarded barrel. Swinging on
+                // used to run the goal watchdog out with the route still pointing through it; the
+                // next search already reads it as solid, so look for the way round now.
+                Object[] block = executor.getBlockedBy().args();
+                status.set(executor.getBlockedBy());
+                executor.stop(ctx);
+                executor = null;
+                if (!repath(ctx, MovementHelper.feetPosition(ctx.player))) {
+                    status.set("lune.status.goto.refused_no_way_round", block);
+                    return TaskStatus.FAILED;
+                }
+                return TaskStatus.RUNNING;
             }
             case STUCK -> {
                 // Never treat swimming as an ordinary walking stall. The direct escape helper
@@ -931,7 +998,7 @@ public final class GotoTask implements Task {
         }
 
         result = AStarPathfinder.find(ctx.level, start, goal,
-                tune(ctx.config.walkingSettings()).withAllowSwim(swimPreferred)
+                tune(ctx, ctx.config.walkingSettings()).withAllowSwim(swimPreferred)
                         .withAllowJump(allowJump));
         executorAllowsBreak = false;
         executorAllowsSwim = swimPreferred;
@@ -941,7 +1008,7 @@ public final class GotoTask implements Task {
                     : "dry route found; following it without digging");
         } else if (!swimPreferred && swimAllowed) {
             result = AStarPathfinder.find(ctx.level, start, goal,
-                    tune(ctx.config.walkingSettings()).withAllowSwim(true)
+                    tune(ctx, ctx.config.walkingSettings()).withAllowSwim(true)
                             .withAllowJump(allowJump));
             executorAllowsSwim = true;
             ctx.debug.decide(!usableRoute(result, ctx)
@@ -961,7 +1028,7 @@ public final class GotoTask implements Task {
 
     /** Plans a route that may dig with what the pack holds; when it goes nowhere, asks why. */
     private AStarPathfinder.Result digRoute(BotContext ctx, BlockPos start, boolean swim) {
-        AStarPathfinder.Settings digging = tune(ctx.config.miningSettings())
+        AStarPathfinder.Settings digging = tune(ctx, ctx.config.miningSettings())
                 .withAllowSwim(swim).withAllowJump(allowJump);
         AStarPathfinder.Result result = AStarPathfinder.find(ctx.level, start, goal,
                 digging.withMiner(ctx.player));
@@ -995,9 +1062,31 @@ public final class GotoTask implements Task {
         return stuck == null ? null : ctx.level.getBlockState(stuck).getBlock();
     }
 
-    private AStarPathfinder.Settings tune(AStarPathfinder.Settings settings) {
+    private AStarPathfinder.Settings tune(BotContext ctx, AStarPathfinder.Settings settings) {
         return settings.withHeuristicWeight(
-                MovementPolicy.heuristicWeight(routeStrategy, settings.heuristicWeight()));
+                MovementPolicy.heuristicWeight(routeStrategy, settings.heuristicWeight()))
+                .withAvoid(avoid)
+                .withMaxGap(canRun(ctx) ? GapJumpPolicy.MAX_SPRINT_GAP : GapJumpPolicy.MAX_GAP);
+    }
+
+    /**
+     * Whether this walk can take a running jump: it may sprint, and so may the player. A
+     * three-block gap is only a route for a body that will be sprinting at the lip; planned for one
+     * that cannot, it is a fall.
+     */
+    private boolean canRun(BotContext ctx) {
+        return sprint && mayRun(ctx);
+    }
+
+    /**
+     * Whether a walk that may sprint will: sprinting allowed on the Config tab, and the player able
+     * to - enough food, nothing restraining them, not riding. Self Preservation asks it too, to
+     * weigh a run against its chasers at the speed the run will really go.
+     */
+    public static boolean mayRun(BotContext ctx) {
+        return ctx.config.allowSprint && !ctx.player.isPassenger()
+                && !ctx.player.isMobilityRestricted()
+                && (ctx.player.getFoodData().hasEnoughFood() || ctx.player.getAbilities().mayfly);
     }
 
     /** Publishes a chosen route and hands it to a fresh executor. */

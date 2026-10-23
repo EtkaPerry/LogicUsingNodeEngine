@@ -48,7 +48,7 @@ public final class TaskCode {
     public record Link(String id) implements Pasted {}
 
     public static String encode(TaskGraph task) {
-        byte[] json = TaskStore.exportCompact(task).getBytes(StandardCharsets.UTF_8);
+        byte[] json = TaskJson.compact(task).getBytes(StandardCharsets.UTF_8);
         Deflater deflater = new Deflater(Deflater.BEST_COMPRESSION);
         try {
             deflater.setInput(json);
@@ -70,6 +70,16 @@ public final class TaskCode {
      * @throws IllegalArgumentException for anything that is not a code this version can read
      */
     public static String decode(String code) {
+        return decode(code, MAX_JSON_BYTES);
+    }
+
+    /**
+     * The JSON inside a code, refusing any that expands past {@code maxJsonBytes} - for a reader
+     * with less room than the panel, such as a server taking a Lumi's graph from her owner.
+     *
+     * @throws IllegalArgumentException for anything that is not a code this version can read
+     */
+    public static String decode(String code, int maxJsonBytes) {
         String text = code == null ? "" : code.strip();
         if (!text.startsWith(PREFIX)) {
             throw new IllegalArgumentException("not a task code");
@@ -86,7 +96,7 @@ public final class TaskCode {
                     // Wanting more input, or a dictionary, both mean the code stops part way.
                     throw new IllegalArgumentException("task code is cut short");
                 }
-                if (json.size() + read > MAX_JSON_BYTES) {
+                if (json.size() + read > maxJsonBytes) {
                     throw new IllegalArgumentException("task code expands too far");
                 }
                 json.write(buffer, 0, read);

@@ -29,17 +29,40 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * reference to one, anywhere the server half can reach, is a crash on startup for every server
  * owner who installs Lune - and nothing short of starting a server would show it.
  *
- * <p>So this follows every Lune class the {@code server} and {@code net} packages reach, through
- * the class files' own constant pools, and fails on any that names a class under
- * {@code net.minecraft.client} or a Lune class that is client-only by where it lives.</p>
+ * <p>So this follows every Lune class the {@code server} and {@code net} packages reach - and the
+ * graph runner in {@code task/runner}, which a Lumi runs on the server - through the class files' own
+ * constant pools, and fails on any that names a class under {@code net.minecraft.client} or a Lune
+ * class that is client-only by where it lives.</p>
  */
 class ServerSideClassesTest {
 
     private static final Pattern LUNE_CLASS = Pattern.compile("com/etka/lune/[A-Za-z0-9_/$]+");
-    /** Where client-only Lune code lives: the panel, the bot, and the client's settings. */
+    /** Where client-only Lune code lives: the panel, the bot, the client's settings and tasks. */
     private static final List<String> CLIENT_ONLY = List.of(
             "com/etka/lune/client/", "com/etka/lune/bot/", "com/etka/lune/config/",
-            "com/etka/lune/task/", "com/etka/lune/util/Lang");
+            "com/etka/lune/task/");
+    /**
+     * The few classes in those places that a server may load: a graph and how it is written, and
+     * the words a run reports in. A closed list on purpose - a class added beside them is
+     * client-only until somebody decides otherwise and says so here. Each is still walked, so one
+     * that grows a client reference fails all the same.
+     */
+    private static final List<String> SERVER_SAFE = List.of(
+            "com/etka/lune/task/runner/",
+            "com/etka/lune/task/TaskGraph", "com/etka/lune/task/TaskNode",
+            "com/etka/lune/task/TaskSignalLink", "com/etka/lune/task/TaskDataLink",
+            "com/etka/lune/task/TaskPower", "com/etka/lune/task/TaskWiring",
+            "com/etka/lune/task/TaskNote", "com/etka/lune/task/TaskGroup",
+            "com/etka/lune/task/TaskCanvas", "com/etka/lune/task/TaskCableRoute",
+            "com/etka/lune/task/TaskCableAnchor", "com/etka/lune/task/BesideOptions",
+            "com/etka/lune/task/TaskCode", "com/etka/lune/task/TaskJson",
+            "com/etka/lune/bot/StatusText", "com/etka/lune/bot/StatusKeys",
+            "com/etka/lune/bot/StatusSignal", "com/etka/lune/bot/TaskStatus",
+            "com/etka/lune/bot/TaskProgress",
+            // What a crop is ready for, which tool gets drops, and a block list - asked by a Lumi's
+            // hands on the server as by the player's own cards.
+            "com/etka/lune/bot/catalog/BlockTarget", "com/etka/lune/bot/catalog/BlockCatalog",
+            "com/etka/lune/bot/catalog/ToolCatalog", "com/etka/lune/bot/catalog/Crops");
 
     private static Path classes() throws URISyntaxException {
         return Path.of(LuneServer.class.getProtectionDomain().getCodeSource().getLocation().toURI());
@@ -49,7 +72,7 @@ class ServerSideClassesTest {
     void nothingTheServerHalfReachesNamesAClientClass() throws IOException, URISyntaxException {
         Path root = classes();
         Deque<String> pending = new ArrayDeque<>();
-        for (String pkg : List.of("com/etka/lune/server", "com/etka/lune/net")) {
+        for (String pkg : List.of("com/etka/lune/server", "com/etka/lune/net", "com/etka/lune/task/runner")) {
             try (Stream<Path> files = Files.list(root.resolve(pkg))) {
                 files.filter(path -> path.toString().endsWith(".class"))
                         .forEach(path -> pending.add(pkg + "/" + path.getFileName().toString().replace(".class", "")));
@@ -66,7 +89,7 @@ class ServerSideClassesTest {
                 continue;
             }
             for (String prefix : CLIENT_ONLY) {
-                if (name.startsWith(prefix)) {
+                if (name.startsWith(prefix) && !serverSafe(name)) {
                     problems.add(name + " is client-only, and the server half reaches it through "
                             + reachedFrom.get(name));
                 }
@@ -92,6 +115,41 @@ class ServerSideClassesTest {
         }
         assertTrue(problems.isEmpty(), "a dedicated server would fail to load these:\n"
                 + String.join("\n", problems));
+    }
+
+    /**
+     * Nothing the server runs renders text: a run's statuses are keys and arguments, read in the
+     * language of whoever they reach. Rendering one there would be a sentence in the server's
+     * language - and a read of Lune's language tables from the server thread while the client
+     * thread may be filling them.
+     */
+    @Test
+    void theGraphRunnerNeverRendersText() throws IOException {
+        Path source = Path.of("src/main/java/com/etka/lune/task/runner");
+        Pattern rendering = Pattern.compile("\\bLang\\.|\\.text\\(\\)|\\.status\\(\\)");
+        List<String> found = new ArrayList<>();
+        try (Stream<Path> files = Files.list(source)) {
+            for (Path file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
+                List<String> lines = Files.readAllLines(file);
+                for (int index = 0; index < lines.size(); index++) {
+                    String line = lines.get(index).strip();
+                    if (!line.startsWith("*") && !line.startsWith("//") && rendering.matcher(line).find()) {
+                        found.add(file.getFileName() + ":" + (index + 1) + " " + line);
+                    }
+                }
+            }
+        }
+        assertTrue(found.isEmpty(), "the runner renders text:\n" + String.join("\n", found));
+    }
+
+    private static boolean serverSafe(String name) {
+        for (String entry : SERVER_SAFE) {
+            if (entry.endsWith("/") ? name.startsWith(entry)
+                    : name.equals(entry) || name.startsWith(entry + "$")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static byte[] classBytes(Path root, String name) throws IOException {

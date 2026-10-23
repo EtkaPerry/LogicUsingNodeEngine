@@ -1,5 +1,6 @@
 package com.etka.lune.bot.path;
 
+import com.etka.lune.bot.memory.RefusedBreaks;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.tags.FluidTags;
@@ -425,6 +426,25 @@ public final class MovementHelper {
         return true;
     }
 
+    /**
+     * Whether a diagonal step from {@code from} along {@code (dx, dz)} cuts the corner of a hole it
+     * would hurt to fall into: either side block at the step's height is open to the body and its
+     * fall hurts ({@link #fallHurts}). A body cutting a diagonal is half over each side block on the
+     * way, so a route goes round such a corner by the two straight steps, as {@link SafeStep} does.
+     *
+     * <p>On the bastion (2026-10-18) a run took a diagonal step down past a lava pocket's corner
+     * and dropped into the pocket; another cut back across one onto a waypoint it had overshot.</p>
+     */
+    public static boolean cutsAHurtingCorner(BlockGetter level, BlockPos from, int dx, int dz) {
+        if (dx == 0 || dz == 0) {
+            return false;
+        }
+        BlockPos sideX = from.offset(dx, 0, 0);
+        BlockPos sideZ = from.offset(0, 0, dz);
+        return hasBodyClearance(level, sideX) && fallHurts(level, sideX)
+                || hasBodyClearance(level, sideZ) && fallHurts(level, sideZ);
+    }
+
     /** Blocks that damage or trap the player. The bot refuses to path through these. */
     public static boolean isHarmful(BlockState state) {
         return state.is(Blocks.LAVA)
@@ -556,14 +576,15 @@ public final class MovementHelper {
 
     /**
      * Whether the bot is allowed to mine this block out of the way. Unbreakable blocks report a
-     * negative destroy speed; liquids and air are not "breakable" in a useful sense.
+     * negative destroy speed; liquids and air are not "breakable" in a useful sense, and nor is a
+     * block the server has already refused to let her break ({@link RefusedBreaks}).
      */
     public static boolean isBreakable(BlockGetter level, BlockPos pos) {
         BlockState state = level.getBlockState(pos);
         if (state.isAir() || !state.getFluidState().isEmpty()) {
             return false;
         }
-        return state.getDestroySpeed(level, pos) >= 0.0F;
+        return state.getDestroySpeed(level, pos) >= 0.0F && !RefusedBreaks.get().isRefused(pos, state);
     }
 
     /**

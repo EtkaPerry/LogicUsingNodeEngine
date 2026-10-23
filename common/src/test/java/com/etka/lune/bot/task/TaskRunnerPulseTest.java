@@ -3,6 +3,7 @@ package com.etka.lune.bot.task;
 import com.etka.lune.task.TaskGraph;
 import com.etka.lune.task.TaskNode;
 import com.etka.lune.task.TaskPower;
+import com.etka.lune.task.runner.GraphRun;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Constructor;
@@ -77,8 +78,8 @@ class TaskRunnerPulseTest {
         TaskNode source = new TaskNode(TaskNode.ALWAYS_COMMAND);
         TaskNode target = new TaskNode("work");
         String wire = TaskPower.wire(source.id, TaskPower.ALWAYS, 0, target.id);
-        Method queue = TaskRunner.class.getDeclaredMethod("queueParallelCircuit",
-                com.etka.lune.bot.BotContext.class, TaskNode.class, TaskNode.class,
+        Method queue = GraphRun.class.getDeclaredMethod("queueParallelCircuit",
+                Object.class, TaskNode.class, TaskNode.class,
                 TaskNode.class, String.class);
         queue.setAccessible(true);
         queue.invoke(runner, null, target, null, source, wire);
@@ -100,10 +101,10 @@ class TaskRunnerPulseTest {
             graph.nodes.add(from);
             graph.nodes.add(to);
             TaskRunner runner = new TaskRunner(graph);
-            Field node = TaskRunner.class.getDeclaredField("node");
+            Field node = GraphRun.class.getDeclaredField("node");
             node.setAccessible(true);
             node.set(runner, from);
-            Method advance = TaskRunner.class.getDeclaredMethod("advance", String.class, int.class);
+            Method advance = GraphRun.class.getDeclaredMethod("advance", String.class, int.class);
             advance.setAccessible(true);
             advance.invoke(runner, to.id, kind);
             assertTrue(runner.livePower().isLiveWire(from, kind, 0, to));
@@ -213,7 +214,7 @@ class TaskRunnerPulseTest {
             start.onSuccess = work.id;
             TaskNode end = new TaskNode(TaskNode.END_COMMAND);
             TaskRunner runner = runnerWith(start, work, end);
-            Field task = TaskRunner.class.getDeclaredField("task");
+            Field task = GraphRun.class.getDeclaredField("task");
             task.setAccessible(true);
             task.set(runner, new com.etka.lune.bot.Task() {
                 public String name() { return "Instant test step"; }
@@ -238,7 +239,7 @@ class TaskRunnerPulseTest {
         TaskNode sink = new TaskNode(TaskNode.END_COMMAND);
         connect(observer, sink);
         TaskRunner runner = runnerWith(observer, watched, sink);
-        Field node = TaskRunner.class.getDeclaredField("node");
+        Field node = GraphRun.class.getDeclaredField("node");
         node.setAccessible(true);
         node.set(runner, watched);
         assertEquals(com.etka.lune.bot.TaskStatus.RUNNING, runner.onTick(null)); // baseline
@@ -317,7 +318,7 @@ class TaskRunnerPulseTest {
 
     @SuppressWarnings("unchecked")
     private static void expirePulses(TaskRunner runner, String name) throws ReflectiveOperationException {
-        Field field = TaskRunner.class.getDeclaredField(name);
+        Field field = GraphRun.class.getDeclaredField(name);
         field.setAccessible(true);
         long expired = System.nanoTime() - TaskPower.PULSE_NANOS * 2;
         if (name.equals("wirePulses")) {
@@ -330,8 +331,8 @@ class TaskRunnerPulseTest {
 
     private static Object newCircuit(TaskRunner runner, TaskNode entry, TaskNode origin)
             throws ReflectiveOperationException {
-        Class<?> type = Class.forName("com.etka.lune.bot.task.TaskRunner$ParallelCircuit");
-        Constructor<?> constructor = type.getDeclaredConstructor(TaskRunner.class, TaskNode.class,
+        Class<?> type = Class.forName("com.etka.lune.task.runner.GraphRun$ParallelCircuit");
+        Constructor<?> constructor = type.getDeclaredConstructor(GraphRun.class, TaskNode.class,
                 TaskNode.class, TaskNode.class, String.class);
         constructor.setAccessible(true);
         return constructor.newInstance(runner, entry, null, origin, "wire");
@@ -340,7 +341,7 @@ class TaskRunnerPulseTest {
     @SuppressWarnings("unchecked")
     private static List<Object> circuits(TaskRunner runner, String fieldName)
             throws ReflectiveOperationException {
-        Field field = TaskRunner.class.getDeclaredField(fieldName);
+        Field field = GraphRun.class.getDeclaredField(fieldName);
         field.setAccessible(true);
         return (List<Object>) field.get(runner);
     }
@@ -355,8 +356,8 @@ class TaskRunnerPulseTest {
 
     private static void queuePulse(TaskRunner runner, TaskNode target, TaskNode origin)
             throws ReflectiveOperationException {
-        Method queue = TaskRunner.class.getDeclaredMethod("queueParallelCircuit",
-                com.etka.lune.bot.BotContext.class, TaskNode.class, TaskNode.class,
+        Method queue = GraphRun.class.getDeclaredMethod("queueParallelCircuit",
+                Object.class, TaskNode.class, TaskNode.class,
                 TaskNode.class, String.class);
         queue.setAccessible(true);
         queue.invoke(runner, null, target, null, origin, "wire");

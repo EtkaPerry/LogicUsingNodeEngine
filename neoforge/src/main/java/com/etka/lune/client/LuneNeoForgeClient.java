@@ -38,6 +38,7 @@ import net.neoforged.neoforge.common.NeoForge;
 public class LuneNeoForgeClient {
 
     public LuneNeoForgeClient() {
+        ClientLanguages.install();
         // Start as well as end: a run beside the player keeps the player's clicks from the game while
         // Lune has the controls, and the game reads them before the end of the tick.
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Pre event) ->

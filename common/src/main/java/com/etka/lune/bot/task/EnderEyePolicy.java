@@ -35,6 +35,8 @@ final class EnderEyePolicy {
     private static final double TOLERANCE = 4.0;
     /** Where an eye that stopped short came to rest, versus the twelve it flies otherwise. */
     private static final double STOPPED_SHORT = STEER - 0.15;
+    /** How far a climbing eye has to have been watched before its line alone is read. */
+    private static final double SEEN_ENOUGH = 3.0;
     /** Last positions over which a flight has to have stopped moving to count as settled. */
     private static final int SETTLED_SAMPLES = 4;
     private static final double SETTLED_SPREAD = 0.1;
@@ -141,23 +143,71 @@ final class EnderEyePolicy {
         }
         boolean settled = highest - lowest < SETTLED_SPREAD;
         double rest = sum / tail;
-        // An eye sent twelve blocks on climbs eight; one sent at the corner itself heads for the
-        // corner's own height, which is y = 0. Thrown from above that, the two go opposite ways,
-        // and the height tells them apart even when the corner happened to be twelve blocks off.
-        boolean dove = originY > 2.0 && path.get(path.size() - 1).y < originY - 1.0;
+        // An eye sent twelve blocks on climbs from its first tick; one sent at the corner itself
+        // heads for the corner's own height, which is y = 0, from its first tick. Thrown from
+        // above that, the two go opposite ways at once, so a flight seen only in part - lost to a
+        // tree, or gone under the ground on its dive - still says which it was: half a block
+        // under the hand is a dive, half a block over it is not.
+        double lastY = path.get(path.size() - 1).y;
+        boolean dove = originY > 2.0 && lastY < originY - 0.5;
+        boolean climbed = originY > 2.0 && lastY > originY + 0.5;
 
         if ((settled && rest < STOPPED_SHORT) || dove) {
+            if (!settled) {
+                // Seen going in but not arriving. Vanilla flies a near eye straight at its chunk
+                // corner, so the corner is the one its line passes within the twelve blocks.
+                int[] corner = cornerOnLine(originX, originZ, dirX, dirZ);
+                if (corner != null) {
+                    return new Reading(Kind.NEAR, originX, originZ, dirX, dirZ, angularError,
+                            corner[0], corner[1]);
+                }
+            }
             double x = originX + dirX * rest;
             double z = originZ + dirZ * rest;
             return new Reading(Kind.NEAR, originX, originZ, dirX, dirZ, angularError,
                     snap(x), snap(z));
         }
-        if (!settled && furthest < STEER - 0.5) {
-            // Still on its way when the watching stopped: the bearing is fine, but whether it was
-            // going to stop short is not known yet.
+        if (!settled && furthest < STEER - 0.5 && !(climbed && furthest >= SEEN_ENOUGH)) {
+            // Still on its way when the watching stopped, and not seen climbing far enough for
+            // its line alone to be read: whether it was going to stop short is not known.
             return Reading.unreadable(originX, originZ);
         }
         return new Reading(Kind.FAR, originX, originZ, dirX, dirZ, angularError, 0, 0);
+    }
+
+    /**
+     * The chunk corner a near eye's line passes through within the twelve blocks it would fly,
+     * or null when it passes none closer than a block.
+     */
+    private static int[] cornerOnLine(double ox, double oz, double ux, double uz) {
+        boolean alongX = Math.abs(ux) >= Math.abs(uz);
+        double major = alongX ? ux : uz;
+        double start = alongX ? ox : oz;
+        double end = start + major * (STEER + 1.0);
+        int from = (int) Math.floor(Math.min(start, end) / GRID) - 1;
+        int to = (int) Math.ceil(Math.max(start, end) / GRID) + 1;
+        int[] best = null;
+        double bestOff = 1.0;
+        for (int line = from; line <= to; line++) {
+            double fixed = line * (double) GRID;
+            double t = (fixed - start) / major;
+            double other = alongX ? oz + t * uz : ox + t * ux;
+            double nearest = Math.round(other / GRID) * (double) GRID;
+            double x = alongX ? fixed : nearest;
+            double z = alongX ? nearest : fixed;
+            double cx = x - ox;
+            double cz = z - oz;
+            double distance = cx * ux + cz * uz;
+            if (distance <= 0.0 || distance > STEER + 1.0) {
+                continue;
+            }
+            double off = Math.abs(cx * uz - cz * ux);
+            if (off < bestOff) {
+                bestOff = off;
+                best = new int[]{(int) x, (int) z};
+            }
+        }
+        return best;
     }
 
     /** A dive lands on a corner in vanilla; a modded target keeps the block it dove at. */

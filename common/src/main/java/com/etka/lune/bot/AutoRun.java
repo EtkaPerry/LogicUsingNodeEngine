@@ -2,15 +2,23 @@ package com.etka.lune.bot;
 
 import com.etka.lune.compat.Mobs;
 import com.etka.lune.compat.Screens;
+import com.etka.lune.compat.Screenshots;
 import com.etka.lune.util.Lang;
 import com.etka.lune.Constants;
+import com.etka.lune.bot.knowledge.StrongholdKnowledge;
+import com.etka.lune.bot.task.EnderEyeTask;
 import com.etka.lune.bot.task.TaskRunner;
 import com.etka.lune.platform.BuildFeatures;
+import com.etka.lune.platform.Services;
 import com.etka.lune.task.TaskGraph;
 import com.etka.lune.task.TaskStore;
+import com.etka.lune.waypoint.Discovery;
+import com.etka.lune.waypoint.DiscoveryStore;
+import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -27,9 +35,17 @@ import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelSettings;
 import net.minecraft.world.level.WorldDataConfiguration;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.WorldOptions;
 import net.minecraft.world.level.levelgen.presets.WorldPresets;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.level.levelgen.structure.BuiltinStructures;
+import net.minecraft.world.level.levelgen.structure.Structure;
+import net.minecraft.world.level.levelgen.structure.StructurePiece;
+import net.minecraft.world.level.levelgen.structure.StructureStart;
+import net.minecraft.world.level.levelgen.structure.pieces.StructurePieceType;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -40,8 +56,17 @@ import net.minecraft.world.level.block.state.properties.IntegerProperty;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Unattended test harness: join a world, start a task, stop on a budget, quit.
@@ -67,6 +92,9 @@ import java.util.Optional;
  * -Dlune.autorun.fixture=skeleton-2     two Skeletons, the same way; also creeper and spider
  * -Dlune.autorun.fixture=shield         a shield in the pack, for the cards that can raise one
  * -Dlune.autorun.fixture=end-egg        the End with a dragon egg on bedrock and no dragon
+ * -Dlune.autorun.fixture=lava-maze      a maze of walkway over lava, with a Zombie kept on it
+ * -Dlune.autorun.fixture=lava-maze-bastion the bad side of a bastion: rooms in lava, gaps to jump
+ * -Dlune.autorun.fixture=lava-maze-bastion-9,zombie-3  nine rooms across, three Zombies dropped together
  * -Dlune.autorun.fixture=food,tools     comma-separated; see {@link #prepareFixture}
  * -Dlune.autorun.learning=true         switch the learner on whatever the client's config says
  * -Dlune.autorun.stopAfterTicks=12000  hard budget; 0 means run until the task ends
@@ -205,6 +233,8 @@ public final class AutoRun {
     private static final double MOB_ARENA_RADIUS = 32.0;
     /** More than this of one kind at once is a mob farm, not a measurement. */
     private static final int MAX_ARENA_MOBS = 6;
+    /** A frame a second, when the screenshots fixture is not told how often. */
+    private static final int DEFAULT_SCREENSHOT_TICKS = 20;
 
     private static final String taskName = System.getProperty(TASK_KEY,
             System.getProperty(LEGACY_TASK_KEY, "")).trim();
@@ -228,6 +258,17 @@ public final class AutoRun {
     private static boolean started;
     private static boolean finished;
     private static boolean fixturePrepared;
+    /** Ticks between the frames the {@code screenshots} fixture saves; 0 saves none. */
+    private static int screenshotEvery;
+    /** The examiner's notes on Find Stronghold, while the {@code stronghold-check} fixture is on. */
+    private static volatile StrongholdCheck strongholdCheck;
+    /**
+     * Where the lava maze was laid, or null when this run has none. Volatile like the arenas: the
+     * server lays it and the mob keeper reads it there, and the examiner reads it on the client.
+     */
+    private static volatile LavaMazeFixture.Placed lavaMaze;
+    /** The examiner's account of the run on the lava maze, while the {@code lava-maze} fixture is on. */
+    private static volatile LavaMazeFixture.Check lavaMazeCheck;
 
     /**
      * Middle of the Ghast arena floor, or null when this run has not built one.
@@ -261,6 +302,9 @@ public final class AutoRun {
      */
     private static final java.util.Map<String, Integer> mobCooldown =
             new java.util.concurrent.ConcurrentHashMap<>();
+    /** Kinds the lava maze has had its first chasers of, so only the first drop skips the quiet. */
+    private static final java.util.Set<String> mazeDropped =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private AutoRun() {}
 
@@ -359,6 +403,11 @@ public final class AutoRun {
         }
         finished = true;
         Constants.LOG.info("AutoRun: {} after {} ticks", reason, runTicks);
+        StrongholdCheck check = strongholdCheck;
+        if (check != null) {
+            concludeStrongholdCheck(mc, check, reason);
+        }
+        concludeLavaMaze(mc, reason);
         if (!quitWhenDone) {
             return;
         }
@@ -407,8 +456,10 @@ public final class AutoRun {
             started = false;
             fixturePrepared = false;
             ghastArena = null;
+            lavaMaze = null;
             mobArena = java.util.Map.of();
             mobCooldown.clear();
+            mazeDropped.clear();
         }
 
         maintainGhastArena(mc);
@@ -427,13 +478,37 @@ public final class AutoRun {
         }
 
         runTicks++;
+        StrongholdCheck check = strongholdCheck;
+        if (check != null) {
+            watchStronghold(mc, engine, check);
+        }
+        LavaMazeFixture.Check mazeCheck = lavaMazeCheck;
+        if (mazeCheck != null) {
+            mazeCheck.watch(mc, engine, lavaMaze, runTicks);
+        }
         if (budgetTicks > 0 && runTicks >= budgetTicks) {
             finish(mc, engine, "autorun budget reached after " + runTicks + " ticks");
             return;
         }
+        if (screenshotEvery > 0 && runTicks % screenshotEvery == 0) {
+            saveFrame(mc);
+        }
         if (engine.isIdle()) {
+            if (check != null && !wrapUpStrongholdCheck(mc, check)) {
+                return;
+            }
             finish(mc, engine, "autorun task finished after " + runTicks + " ticks");
         }
+    }
+
+    /**
+     * Saves the frame on screen under {@code screenshots/} in the run folder, named after the
+     * world and the tick, so a run can be looked at after the client has closed - the way a
+     * journal can be read after it, and for the same reason.
+     */
+    private static void saveFrame(Minecraft mc) {
+        String stamp = worldName.replaceAll("[^A-Za-z0-9]+", "-").toLowerCase(Locale.ROOT);
+        Screenshots.save(mc, String.format(Locale.ROOT, "%s-%05d.png", stamp, runTicks));
     }
 
     private static void start(Minecraft mc, BotEngine engine) {
@@ -479,6 +554,28 @@ public final class AutoRun {
      * peaceful              no hunger and nothing hostile, for a run about the way, not the fight.
      * stronghold            the bot put a short walk from a stronghold under dry land.
      * lake                  a walled channel of deep water south of the bot, for the swim.
+     * lava-maze[-W]         a maze of walkway W blocks wide (one by default) sixteen blocks up,
+     *                       every wall of it a hole into a sea of lava, with the bot in the middle.
+     *                       The mob keeper puts its chasers on the walkway, and keeps one Zombie
+     *                       when no mob is named. An examiner writes whether Self Preservation got
+     *                       away, fell in or was caught to config/lune-lava-maze-checks.txt. See
+     *                       {@link LavaMazeFixture}.
+     * lava-maze-bastion[-N] the bad side of a bastion, N rooms across (seven by default, five to
+     *                       twelve): blackstone rooms at three heights in lava standing level with
+     *                       the lowest, lava pockets in their corners, bridges, one-block gaps and
+     *                       two-block leaps between them, and walls. A chaser left on another
+     *                       island than the bot's is moved to the bot's, and on any lava maze the
+     *                       keeper drops all the chasers it is short of together, the first at
+     *                       once.
+     * third-person[-front]  the camera behind the bot, or in front of it, so a watcher sees the
+     *                       body - the swimming pose, a crouch - and not just where it looks.
+     * screenshots[-N]       a frame saved under screenshots/ every N ticks (default 20), named
+     *                       after the world and the tick, to look at once the client has closed.
+     * stronghold-check      the examiner's seat for Find Stronghold: every walk the card starts
+     *                       becomes a teleport to where it was going, the server is asked where it
+     *                       really aimed each eye, the start staircase under the card's answer is
+     *                       measured, and the run gets one line in config/lune-stronghold-checks.txt.
+     *                       See {@link #watchStronghold}.
      * </pre>
      *
      * <p>None of this is available outside the harness: the properties are set by the run harness
@@ -500,6 +597,33 @@ public final class AutoRun {
             String trimmed = part.trim();
             if (!trimmed.isEmpty()) {
                 parts.add(trimmed);
+            }
+        }
+        // The camera and the frames are the client's own, and this is the render thread: they are
+        // taken out here, before the rest goes to the server.
+        if (parts.remove("third-person")) {
+            mc.options.setCameraType(CameraType.THIRD_PERSON_BACK);
+        }
+        if (parts.remove("third-person-front")) {
+            mc.options.setCameraType(CameraType.THIRD_PERSON_FRONT);
+        }
+        if (parts.remove("stronghold-check")) {
+            strongholdCheck = new StrongholdCheck();
+            Constants.LOG.info("AutoRun: fixture stronghold-check - the card's walks become teleports,"
+                    + " and its answer is checked against the server");
+        }
+        // The examiner reads the client, so it is made here; the maze itself is the server's.
+        if (lavaMazeCheck == null && parts.stream().anyMatch(AutoRun::isLavaMaze)) {
+            lavaMazeCheck = new LavaMazeFixture.Check();
+        }
+        for (String part : java.util.List.copyOf(parts)) {
+            if (part.equals("screenshots") || part.startsWith("screenshots-")) {
+                parts.remove(part);
+                screenshotEvery = part.equals("screenshots")
+                        ? DEFAULT_SCREENSHOT_TICKS
+                        : Math.max(1, Integer.parseInt(part.substring("screenshots-".length())));
+                Constants.LOG.info("AutoRun: fixture screenshots - a frame every {} ticks",
+                        screenshotEvery);
             }
         }
         java.util.UUID playerId = mc.player.getUUID();
@@ -543,6 +667,10 @@ public final class AutoRun {
                 default -> {
                     if (part.equals("eyes") || part.startsWith("eyes-")) {
                         giveEyes(serverPlayer, part);
+                    } else if (isLavaMaze(part)) {
+                        long seed = worldSeed != 0 ? worldSeed : System.nanoTime();
+                        lavaMaze = LavaMazeFixture.build(mc.getSingleplayerServer(), serverPlayer,
+                                LavaMazeFixture.plan(part, seed), seed);
                     } else if (!part.startsWith("fishing") && !part.startsWith("ghast")
                             && !ARENA_MOBS.containsKey(arenaMobKind(part))) {
                         Constants.LOG.warn("AutoRun: unknown fixture '{}'", part);
@@ -787,6 +915,347 @@ public final class AutoRun {
         }
         Constants.LOG.warn("AutoRun: no dry ground {} blocks from the stronghold at {}",
                 STRONGHOLD_APPROACH, chosen);
+    }
+
+    // --- The stronghold check ---------------------------------------------------------------
+
+    /** Ticks stood in the stairwell before its frame is saved, so the chunks have arrived. */
+    private static final int POSE_TICKS = 60;
+    /**
+     * Where to stand for that frame: on the stairwell's floor, in the hollow middle of the spiral,
+     * looking up it. The middle column is air all the way up, so anywhere higher is a fall.
+     */
+    private static final int POSE_HEIGHT = 1;
+    private static final float POSE_PITCH = -60.0F;
+
+    /**
+     * The examiner's notes on one run of Find Stronghold; see {@link #watchStronghold}.
+     *
+     * <p>Written from two threads: the card's statuses are read on the render thread, and the
+     * server answers on its own. Everything the server fills in is volatile or a concurrent list.</p>
+     */
+    private static final class StrongholdCheck {
+        final long startedAt = System.currentTimeMillis();
+        String lastKey = "";
+        String lastArgs = "";
+        int throwsSeen;
+        /** Where the first eye was thrown from, and the corner the server aimed it at. */
+        volatile BlockPos firstThrow;
+        volatile BlockPos truth;
+        /** Every throw, as {@code n:x,y,z->cx,cz}. */
+        final List<String> aims = new CopyOnWriteArrayList<>();
+        /** What the card said it read, in the order it said it. */
+        final List<String> readings = new ArrayList<>();
+        /** Every walk the card started, as the column it was walking to. */
+        final List<BlockPos> teleports = new ArrayList<>();
+        BlockPos lastTarget;
+        /** What was really under each of those columns. */
+        final List<StaircaseReport> reports = new CopyOnWriteArrayList<>();
+        /** The corner the card remembered as its answer, once the run is over; null for none. */
+        BlockPos answer;
+        boolean reported;
+        int stage;
+        int poseTicks;
+
+        /** The report on the column a corner's staircase should be under, or null without one. */
+        StaircaseReport reportFor(BlockPos corner) {
+            if (corner == null) {
+                return null;
+            }
+            int x = corner.getX() + StrongholdKnowledge.STAIRCASE_OFFSET;
+            int z = corner.getZ() + StrongholdKnowledge.STAIRCASE_OFFSET;
+            for (StaircaseReport report : reports) {
+                if (report.target().getX() == x && report.target().getZ() == z) {
+                    return report;
+                }
+            }
+            return null;
+        }
+    }
+
+    /**
+     * What is really under a column the card walked to.
+     *
+     * @param found   whether a stronghold starts in that column's chunk at all
+     * @param box     the start staircase's bounds, when one was found
+     * @param centred whether the column is the staircase's middle one
+     * @param air     how many of the staircase's inside blocks on that column are air; all of
+     *                them, when the column is the hollow middle of the spiral
+     * @param inside  how many inside blocks the column has
+     */
+    private record StaircaseReport(BlockPos target, boolean found, BoundingBox box, boolean centred,
+                                   int air, int inside, String facing) {
+        /** One field's worth, with no spaces: the journal scripts end a field at the next one. */
+        String summary() {
+            if (!found) {
+                return "none";
+            }
+            return "box=" + box.minX() + "," + box.minY() + "," + box.minZ()
+                    + ".." + box.maxX() + "," + box.maxY() + "," + box.maxZ()
+                    + ";centred=" + (centred ? "yes" : "no")
+                    + ";air=" + air + "/" + inside
+                    + ";facing=" + facing;
+        }
+    }
+
+    /**
+     * Reads Find Stronghold over its shoulder from the examiner's seat.
+     *
+     * <p>The card is left to do its own work - throw, read the flight, pick the eye up, decide -
+     * and three things are done around it. For each eye it throws, the server is asked where it
+     * really aimed that eye, which is the one thing the bot is never allowed to know. Each walk
+     * the card starts becomes a teleport to the column it was walking to, so a test of the reading
+     * is not a test of a two-thousand-block walk: the walk finds its goal already reached, and the
+     * card carries on exactly as it would have on arriving, throwing again or finishing. And under
+     * every such column the stronghold's start staircase is looked for and measured, which is the
+     * check on {@link StrongholdKnowledge#STAIRCASE_OFFSET}. The run's one line goes to
+     * {@code config/lune-stronghold-checks.txt} once the card has had its say.</p>
+     *
+     * <p>Everything is read off the card's status key, never its text, and a status is acted on
+     * once: the card repeats a line every tick for as long as it holds.</p>
+     */
+    private static void watchStronghold(Minecraft mc, BotEngine engine, StrongholdCheck check) {
+        if (!(engine.getCurrent() instanceof TaskRunner runner) || mc.player == null) {
+            return;
+        }
+        // The runner's own line is "step 2/2 Find Stronghold - <the card's line>", with the card's
+        // line nested as its last argument; a Task card nests another runner's inside that.
+        StatusText line = runner.statusLine();
+        while ("lune.status.task_runner.step_detail".equals(line.key())) {
+            Object[] wrapped = line.args();
+            if (wrapped.length == 0 || !(wrapped[wrapped.length - 1] instanceof StatusText inner)) {
+                break;
+            }
+            line = inner;
+        }
+        String key = line.key();
+        String args = Arrays.toString(line.args()).replace(" ", "");
+        if (key.equals(check.lastKey) && args.equals(check.lastArgs)) {
+            return;
+        }
+        check.lastKey = key;
+        check.lastArgs = args;
+        MinecraftServer server = mc.getSingleplayerServer();
+        if (server == null) {
+            return;
+        }
+        java.util.UUID playerId = mc.player.getUUID();
+        switch (key) {
+            case "lune.status.ender_eye.threw_eye" -> {
+                int number = ++check.throwsSeen;
+                BlockPos from = mc.player.blockPosition();
+                server.execute(() -> recordAim(server, playerId, check, number, from));
+            }
+            case "lune.status.ender_eye.eye_dove", "lune.status.ender_eye.read_one",
+                 "lune.status.ender_eye.read_several", "lune.status.ender_eye.following_eye",
+                 "lune.status.ender_eye.unreadable", "lune.status.ender_eye.best_guess",
+                 "lune.status.ender_eye.lost_sight", "lune.status.ender_eye.moving_to_clearing",
+                 "lune.status.ender_eye.no_clearing" -> {
+                check.readings.add(key.substring(key.lastIndexOf('.') + 1) + args);
+                Constants.LOG.info("AutoRun: stronghold check - the card read {} {}", key, args);
+            }
+            case "lune.status.ender_eye.walking_to" -> {
+                Object[] values = line.args();
+                if (values.length >= 2 && values[0] instanceof Number x && values[1] instanceof Number z) {
+                    BlockPos target = new BlockPos(x.intValue(), 0, z.intValue());
+                    if (!target.equals(check.lastTarget)) {
+                        check.lastTarget = target;
+                        check.teleports.add(target);
+                        int number = check.teleports.size();
+                        server.execute(() -> teleportForCheck(server, playerId, check, number, target));
+                    }
+                }
+            }
+            default -> { }
+        }
+    }
+
+    /** Asks the server where it aimed the eye the card just threw. */
+    private static void recordAim(MinecraftServer server, java.util.UUID playerId, StrongholdCheck check,
+                                  int number, BlockPos from) {
+        ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+        if (player == null || !(player.level() instanceof ServerLevel level)) {
+            return;
+        }
+        // The same question, from the same block, as EnderEyeItem asked a tick ago.
+        BlockPos corner = level.findNearestMapStructure(
+                net.minecraft.tags.StructureTags.EYE_OF_ENDER_LOCATED, from, 100, false);
+        if (number == 1) {
+            check.firstThrow = from;
+            check.truth = corner;
+        }
+        check.aims.add(number + ":" + from.getX() + "," + from.getY() + "," + from.getZ() + "->" + xz(corner));
+        Constants.LOG.info("AutoRun: stronghold check - eye {} thrown from {}; the server aimed it at {}",
+                number, from.toShortString(), corner == null ? "nothing" : corner.toShortString());
+    }
+
+    private static String xz(BlockPos pos) {
+        return pos == null ? "-" : pos.getX() + "," + pos.getZ();
+    }
+
+    /**
+     * Stands the bot on the column the card was walking to, so the walk ends where it was going
+     * without the country in between, and looks at what is under it.
+     */
+    private static void teleportForCheck(MinecraftServer server, java.util.UUID playerId,
+                                         StrongholdCheck check, int number, BlockPos target) {
+        ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+        if (player == null || !(player.level() instanceof ServerLevel level)) {
+            return;
+        }
+        int x = target.getX();
+        int z = target.getZ();
+        level.getChunk(x >> 4, z >> 4);
+        int y = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+        player.teleportTo(level, x + 0.5, y, z + 0.5, java.util.Set.of(), player.getYRot(), player.getXRot(), true);
+        player.setDeltaMovement(Vec3.ZERO);
+        player.fallDistance = 0.0F;
+        StaircaseReport report = inspectStaircase(level, target);
+        check.reports.add(report);
+        Constants.LOG.info("AutoRun: stronghold check - walk {} to {}, {} became a teleport to y={}; under it: {}",
+                number, x, z, y, report.summary());
+    }
+
+    /**
+     * Whether a stronghold really starts under {@code column}, and whether that column is the
+     * middle of its start staircase - what {@link StrongholdKnowledge#STAIRCASE_OFFSET} promises.
+     *
+     * <p>The start is looked up by the column's chunk, which is the chunk an eye flies to, and
+     * probed up the column because the structure manager answers for a block inside the
+     * stronghold's bounds and the stronghold's depth is its own business.</p>
+     */
+    private static StaircaseReport inspectStaircase(ServerLevel level, BlockPos column) {
+        Structure stronghold = level.registryAccess().lookupOrThrow(Registries.STRUCTURE)
+                .getOrThrow(BuiltinStructures.STRONGHOLD).value();
+        StructureStart start = StructureStart.INVALID_START;
+        for (int y = level.getMinY(); y <= level.getSeaLevel() && !start.isValid(); y += 2) {
+            start = level.structureManager().getStructureAt(
+                    new BlockPos(column.getX(), y, column.getZ()), stronghold);
+        }
+        StructurePiece staircase = null;
+        if (start.isValid()) {
+            for (StructurePiece piece : start.getPieces()) {
+                if (piece.getType() == StructurePieceType.STRONGHOLD_START) {
+                    staircase = piece;
+                    break;
+                }
+            }
+        }
+        if (staircase == null) {
+            return new StaircaseReport(column, false, null, false, 0, 0, "");
+        }
+        BoundingBox box = staircase.getBoundingBox();
+        boolean centred = (box.minX() + box.maxX()) / 2 == column.getX()
+                && (box.minZ() + box.maxZ()) / 2 == column.getZ();
+        int air = 0;
+        int inside = 0;
+        for (int y = box.minY() + 1; y < box.maxY(); y++) {
+            inside++;
+            if (level.getBlockState(new BlockPos(column.getX(), y, column.getZ())).isAir()) {
+                air++;
+            }
+        }
+        return new StaircaseReport(column, true, box, centred, air, inside,
+                String.valueOf(staircase.getOrientation()));
+    }
+
+    /**
+     * Once the card has finished: the verdict, written once, and then a look inside - the bot is
+     * stood in the middle of the stairwell for a frame, so a reader can see the staircase the
+     * numbers describe.
+     *
+     * @return whether the client may close now
+     */
+    private static boolean wrapUpStrongholdCheck(Minecraft mc, StrongholdCheck check) {
+        if (check.stage == 0) {
+            concludeStrongholdCheck(mc, check, "card finished");
+            StaircaseReport report = check.reportFor(check.answer);
+            MinecraftServer server = mc.getSingleplayerServer();
+            check.stage = 1;
+            check.poseTicks = 0;
+            if (report == null || !report.found() || report.air() < report.inside()
+                    || server == null || mc.player == null) {
+                check.stage = 2;
+                return true;
+            }
+            java.util.UUID playerId = mc.player.getUUID();
+            server.execute(() -> poseInStaircase(server, playerId, report));
+            return false;
+        }
+        if (check.stage == 1) {
+            if (++check.poseTicks < POSE_TICKS) {
+                return false;
+            }
+            String name = String.format(Locale.ROOT, "stronghold-check-%d.png", worldSeed);
+            Screenshots.save(mc, name);
+            Constants.LOG.info("AutoRun: stronghold check - the view down the stairwell is screenshots/{}", name);
+            check.stage = 2;
+        }
+        return true;
+    }
+
+    /** Stands the bot on the stairwell's floor, in the hollow middle of the spiral, lit, looking up it. */
+    private static void poseInStaircase(MinecraftServer server, java.util.UUID playerId, StaircaseReport report) {
+        ServerPlayer player = server.getPlayerList().getPlayer(playerId);
+        if (player == null || !(player.level() instanceof ServerLevel level)) {
+            return;
+        }
+        BoundingBox box = report.box();
+        player.teleportTo(level, report.target().getX() + 0.5, box.minY() + POSE_HEIGHT,
+                report.target().getZ() + 0.5, java.util.Set.of(), player.getYRot(), POSE_PITCH, true);
+        player.setDeltaMovement(Vec3.ZERO);
+        player.fallDistance = 0.0F;
+        player.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, 1200, 0, false, false));
+    }
+
+    /**
+     * Writes the run's one line: what the card answered, against what the server aimed the first
+     * eye at, and what stands under the answer. The card's answer is what it remembered, so a run
+     * that never got that far has none.
+     */
+    private static void concludeStrongholdCheck(Minecraft mc, StrongholdCheck check, String reason) {
+        if (check.reported) {
+            return;
+        }
+        check.reported = true;
+        BlockPos answer = null;
+        if (mc.level != null) {
+            String dimension = mc.level.dimension().identifier().toString();
+            answer = DiscoveryStore.get().find(Discovery.STRUCTURE, EnderEyeTask.STRONGHOLD, dimension)
+                    .filter(found -> found.foundAt() >= check.startedAt)
+                    .map(found -> new BlockPos(found.x(), 0, found.z()))
+                    .orElse(null);
+        }
+        check.answer = answer;
+        BlockPos truth = check.truth;
+        BlockPos from = check.firstThrow;
+        String match = answer == null || truth == null ? "-"
+                : answer.getX() == truth.getX() && answer.getZ() == truth.getZ() ? "yes" : "no";
+        StaircaseReport report = check.reportFor(answer);
+        String line = "seed=" + worldSeed
+                + " ticks=" + runTicks
+                + " throws=" + check.throwsSeen
+                + " teleports=" + check.teleports.size()
+                + " firstthrow=" + (from == null ? "-" : from.getX() + "," + from.getY() + "," + from.getZ())
+                + " truth=" + xz(truth)
+                + " answer=" + xz(answer)
+                + " match=" + match
+                + " staircase=" + (report == null ? "-" : report.summary())
+                + " readings=" + (check.readings.isEmpty() ? "-" : String.join(";", check.readings))
+                + " aims=" + (check.aims.isEmpty() ? "-" : String.join(";", check.aims))
+                + " last=" + (check.lastKey.isEmpty() ? "-" : check.lastKey)
+                + " reason=" + reason.replace(' ', '_');
+        Constants.LOG.info("AutoRun: stronghold check - {}", line);
+        // Beside lune-runs, never in it: the batch script takes the newest .txt in there for the
+        // run's journal, and moved this file in the journal's place the first time it ran.
+        try {
+            Path directory = Services.PLATFORM.getConfigDir();
+            Files.createDirectories(directory);
+            Files.writeString(directory.resolve("lune-stronghold-checks.txt"), line + System.lineSeparator(),
+                    StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException e) {
+            Constants.LOG.warn("AutoRun: could not write the stronghold check", e);
+        }
     }
 
     /** Blocks of open water between the lake fixture's two banks. */
@@ -1244,6 +1713,11 @@ public final class AutoRun {
                 wanted.merge(kind, arenaMobCount(part), Math::max);
             }
         }
+        // A maze to run away in with nothing to run from tests nothing, so it brings its own chaser
+        // unless the run named one.
+        if (wanted.isEmpty() && parts.stream().anyMatch(AutoRun::isLavaMaze)) {
+            wanted.put("zombie", 1);
+        }
         mobArena = java.util.Map.copyOf(wanted);
         if (!wanted.isEmpty()) {
             Constants.LOG.info("AutoRun: mob arena keeping {}", wanted);
@@ -1282,10 +1756,15 @@ public final class AutoRun {
         if (serverPlayer == null || !(serverPlayer.level() instanceof ServerLevel level)) {
             return;
         }
+        LavaMazeFixture.Placed maze = lavaMaze;
+        // On the lava maze every chaser on the course is the arena's, wherever the bot has got to;
+        // a bigger maze reaches past the ordinary ring.
+        double radius = maze == null ? MOB_ARENA_RADIUS
+                : Math.max(MOB_ARENA_RADIUS, maze.maze().size() + LavaMazeFixture.MARGIN + 2);
         for (java.util.Map.Entry<String, Integer> entry : wanted.entrySet()) {
             EntityType<?> type = ARENA_MOBS.get(entry.getKey());
             java.util.List<Mob> present = level.getEntitiesOfClass(Mob.class,
-                    serverPlayer.getBoundingBox().inflate(MOB_ARENA_RADIUS),
+                    serverPlayer.getBoundingBox().inflate(radius),
                     mob -> mob.isAlive() && mob.getType() == type);
             for (Mob mob : present) {
                 // Same reason the Ghasts are handed their target back: vanilla drops a target the
@@ -1295,14 +1774,21 @@ public final class AutoRun {
                     mob.setTarget(serverPlayer);
                 }
             }
+            if (maze != null) {
+                LavaMazeFixture.herd(maze, serverPlayer, present, mobRandom, MOB_KEEPER_INTERVAL,
+                        MOB_RING_MIN, MOB_RING_MAX);
+            }
             if (present.size() >= entry.getValue()) {
                 // Full ring: anything counting down was counting down towards a mob that is no
                 // longer needed.
                 mobCooldown.remove(entry.getKey());
                 continue;
             }
-            int left = mobCooldown.getOrDefault(entry.getKey(), MOB_RESTOCK_DELAY)
-                    - MOB_KEEPER_INTERVAL;
+            // The maze's first chasers come at the first check rather than after the quiet: the
+            // whole run is a chase, and the bot has been stood on the course since the join.
+            boolean firstDrop = maze != null && !mazeDropped.contains(entry.getKey());
+            int left = mobCooldown.getOrDefault(entry.getKey(),
+                    firstDrop ? MOB_KEEPER_INTERVAL : MOB_RESTOCK_DELAY) - MOB_KEEPER_INTERVAL;
             if (left > 0) {
                 mobCooldown.put(entry.getKey(), left);
                 continue;
@@ -1310,22 +1796,45 @@ public final class AutoRun {
             mobCooldown.remove(entry.getKey());
             // One per delay rather than filling the ring in a tick. A ring that refills instantly
             // is a wall of mobs arriving together; one at a time is a fight the bot can finish.
-            spawnArenaMob(level, serverPlayer, entry.getKey(), type);
+            // The lava maze drops all it is short of together instead: the bot never fights, and
+            // three chasers coming from different sides at once is the chase the user asked to
+            // see (2026-10-18).
+            int missing = maze == null ? 1 : entry.getValue() - present.size();
+            for (int i = 0; i < missing; i++) {
+                if (!spawnArenaMob(level, serverPlayer, entry.getKey(), type)) {
+                    // Nowhere to put one this time - the bot in the air over a hole on the maze, or
+                    // a ring that is all wall. The quiet has been had already; try again next check.
+                    mobCooldown.put(entry.getKey(), MOB_KEEPER_INTERVAL);
+                    break;
+                }
+                if (maze != null) {
+                    mazeDropped.add(entry.getKey());
+                }
+            }
         }
     }
 
-    private static void spawnArenaMob(ServerLevel level, ServerPlayer serverPlayer,
-                                      String kind, EntityType<?> type) {
+    /** Puts one mob in the ring, and says whether it found anywhere to. */
+    private static boolean spawnArenaMob(ServerLevel level, ServerPlayer serverPlayer,
+                                         String kind, EntityType<?> type) {
         if (!(type.create(level, EntitySpawnReason.COMMAND) instanceof Mob mob)) {
             Constants.LOG.warn("AutoRun: could not create a {}", kind);
-            return;
+            return false;
         }
+        LavaMazeFixture.Placed maze = lavaMaze;
         for (int attempt = 0; attempt < MOB_SPAWN_ATTEMPTS; attempt++) {
             double angle = mobRandom.nextDouble() * Math.PI * 2.0;
             double distance = MOB_RING_MIN + mobRandom.nextDouble() * (MOB_RING_MAX - MOB_RING_MIN);
-            BlockPos feet = surfaceAt(serverPlayer,
-                    (int) Math.round(serverPlayer.getX() + Math.cos(angle) * distance),
-                    (int) Math.round(serverPlayer.getZ() + Math.sin(angle) * distance));
+            // On the maze the first block with something under it is the surface of the lava, and
+            // a mob on another island than the bot's is one that can never reach it.
+            BlockPos feet = maze != null
+                    ? LavaMazeFixture.chaserFeet(maze, serverPlayer, mobRandom, MOB_RING_MIN, MOB_RING_MAX)
+                    : surfaceAt(serverPlayer,
+                            (int) Math.round(serverPlayer.getX() + Math.cos(angle) * distance),
+                            (int) Math.round(serverPlayer.getZ() + Math.sin(angle) * distance));
+            if (feet == null) {
+                return false;
+            }
             mob.snapTo(feet.getX() + 0.5, feet.getY(), feet.getZ() + 0.5,
                     (float) Math.toDegrees(angle) + 90.0F, 0.0F);
             if (!level.noCollision(mob)) {
@@ -1340,18 +1849,48 @@ public final class AutoRun {
             mob.setDropChance(EquipmentSlot.HEAD, 0.0F);
             mob.setPersistenceRequired();
             mob.setTarget(serverPlayer);
+            if (maze != null) {
+                LavaMazeFixture.lengthenSearch(mob);
+            }
             level.addFreshEntity(mob);
             Constants.LOG.info("AutoRun: {} at {}, {} blocks out", kind, mob.blockPosition(),
-                    Math.round(distance));
-            return;
+                    Math.round(Math.sqrt(mob.distanceToSqr(serverPlayer))));
+            return true;
         }
         Constants.LOG.warn("AutoRun: no clear spot for a {} after {} tries", kind,
                 MOB_SPAWN_ATTEMPTS);
+        return false;
+    }
+
+    /** "lava-maze", "lava-maze-2" for corridors two blocks wide, or "lava-maze-bastion[-N]". */
+    private static boolean isLavaMaze(String part) {
+        return part.equals("lava-maze") || part.startsWith("lava-maze-");
+    }
+
+    /** Writes the lava maze's verdict, once, whichever way the run ended. */
+    private static void concludeLavaMaze(Minecraft mc, String reason) {
+        LavaMazeFixture.Check check = lavaMazeCheck;
+        if (check == null) {
+            return;
+        }
+        StringBuilder mobs = new StringBuilder();
+        for (java.util.Map.Entry<String, Integer> entry : mobArena.entrySet()) {
+            if (!mobs.isEmpty()) {
+                mobs.append(',');
+            }
+            mobs.append(entry.getKey()).append(':').append(entry.getValue());
+        }
+        check.conclude(mc, worldSeed, mobs.toString(), reason);
     }
 
     private static void finish(Minecraft mc, BotEngine engine, String reason) {
         finished = true;
         Constants.LOG.info("AutoRun: {}", reason);
+        StrongholdCheck check = strongholdCheck;
+        if (check != null) {
+            concludeStrongholdCheck(mc, check, reason);
+        }
+        concludeLavaMaze(mc, reason);
         engine.stopAll(reason);
         if (!quitWhenDone) {
             return;

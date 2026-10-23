@@ -127,6 +127,22 @@ class SafeStepTest {
         assertEquals(new BlockPos(1, 64, 0), step.landing());
     }
 
+    /**
+     * A one-wide bridge rising a block ahead, and a level branch off to the side: both on a lip. The
+     * bastion (2026-10-18) lost a run to a hop up beside a hole that drifted in the air; on a lip the
+     * level step comes first, and the hop is taken only when it is the one way off.
+     */
+    @Test
+    void onALipALevelStepComesBeforeAHop() {
+        TestLevel level = TestLevel.scene().floor(0, 3, 0, 0, 63).fill(1, 3, 64, 64, 0, 0, Blocks.STONE)
+                .set(0, 63, -1, Blocks.STONE);
+        assertEquals(new BlockPos(0, 64, -1), SafeStep.choose(level, FEET, EAST, 0).landing(), "the level branch");
+
+        level.set(0, 63, -1, Blocks.AIR);
+        SafeStep.Step up = SafeStep.choose(level, FEET, EAST, 0);
+        assertEquals(SafeStep.Rise.UP, up.rise(), "the hop, when it is the one way off");
+    }
+
     @Test
     void aShallowHollowIsNotALip() {
         TestLevel level = floor(3).carve(2, 2, 63, 63, 0, 0).set(2, 61, 0, Blocks.STONE);

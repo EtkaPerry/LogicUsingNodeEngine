@@ -66,8 +66,8 @@ public final class DefaultTasks {
     private static final int NOTE_GAP = STEP_X - TaskCanvas.CARD_WIDTH - 28;
 
     /** The editor's note palette: see {@code NodePalette.PAPERS}. */
-    private static final int AMBER = 0;
-    private static final int RED = 1;
+    static final int AMBER = 0;
+    static final int RED = 1;
     private static final int GREEN = 2;
     private static final int BLUE = 3;
     private static final int PURPLE = 4;
@@ -75,9 +75,9 @@ public final class DefaultTasks {
 
     // Tags rather than lists of ids: a task that asks for #minecraft:iron_ores keeps working in
     // the deepslate layer, and picks up whatever a mod adds to the tag without being edited.
-    private static final String LOGS = "#minecraft:logs";
+    static final String LOGS = "#minecraft:logs";
     private static final String COAL_ORES = "#minecraft:coal_ores";
-    private static final String IRON_ORES = "#minecraft:iron_ores";
+    static final String IRON_ORES = "#minecraft:iron_ores";
     private static final String DIAMOND_ORES = "#minecraft:diamond_ores";
     private static final String DEEP_ORES =
             "#minecraft:redstone_ores,#minecraft:lapis_ores,#minecraft:gold_ores";
@@ -86,7 +86,7 @@ public final class DefaultTasks {
     private static final String ANCIENT_DEBRIS = "minecraft:ancient_debris";
 
     /** What a homestead grows, and what Harvest replants behind itself. */
-    private static final String CROPS =
+    static final String CROPS =
             "minecraft:wheat,minecraft:carrots,minecraft:potatoes,minecraft:beetroots";
 
     /** What a hungry bot can catch on the surface without a plan. */
@@ -1637,9 +1637,10 @@ public final class DefaultTasks {
     // --- card shorthands -------------------------------------------------------------------------
     // Every one of these builds an ordinary node with ordinary parameters. They exist so a band
     // reads as the sentence it is meant to be - "chop sixteen, sweep, forge a stone pickaxe" -
-    // rather than as forty lines of map literals.
+    // rather than as forty lines of map literals. The ones FastTasks builds its small jobs from
+    // are package-private, so both shelves say "chop sixteen" with the same card.
 
-    private static TaskNode chop(String id, int logs, String onSuccess, String onFailure) {
+    static TaskNode chop(String id, int logs, String onSuccess, String onFailure) {
         TaskNode node = node(id, "chop", Map.of(
                 "radius", "64",
                 "limit", Integer.toString(logs)));
@@ -1648,8 +1649,8 @@ public final class DefaultTasks {
         return node;
     }
 
-    private static TaskNode mine(String id, String targets, int radius, int yMin, int yMax,
-                                 int limit, boolean prospect, String onSuccess, String onFailure) {
+    static TaskNode mine(String id, String targets, int radius, int yMin, int yMax,
+                         int limit, boolean prospect, String onSuccess, String onFailure) {
         TaskNode node = node(id, "mine", Map.of(
                 "targets", targets,
                 "radius", Integer.toString(radius),
@@ -1665,8 +1666,8 @@ public final class DefaultTasks {
     }
 
     /** Walk-and-look. Succeeds the moment it sees one, which is what makes it a retry and not a loop. */
-    private static TaskNode search(String id, String targets, int attempts,
-                                   String onSuccess, String onFailure) {
+    static TaskNode search(String id, String targets, int attempts,
+                           String onSuccess, String onFailure) {
         return explore(id, targets, attempts, 12, onSuccess, onFailure);
     }
 
@@ -1726,8 +1727,8 @@ public final class DefaultTasks {
     }
 
     /** Get Tools always names its tool and tier: a stored node that omits them inherits the palette. */
-    private static TaskNode forge(String id, String tool, String material,
-                                  String onSuccess, String onFailure) {
+    static TaskNode forge(String id, String tool, String material,
+                          String onSuccess, String onFailure) {
         TaskNode node = node(id, "gettool", Map.of(
                 "tool", tool,
                 "material", material,
@@ -1737,7 +1738,7 @@ public final class DefaultTasks {
         return node;
     }
 
-    private static TaskNode carrying(String id, String item, int count, String yes, String no) {
+    static TaskNode carrying(String id, String item, int count, String yes, String no) {
         TaskNode node = node(id, "check_item", Map.of(
                 "item", item,
                 "comparison", "At least",
@@ -1820,7 +1821,7 @@ public final class DefaultTasks {
         return meal(id, minimumFood, next, next);
     }
 
-    private static TaskNode meal(String id, int minimumFood, String onSuccess, String onFailure) {
+    static TaskNode meal(String id, int minimumFood, String onSuccess, String onFailure) {
         TaskNode node = node(id, "eat", Map.of("minimum_food", Integer.toString(minimumFood)));
         node.onSuccess = onSuccess;
         node.onFailure = onFailure;
@@ -1860,7 +1861,7 @@ public final class DefaultTasks {
     }
 
     /** A pickup pass that hands the job forward whether or not it found anything. */
-    private static TaskNode sweep(String id, String next) {
+    static TaskNode sweep(String id, String next) {
         return sweep(id, 16, next);
     }
 
@@ -1880,8 +1881,8 @@ public final class DefaultTasks {
      * A drop-off whose failure means something. Not optional, so a chest that is full - or not
      * there at all - fails the card and the Fail wire decides what that means for the shift.
      */
-    private static TaskNode deposit(String id, String filter, boolean optional,
-                                    String onSuccess, String onFailure) {
+    static TaskNode deposit(String id, String filter, boolean optional,
+                            String onSuccess, String onFailure) {
         TaskNode deposit = node(id, "deposit", Map.of(
                 "filter", filter,
                 "radius", "16",
@@ -1941,7 +1942,7 @@ public final class DefaultTasks {
         return node;
     }
 
-    private static TaskNode sleep(String id, String onSuccess, String onFailure) {
+    static TaskNode sleep(String id, String onSuccess, String onFailure) {
         TaskNode node = node(id, "sleep", Map.of(
                 "wait_for_night", "true",
                 "reclaim", "true",
@@ -2009,7 +2010,7 @@ public final class DefaultTasks {
      * smelts one more, and the pass that finds none fails - which here is simply the end of that
      * metal, so both wires lead on.</p>
      */
-    private static TaskNode smeltAll(String id, String input, String next) {
+    static TaskNode smeltAll(String id, String input, String next) {
         TaskNode node = node(id, "smelt", Map.of(
                 "input", input,
                 "count", "1"));
@@ -2031,7 +2032,7 @@ public final class DefaultTasks {
         return node;
     }
 
-    private static TaskNode end(String id) {
+    static TaskNode end(String id) {
         return node(id, TaskNode.END_COMMAND, Map.of());
     }
 
@@ -2039,7 +2040,7 @@ public final class DefaultTasks {
      * The explicit entry marker. Every job writes its own, so the main lane has one obvious
      * beginning whether or not the job also owns a clock.
      */
-    private static TaskNode start(String firstCard) {
+    static TaskNode start(String firstCard) {
         TaskNode start = node("start", TaskNode.START_COMMAND, Map.of());
         start.onSuccess = firstCard;
         return start;
@@ -2070,7 +2071,7 @@ public final class DefaultTasks {
      * this way ends when its lane does. The short jobs have few enough such cards that the cables
      * stay readable.</p>
      */
-    private static TaskNode guardOnPins(TaskGraph task, String... covered) {
+    static TaskNode guardOnPins(TaskGraph task, String... covered) {
         TaskNode guard = guardCard();
         protectWith(guard, task, covered);
         return guard;
@@ -2137,7 +2138,7 @@ public final class DefaultTasks {
         return new TaskSignalLink(outputPort, targetId, targetPort);
     }
 
-    private static TaskNode node(String id, String commandId, Map<String, String> params) {
+    static TaskNode node(String id, String commandId, Map<String, String> params) {
         TaskNode node = new TaskNode(commandId);
         node.id = id;
         node.params.putAll(params);
@@ -2153,8 +2154,8 @@ public final class DefaultTasks {
      * ever missing - and the id is what draws it in their language: {@code lune.task.note.} plus
      * the job's id and this one.</p>
      */
-    private static void caption(TaskGraph task, String id, int column, int span, int colour,
-                                String english) {
+    static void caption(TaskGraph task, String id, int column, int span, int colour,
+                        String english) {
         addNote(task, id, LEFT + column * STEP_X, CAPTION_TOP, span, CAPTION_HEIGHT, colour, english);
     }
 
@@ -2203,7 +2204,7 @@ public final class DefaultTasks {
      * boundary a cable sweeping back across the whole canvas - a typewriter carriage return drawn
      * in dotted line. That is the one thing this layout is built never to do.</p>
      */
-    private static final class Lane {
+    static final class Lane {
         private final TaskGraph task;
         private final Map<String, int[]> bands = new LinkedHashMap<>();
         private final Map<String, TaskGroup> groups = new LinkedHashMap<>();
@@ -2335,7 +2336,7 @@ public final class DefaultTasks {
      * and a stub into the target. Every x sits in the gap between two columns and every y in the
      * gap between two rows, so a route never crosses a card it is trying to avoid.</p>
      */
-    private static void routeReturnCables(TaskGraph task) {
+    static void routeReturnCables(TaskGraph task) {
         int lane = 0;
         for (TaskNode source : task.nodes) {
             lane = route(task, source, "success", TaskCanvas.successY(source),

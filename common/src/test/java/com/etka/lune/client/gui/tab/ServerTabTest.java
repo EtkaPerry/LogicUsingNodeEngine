@@ -59,6 +59,27 @@ class ServerTabTest {
         }
     }
 
+    /**
+     * With a mod's rules under Lune's - Lumi's two - every row still fits, a limit's five answers sit
+     * side by side, and the footnote stays under the last row, stacked or not.
+     */
+    @Test
+    void addonRulesGetRowsOfTheirOwnUnderLunes() {
+        for (int width : new int[] {640, 400}) {
+            ServerTab.Frame frame = ServerTab.Frame.of(0, 24, width, 520, 4);
+            ServerTab.Card rules = frame.rules();
+            assertTrue(rules.height() >= ServerTab.rulesHeight(4), "width " + width);
+            for (int rule = 0; rule < 4; rule++) {
+                assertTrue(frame.buttonsY(rule) + ServerTab.BUTTON_H + 1 < (rule < 3 ? frame.ruleY(rule + 1)
+                        : frame.footnoteY()), "row " + rule + " at width " + width);
+            }
+            assertTrue(rules.holds(frame.footnoteY()), "the footnote is inside the card at width " + width);
+            int five = frame.buttonWidth(5);
+            assertTrue(frame.buttonX(4, 5) + five <= rules.x() + rules.width() - ServerTab.PAD,
+                    "five answers fit at width " + width);
+        }
+    }
+
     /** A player's name never parts from their version: the list breaks only between players. */
     @Test
     void theListBreaksBetweenPlayersNeverInsideOne() {

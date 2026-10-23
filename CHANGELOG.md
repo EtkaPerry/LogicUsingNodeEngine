@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0
+
+- Added fast tasks; ten small ready-made jobs
+- Opened Lune to add-on mods; you can build mods that show inside Lune
+- Added a Fight back switch to Self Preservation
+- Changed escapes to run from every hostile nearby, Creepers too
+- Fixed gap jumps coming down short
+- Added running jumps over three-block gaps and hops a block up
+- Fixed routes cutting the corner of a hole over lava
+- Added going round a block the server will not let her break
+- Fixed swimming; full speed at the surface with a full air bar
+- Fixed Find Stronghold reading an eye it was not watching
+- Taught Mine, Find and Branch Mine where deepslate is
+- Fixed the ores mined count; nether quartz, nether gold and modded ores
+- Changed a failed Always circuit to say which one
+- Changed the modpack permission to CurseForge; licence 1.3
+
 ## 0.9.3
 
 - Added a choice of who comes first beside you; the two-figure switch asks before anything changes, and You first hands every key back the moment you touch the controls and waits a second after you let go

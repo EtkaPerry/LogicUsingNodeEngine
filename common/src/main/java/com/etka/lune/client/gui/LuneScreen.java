@@ -1,5 +1,8 @@
 package com.etka.lune.client.gui;
 
+import com.etka.lune.client.addon.ForeignGraph;
+import com.etka.lune.client.addon.LuneAddons;
+import com.etka.lune.client.addon.LunePanel;
 import com.etka.lune.compat.NavBars;
 import com.etka.lune.util.Lang;
 import com.etka.lune.client.gui.tab.AboutTab;
@@ -13,6 +16,7 @@ import com.etka.lune.client.gui.mascot.MascotWidget;
 import com.etka.lune.client.gui.widget.BlockPicker;
 import com.etka.lune.client.gui.widget.GamesSection;
 import com.etka.lune.client.gui.widget.BesidePrompt;
+import com.etka.lune.client.gui.widget.FastTaskPicker;
 import com.etka.lune.client.gui.widget.LuneMenu;
 import com.etka.lune.client.gui.widget.NamePrompt;
 import com.etka.lune.client.gui.widget.RecipePicker;
@@ -25,6 +29,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.Window;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.components.tabs.Tab;
 import net.minecraft.client.gui.components.tabs.TabManager;
 import net.minecraft.client.gui.components.tabs.TabNavigationBar;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
@@ -33,6 +38,7 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -42,7 +48,8 @@ import java.util.List;
  * The {@link LuneMenu} button shares the bar with the tabs, at its right end, and opens Lune's
  * corner over the tab below. Whatever is not a tab's own work - the training course, and games to
  * play while Lune works - has a page there, so the tab bar stays six tabs long and no tab carries a
- * button that is not about it.
+ * button that is not about it. A mod built on Lune may add a tab of its own ({@link LuneAddons}):
+ * the Lumis have one, there only while Lumi is installed.
  * <p>
  * The panel draws itself at its own GUI scale (see {@link UiScale}) rather than the game's, so a
  * large game scale cannot squeeze the layout into a space it does not fit. That means
@@ -51,7 +58,7 @@ import java.util.List;
  * The transform and the pointer conversion that make that true live in {@link ScaledScreen}, which
  * the terms page shares, so the two cannot drift apart.
  */
-public class LuneScreen extends ScaledScreen {
+public class LuneScreen extends ScaledScreen implements LunePanel {
 
     public static final int PANEL_BG = 0xC0101014;
     public static final int PANEL_BORDER = 0xFF3A3A42;
@@ -80,6 +87,13 @@ public class LuneScreen extends ScaledScreen {
     private final ServerTab serverTab = new ServerTab();
     private final WaypointsTab waypointsTab = new WaypointsTab();
     private final AboutTab aboutTab = new AboutTab();
+    /** Every tab in the order the bar shows them: Lune's six, with any added by a mod built on Lune. */
+    private final List<LuneTab> tabs = new ArrayList<>();
+    /**
+     * The tab the panel opens on, picked from the tabs it has - an add-on's own, say, which Lune
+     * knows nothing of - or null for Main. Asked once, the first time the panel is laid out.
+     */
+    private java.util.function.Predicate<LuneTab> openOn;
 
     private final BlockPicker blockPicker = new BlockPicker();
     private final InventoryPicker inventoryPicker = new InventoryPicker(0, 0, 10, 10);
@@ -88,6 +102,7 @@ public class LuneScreen extends ScaledScreen {
     private final NamePrompt namePrompt = new NamePrompt();
     private final SharePrompt sharePrompt = new SharePrompt();
     private final BesidePrompt besidePrompt = new BesidePrompt();
+    private final FastTaskPicker fastTasks = new FastTaskPicker();
     private final LuneMenu menu = new LuneMenu();
     private final TrainingSection trainingSection = new TrainingSection(this::openLesson);
     private final GamesSection gamesSection = new GamesSection();
@@ -110,7 +125,22 @@ public class LuneScreen extends ScaledScreen {
     private GuiEventListener otherButtonTarget;
 
     public LuneScreen() {
+        this(null);
+    }
+
+    /** A panel that opens on the first of its tabs {@code openOn} picks, or on Main when none is. */
+    public LuneScreen(java.util.function.Predicate<LuneTab> openOn) {
         super(Component.literal(Lang.get("lune.gui.lune.title")));
+        this.openOn = openOn;
+        tabs.addAll(List.of(mainTab, tasksTab, waypointsTab, configTab, serverTab, aboutTab));
+        // Built here, once per panel like Lune's own, and never in init(), which runs again on every
+        // resize. Main and Task stay first: the panel goes to them by their place.
+        for (LuneAddons.Tab added : LuneAddons.tabs()) {
+            LuneTab tab = added.factory().apply(this);
+            if (tab != null) {
+                tabs.add(Math.clamp(added.position(), 2, tabs.size()), tab);
+            }
+        }
     }
 
     /** The panel honours both the layout preference and the player's text size. */
@@ -124,12 +154,11 @@ public class LuneScreen extends ScaledScreen {
         applyMenuScale();
         // Register first for pointer priority; rendering is manual so Lune still appears above tabs.
         addWidget(mascot);
-        navBar = addRenderableWidget(NavBars.build(tabManager, this.width,
-                mainTab, tasksTab, waypointsTab, configTab, serverTab, aboutTab));
+        navBar = addRenderableWidget(NavBars.build(tabManager, this.width, tabs.toArray(new Tab[0])));
         // Registered, though it draws itself, so Tab reaches it after the tabs like any button.
         addWidget(menu);
         mainTab.setTaskEditorOpener(this::openTaskEditor);
-        navBar.selectTab(0, false);
+        navBar.selectTab(startingTab(), false);
         addRenderableWidget(blockPicker);
         addRenderableWidget(inventoryPicker);
         addRenderableWidget(recipePicker);
@@ -137,6 +166,9 @@ public class LuneScreen extends ScaledScreen {
         addRenderableWidget(namePrompt);
         addRenderableWidget(sharePrompt);
         addRenderableWidget(besidePrompt);
+        addRenderableWidget(fastTasks);
+        mainTab.setFastTasksOpener(this::openFastTasks);
+        tasksTab.setFastTasksOpener(this::openFastTasks);
         tasksTab.setBlockPicker(blockPicker);
         tasksTab.setInventoryPicker(inventoryPicker);
         tasksTab.setRecipePicker(recipePicker);
@@ -150,9 +182,62 @@ public class LuneScreen extends ScaledScreen {
         repositionElements();
     }
 
+    /** The tab to open on: the first {@link #openOn} picks, the first time, and Main after that. */
+    private int startingTab() {
+        java.util.function.Predicate<LuneTab> wanted = openOn;
+        openOn = null;
+        if (wanted != null) {
+            for (int index = 0; index < tabs.size(); index++) {
+                if (wanted.test(tabs.get(index))) {
+                    return index;
+                }
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Opens the panel on the first of its tabs {@code openOn} picks - null for Main - behind the
+     * terms the first time, exactly as Lune's own key opens it. What a mod built on Lune calls to open
+     * its own tab.
+     */
+    public static void open(net.minecraft.client.Minecraft mc, java.util.function.Predicate<LuneTab> openOn) {
+        com.etka.lune.compat.Screens.open(mc, com.etka.lune.config.Terms.accepted() ? new LuneScreen(openOn)
+                : new TermsScreen(null, () -> com.etka.lune.compat.Screens.open(mc, new LuneScreen(openOn))));
+    }
+
     private void openTaskEditor(com.etka.lune.task.TaskGraph task, boolean focusName) {
         navBar.selectTab(1, false);
         tasksTab.openTask(task, focusName);
+    }
+
+    /**
+     * The fast tasks, from the Main tab or the Task tab alike. Run and Add to queue are the
+     * picker's own; Add to my tasks always lands on the Task tab with the copy open, because the
+     * point of a copy is to change it.
+     */
+    private void openFastTasks() {
+        fastTasks.open(copy -> {
+            menu.close();
+            navBar.selectTab(1, false);
+            tasksTab.addFastTask(copy);
+        });
+    }
+
+    /**
+     * A graph somebody else runs, opened from that body's tab - a Lumi's own, from the Lumis tab - in
+     * the Task tab's editor; its way back returns to the tab it came from.
+     */
+    @Override
+    public void editGraph(ForeignGraph graph, LuneTab from) {
+        menu.close();
+        navBar.selectTab(1, false);
+        tasksTab.openForeign(graph, () -> {
+            int index = tabs.indexOf(from);
+            if (index >= 0 && navBar != null) {
+                navBar.selectTab(index, false);
+            }
+        });
     }
 
     /**
@@ -251,6 +336,9 @@ public class LuneScreen extends ScaledScreen {
         if (besidePrompt.isOpen()) {
             besidePrompt.render(extractor, menuMouseX, menuMouseY, partialTick);
         }
+        if (fastTasks.isOpen()) {
+            fastTasks.render(extractor, menuMouseX, menuMouseY, partialTick);
+        }
         // Last, so the corner covers the tab and the mascot rather than sharing the screen with
         // them. It never coexists with a picker: it only opens when nothing else is up.
         menu.renderCorner(extractor, menuMouseX, menuMouseY);
@@ -307,7 +395,7 @@ public class LuneScreen extends ScaledScreen {
     private boolean popupOpen() {
         return blockPicker.isOpen() || inventoryPicker.isOpen() || recipePicker.isOpen()
                 || soundPicker.isOpen() || namePrompt.isOpen() || sharePrompt.isOpen()
-                || besidePrompt.isOpen()
+                || besidePrompt.isOpen() || fastTasks.isOpen()
                 || menu.isOpen();
     }
 
@@ -350,6 +438,11 @@ public class LuneScreen extends ScaledScreen {
         }
         if (besidePrompt.isOpen()) {
             besidePrompt.handleScreenMouseClick(menuEvent.x(), menuEvent.y(), menuEvent.button());
+            return true;
+        }
+        if (fastTasks.isOpen()) {
+            fastTasks.handleScreenMouseClick(menuEvent.x(), menuEvent.y(), menuEvent.button(),
+                    doubleClick);
             return true;
         }
         if (recipePicker.isOpen()) {
@@ -442,6 +535,10 @@ public class LuneScreen extends ScaledScreen {
         if (inventoryPicker.isOpen()) {
             return inventoryPicker.mouseScrolled(menuMouseX, menuMouseY, deltaX, deltaY);
         }
+        if (fastTasks.isOpen()) {
+            // Nothing in it scrolls, and the list it covers must not scroll from under it.
+            return true;
+        }
         return super.scaledMouseScrolled(menuMouseX, menuMouseY, deltaX, deltaY);
     }
 
@@ -459,8 +556,8 @@ public class LuneScreen extends ScaledScreen {
             namePrompt.handleScreenCharTyped(event.codepoint());
             return true;
         }
-        if (sharePrompt.isOpen() || besidePrompt.isOpen()) {
-            // Nothing in either is typed into, and nothing behind them may be.
+        if (sharePrompt.isOpen() || besidePrompt.isOpen() || fastTasks.isOpen()) {
+            // Nothing in any of them is typed into, and nothing behind them may be.
             return true;
         }
         if (blockPicker.isOpen()) {
@@ -502,6 +599,10 @@ public class LuneScreen extends ScaledScreen {
         }
         if (besidePrompt.isOpen()) {
             besidePrompt.handleScreenKeyPressed(event.key());
+            return true;
+        }
+        if (fastTasks.isOpen()) {
+            fastTasks.handleScreenKeyPressed(event.key());
             return true;
         }
         if (blockPicker.isOpen()) {

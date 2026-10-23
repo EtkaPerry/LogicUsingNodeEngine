@@ -7,6 +7,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.HashSet;
@@ -63,7 +64,12 @@ public final class PathExecutor {
         /** Water or lava entered a route after it was planned; discard it immediately. */
         REPLAN,
         /** Continuing would open or enter a forbidden hazard. */
-        HAZARD
+        HAZARD,
+        /**
+         * The server would not let a block on the route be broken. It is remembered as solid
+         * ({@link com.etka.lune.bot.memory.RefusedBreaks}), so a fresh search goes round it.
+         */
+        REFUSED
     }
 
     private final List<BlockPos> path;
@@ -78,6 +84,10 @@ public final class PathExecutor {
     private final DoorKeeper doors;
 
     private int index = 1; // path[0] is the block we're already standing on
+    /** The node a gap jump under way is landing on, so the head stays on it across; -1 for none. */
+    private int leapIndex = -1;
+    /** The node a run-up under way is for, so a begun run is not called back to the middle; -1 for none. */
+    private int runUpIndex = -1;
     private int noProgressTicks;
     private int fallRecoveryTicks;
     private double bestDistanceToTarget = Double.MAX_VALUE;
@@ -142,6 +152,12 @@ public final class PathExecutor {
     public int remainingNodes() {
         return Math.max(0, path.size() - index);
     }
+
+    /**
+     * The key of a {@link Status#REPLAN} asked for because the body was carried off the route, or is
+     * cutting back onto it across a hole: the walk counts these ({@code GotoTask.offRouteReplans}).
+     */
+    public static final String OFF_ROUTE = "lune.status.route.off_route_replanning";
 
     /** Name of the block that triggered {@link Status#NO_TOOL}, for the failure message. */
     /** Why the route stopped, keyed so the owning task keeps the meaning. */
@@ -304,7 +320,7 @@ public final class PathExecutor {
                     blockedBy.set(breaker.getFailureReason());
                     ctx.debug.breaking(obstruction, ctx.debug.breakBlock, blockedBy.text());
                     ctx.debug.decide("stopped breaking: " + blockedBy.text());
-                    return Status.HAZARD;
+                    return breaker.wasRefused() ? Status.REFUSED : Status.HAZARD;
                 }
                 if (progress == BlockBreaker.Progress.WORKING) {
                     // Mining is progress. Turning toward a block is not: the aim tolerance can go
@@ -346,10 +362,11 @@ public final class PathExecutor {
 
         // In water the keys and the eyes are the swim's. SwimPolicy decides both, so that how the
         // bot dives, swims, breathes and climbs out is one set of rules for every route.
-        SwimPolicy.Stroke stroke = player.isInWater()
-                ? SwimPolicy.decide(waterAround(ctx, player, feet, target, allowSprint,
-                        climbing, descending, onClimbable))
+        SwimPolicy.Water water = player.isInWater()
+                ? waterAround(ctx, player, feet, target, allowSprint, climbing, descending,
+                        onClimbable)
                 : null;
+        SwimPolicy.Stroke stroke = water != null ? SwimPolicy.decide(water) : null;
         if (stroke != null) {
             // The rule's own name, lower-cased with ROOT so a Turkish client does not write "dıve".
             ctx.debug.movement(target, "route waypoint, "
@@ -359,14 +376,52 @@ public final class PathExecutor {
         // A node directly above or below gives no horizontal direction to walk in, which would
         // otherwise leave the bot pressing "forward" into whatever it happened to be facing. Steer
         // at the following node instead, so it walks off the ledge it needs to drop from.
-        Vec3 steerTarget = inColumn && index + 1 < path.size()
-                ? Vec3.atCenterOf(path.get(index + 1))
-                : centre;
+        //
+        // Unless the drop is there to take: over a landing that is open, the feet go to its middle
+        // and down into it. Steered on at the next node instead, a step down on the bastion
+        // (2026-10-18) with the next node round a corner came off the edge of its own landing, into
+        // the hole beside it. Only a drop the world does not have - a floor where the route planned
+        // air - is walked off toward the next node.
+        boolean dropThere = descending && !player.isInWater() && MovementHelper.isPassable(ctx.level, target);
+        BlockPos steerNode = inColumn && !dropThere && index + 1 < path.size() ? path.get(index + 1) : target;
+        Vec3 steerTarget = Vec3.atCenterOf(steerNode);
+
+        // A gap to jump. Asked before the head is aimed, because it decides where the head goes.
+        boolean gapJump = isGapJump(ctx, feet, target);
+
+        // Off the route: the next waypoint is more than a step away and no jump from here reaches it.
+        // That is a body carried off the take-off - a jump that overshot onto the block beside the
+        // next one's take-off, on the bastion (2026-10-18) - and walking straight at the waypoint
+        // walks across whatever lies between, which there was a lava pocket. Plan again from here; a
+        // jump that is still the way is found again, from where the feet are. The same for a
+        // diagonal back onto the route across the corner of a hole that hurts, which no route plans.
+        int offX = target.getX() - feet.getX();
+        int offZ = target.getZ() - feet.getZ();
+        if (!gapJump && player.onGround() && !player.isInWater() && !onClimbable
+                && (Math.max(Math.abs(offX), Math.abs(offZ)) > 1
+                        || MovementHelper.cutsAHurtingCorner(ctx.level, feet, offX, offZ))) {
+            breaker.stop(ctx);
+            blockedBy.set(OFF_ROUTE);
+            return Status.REPLAN;
+        }
 
         // Aim one node further than we're walking, at eye height, so turns lead the movement
         // instead of chasing it. Swimming is the exception: a swimmer's depth follows the pitch, so
-        // in water the head aims where the stroke says the body should go.
-        BlockPos lookNode = path.get(Math.min(index + 1, path.size() - 1));
+        // in water the head aims where the stroke says - level, so the keys hold the depth; along
+        // the route's own depth under a roof; or up at the air. A jump across a gap is the other:
+        // the head goes on the landing itself, before the take-off and all the way across, because
+        // vanilla sends a sprint jump the way the head faces and not the way the body is going. And
+        // a waypoint the body was carried past is looked at, not past (behind); and beside a drop
+        // that hurts the head goes where the feet are steered, because the keys walk up to 22.5
+        // degrees off wherever the head points: led a node ahead, a step down past a lava pocket on
+        // the bastion (2026-10-18) came down on the pocket's lip and slid in.
+        boolean leaping = leapIndex == index && !player.onGround();
+        BlockPos following = path.get(Math.min(index + 1, path.size() - 1));
+        boolean nearADrop = !player.isInWater()
+                && (SafeStep.onTheLip(ctx.level, target) || SafeStep.onTheLip(ctx.level, feet));
+        boolean stepUp = climbing && !gapJump && !onClimbable && !inColumn && !player.isInWater();
+        BlockPos lookNode = gapJump || leaping || stepUp ? target
+                : behind(player, centre, following) || nearADrop ? steerNode : following;
         look(ctx, aimFor(ctx, stroke, lookNode), player.isInWater());
 
         steer(player, ctx, steerTarget);
@@ -378,8 +433,31 @@ public final class PathExecutor {
         // hopping while trying to descend just keeps the bot on the ledge it's trying to leave.
         // We also require headroom: in a 1-wide 2-high tunnel, jumping just mashes the bot into the
         // ceiling and looks twitchy.
-        if (allowJump && player.onGround() && !descending && headroom && climbing) {
-            ctx.input.jump = true;
+        // A jump up across a gap is not a step up: it waits for its take-off like any gap jump.
+        //
+        // A step up is taken along the head too, because vanilla sends a jump the way the head faces:
+        // until the head is round onto the step the bot holds where it is, Shift down, and a step up
+        // onto a block beside a drop that hurts is walked, never run at - a run ends only when
+        // forward is let go, so a body running at one holds a tick first. On the bastion
+        // (2026-10-18) two runs jumped a step up at a corner on the tick the waypoint changed, the
+        // head still sixty degrees round, and the jump carried them sideways off the landing into
+        // the hole beside it.
+        boolean walkUp = stepUp && SafeStep.onTheLip(ctx.level, target);
+        if (allowJump && player.onGround() && !descending && headroom && climbing && !gapJump) {
+            boolean facingStep = !stepUp
+                    || GapJumpPolicy.facesTheJump(player.getYRot(), centre.x - player.getX(), centre.z - player.getZ());
+            if (facingStep && !(walkUp && player.isSprinting())) {
+                ctx.input.jump = true;
+            } else {
+                ctx.input.forward = false;
+                ctx.input.backward = false;
+                ctx.input.left = false;
+                ctx.input.right = false;
+                // Shift only while the body still slides, on a lip a slide could carry it off; a
+                // body standing still stays put with no key down (GapJumpPolicy.holdsWithShift).
+                ctx.input.sneak = SafeStep.onTheLip(ctx.level, feet)
+                        && player.getDeltaMovement().horizontalDistance() > GapJumpPolicy.STILL;
+            }
         }
         // Clearing a gap. The pathfinder can plan a jump across a hole, but the node on the far side
         // is at the same height as this one or lower, so none of the tests above press anything and
@@ -392,15 +470,94 @@ public final class PathExecutor {
         // exactly the half of them that drop. The bot walked into the hole it had planned to jump,
         // every time, which is why a two-block gap looked like something it could not do.
         // isGapJump does its own vertical check, so nothing here needs to repeat it.
-        boolean gapJump = isGapJump(ctx, feet, target);
+        //
+        // The head first. A route that turns at the edge arrives looking the way it walked, and
+        // until the head is round onto the landing the bot holds on the take-off block: nothing
+        // pressed toward the hole, and Shift, which is vanilla's own guard against walking off an
+        // edge. The jump that taught this was taken on the tick the bot arrived, seventy degrees
+        // off the line, and came down beside the landing in lava (GapJumpPolicy.MAX_TAKEOFF_TURN).
+        //
+        // And the room to run. A body nearer the edge than the middle of the take-off block is
+        // walked back toward the middle while the head comes round, and one that has stopped nearer
+        // the edge goes back there before it runs, head round or not - the walk up to the turn used
+        // to carry it to the lip, where the run had no room left to reach jumping speed and the feet
+        // went over first (GapJumpPolicy.RUN_UP_ROOM). A run once begun carries on to its jump.
+        double towardX = centre.x - player.getX();
+        double towardZ = centre.z - player.getZ();
+        boolean facing = GapJumpPolicy.facesTheJump(player.getYRot(), towardX, towardZ);
+        Vec3 velocity = player.getDeltaMovement();
+        double along = GapJumpPolicy.speedToward(velocity.x, velocity.z, towardX, towardZ);
+        int jumpX = Integer.signum(target.getX() - feet.getX());
+        int jumpZ = Integer.signum(target.getZ() - feet.getZ());
+        double toEdge = gapJump
+                ? GapJumpPolicy.toEdge(feet.getX(), feet.getZ(), jumpX, jumpZ, player.getX(), player.getZ())
+                : Double.MAX_VALUE;
+        // And the lane. The search plans a jump down the middle of its column; a body that came onto
+        // the take-off block on a diagonal is to one side of it, where its shoulder flies along the
+        // next column over and catches whatever stands beside the gap (GapJumpPolicy.LANE). The
+        // hold walks it back to the middle first.
+        double offLane = gapJump
+                ? GapJumpPolicy.offLane(feet.getX(), feet.getZ(), jumpX, player.getX(), player.getZ())
+                : 0.0;
+        // And the far end of it: the head's line has to bring the body down in the lane as well,
+        // because the jump goes the way the head faces and a wall can stand beside the landing too
+        // (GapJumpPolicy.landingOffLane). A head a few degrees out holds a tick or two longer.
+        boolean linesUp = gapJump && GapJumpPolicy.linesUp(player.getYRot(), jumpX, jumpZ,
+                player.getX(), player.getZ(), centre.x, centre.z);
+        // And the pace. A jump up a block, or over one block onto a landing with a hole close past
+        // it, is walked: run at, the first meets the landing's face and the second comes down past
+        // the landing (GapJumpPolicy.walkJump). A body sprinting at one holds, which ends the sprint.
+        // When to leave the ground is where the jump would come down: a long gap waits for the lip,
+        // a short one goes from further back (GapJumpPolicy.reaches).
+        int rise = target.getY() - feet.getY();
+        int gapLength = Math.abs(target.getX() - feet.getX()) + Math.abs(target.getZ() - feet.getZ()) - 1;
+        boolean walkJump = gapJump
+                && GapJumpPolicy.walkJump(rise, gapLength, floorBeyond(ctx, target, jumpX, jumpZ));
+        boolean paced = !(walkJump && player.isSprinting());
+        boolean reaches = gapJump
+                && GapJumpPolicy.reaches(toEdge, along, player.isSprinting(), rise, gapLength);
+        boolean ready = GapJumpPolicy.readyToRun(facing, linesUp, paced, runUpIndex == index, toEdge,
+                offLane, along);
+        if (gapJump && player.onGround()) {
+            if (ready) {
+                runUpIndex = index;
+            } else {
+                runUpIndex = -1;
+                ctx.input.forward = false;
+                ctx.input.backward = false;
+                ctx.input.left = false;
+                ctx.input.right = false;
+                boolean backingOff = toEdge < GapJumpPolicy.RUN_UP_ROOM || offLane > GapJumpPolicy.LANE;
+                ctx.input.sneak = backingOff || GapJumpPolicy.holdsWithShift(toEdge, along);
+                if (backingOff) {
+                    steer(player, ctx, Vec3.atBottomCenterOf(feet));
+                }
+            }
+        } else if (gapJump && leapIndex != index && index > 0) {
+            // Still coming down onto the take-off - a step down onto it, the landing of the jump
+            // before. The feet go to the take-off block until they are on it, never on toward the
+            // landing over the hole: on the bastion (2026-10-18) a step down onto a one-block
+            // take-off, turning there for a jump at right angles, was steered at the landing in
+            // the air and came down past the take-off's edge, in the gap, without a jump.
+            runUpIndex = -1;
+            ctx.input.forward = false;
+            ctx.input.backward = false;
+            ctx.input.left = false;
+            ctx.input.right = false;
+            steer(player, ctx, Vec3.atBottomCenterOf(path.get(index - 1)));
+        }
         // A standing jump does not clear two blocks; a sprinting one does. But pressing sprint on
         // the take-off tick is not the same as arriving with speed - the boost vanilla adds is
         // proportional to nothing, it is the run-up that carries you - so wait a tick or two for the
         // run rather than committing to a hop that was always going to come up short. Steering
-        // continues meanwhile, which is what builds the speed being waited for.
-        if (GapJumpPolicy.shouldTakeOff(allowJump, player.onGround(), headroom, gapJump,
-                horizontalSpeed(player))) {
+        // continues meanwhile, which is what builds the speed being waited for. The speed is the
+        // speed toward the landing: the walk up to a turn is fast, and none of it goes across.
+        // Waiting ends at the lip: on the last tick the feet can still push off, the run jumps
+        // whatever its speed, because the next tick is a step into the hole.
+        if (GapJumpPolicy.shouldTakeOff(allowJump, player.onGround(), headroom, gapJump, ready, linesUp,
+                reaches, along, toEdge)) {
             ctx.input.jump = true;
+            leapIndex = index;
         }
         if (allowJump && onClimbable && climbing) {
             ctx.input.jump = true;
@@ -411,14 +568,17 @@ public final class PathExecutor {
         // exactly how a bot ends up hanging in a jungle canopy until its stall counter runs out.
         //
         // In water, Shift and Space are the stroke's: Shift to get under and start swimming, or to
-        // sink to a lower waypoint, and Space to climb out or come up for air. Holding Space just
-        // because a surface waypoint is above the feet is what kept the bot bobbing upright across
-        // whole oceans; a swimmer is meant to be under that layer.
+        // sink to a lower waypoint, and Space to climb out, to come up for air, or to hold a
+        // swimmer's feet just under the top of the water, where it breathes and strokes at once.
+        // Holding Space just because a surface waypoint is above the feet is what kept the bot
+        // bobbing upright across whole oceans. Through a turn, where steering lets go of forward,
+        // the stroke is kept the way vanilla allows it to be kept: Shift held, Space beside it.
         if (player.isInLava() || (!player.isInWater() && MovementHelper.isWater(ctx.level, target))) {
             ctx.input.jump = true;
         } else if (stroke != null) {
-            ctx.input.jump = stroke.jump();
-            ctx.input.sneak = stroke.sneak();
+            SwimPolicy.Stroke keys = SwimPolicy.throughTurn(stroke, water, ctx.input.forward);
+            ctx.input.jump = keys.jump();
+            ctx.input.sneak = keys.sneak();
         }
         // Sprinting is what turns paddling into the crawl stroke, which is twice as fast. Vanilla
         // starts the swimming pose when sprint is held while the eyes are under - which is what
@@ -432,6 +592,10 @@ public final class PathExecutor {
         ctx.input.sprint = SprintPolicy.shouldSprint(new SprintPolicy.Movement(
                 allowSprint, ctx.input.forward, player.onGround(), player.isInWater(), waterTravel,
                 onClimbable && !player.onGround(), climbing, descending, dropAhead, 0.0));
+        // A jump to be walked is walked up to, and across.
+        if (walkJump || walkUp) {
+            ctx.input.sprint = false;
+        }
 
         updateProgress(player, centre);
         return noProgressTicks > STUCK_TICKS ? Status.STUCK : Status.RUNNING;
@@ -478,12 +642,6 @@ public final class PathExecutor {
         }
     }
 
-    /** Ground speed only; the vertical component says nothing about clearing a gap. */
-    private static double horizontalSpeed(LocalPlayer player) {
-        Vec3 velocity = player.getDeltaMovement();
-        return Math.hypot(velocity.x, velocity.z);
-    }
-
     private static boolean unexpectedFall(LocalPlayer player, BlockPos target, int feetY) {
         return !player.onGround()
                 && !player.isInWater()
@@ -500,6 +658,16 @@ public final class PathExecutor {
      * <p>Adjacent nodes - including diagonals - are one block away in each axis. Anything further
      * is a jump the pathfinder planned deliberately, because no walking move produces it.
      */
+    /** How many blocks of floor follow a landing along its jump, at its level: none, one, or two and more. */
+    private static int floorBeyond(BotContext ctx, BlockPos landing, int stepX, int stepZ) {
+        int floor = 0;
+        while (floor < 2 && MovementHelper.canStandAt(ctx.level,
+                landing.offset(stepX * (floor + 1), 0, stepZ * (floor + 1)))) {
+            floor++;
+        }
+        return floor;
+    }
+
     private static boolean isGapJump(BotContext ctx, BlockPos feet, BlockPos target) {
         int dx = target.getX() - feet.getX();
         int dz = target.getZ() - feet.getZ();
@@ -518,6 +686,11 @@ public final class PathExecutor {
      * <p>The stroke is the run key, so it is only on offer when this route may sprint and vanilla
      * would let it: the same food, blindness and riding rules {@code LocalPlayer} checks before it
      * starts a sprint. Diving for a stroke that will never start would only spend the air.</p>
+     *
+     * <p>The top of the water is the top face of the highest water block straight above the feet,
+     * as far as the fluid fills it - 0.889 of a source block - and it is open to the air when the
+     * block over it is passable. Under ice or a roof there is no breath to be had there, and the
+     * policy holds nothing.</p>
      */
     private static SwimPolicy.Water waterAround(BotContext ctx, LocalPlayer player, BlockPos feet,
                                                 BlockPos target, boolean allowSprint,
@@ -529,8 +702,16 @@ public final class PathExecutor {
                 && (player.getFoodData().hasEnoughFood() || player.getAbilities().mayfly);
         boolean deep = MovementHelper.isDeepWater(ctx.level, feet)
                 && MovementHelper.isDeepWater(ctx.level, target);
+        BlockPos column = player.blockPosition();
+        BlockPos top = new BlockPos(column.getX(), surfaceAbove(ctx.level, column) - 1,
+                column.getZ());
+        FluidState fluid = ctx.level.getFluidState(top);
+        double waterTop = top.getY() + (fluid.isEmpty() ? 1.0 : fluid.getHeight(ctx.level, top));
+        boolean airAbove = MovementHelper.isWater(ctx.level, column)
+                && MovementHelper.isPassable(ctx.level, top.above());
         return new SwimPolicy.Water(player.isSwimming(), player.isUnderWater(),
-                player.getAirSupply(), player.getMaxAirSupply(), canStroke, deep,
+                player.getAirSupply(), player.getMaxAirSupply(), canStroke, deep, airAbove,
+                waterTop - player.getY(), player.getDeltaMovement().y,
                 MovementHelper.isWater(ctx.level, target), climbing, descending, onClimbable);
     }
 
@@ -538,9 +719,10 @@ public final class PathExecutor {
      * Where the eyes go this tick: the waypoint, or what the stroke wants instead.
      *
      * <p>The route across water runs along its top layer, because every node there is somewhere to
-     * breathe. The swimmer goes a block under it: that keeps the eyes under, and with them the
-     * stroke, where a swimmer at the very top keeps breaking out and dropping back to a paddle.
-     * Water too shallow for that is simply swum through at the node.</p>
+     * breathe, and a swimmer holding the top of the water looks level along it: that is where it
+     * is going, and a level look steers its depth nowhere. A swimmer under a roof follows the
+     * route's depth with the look instead, which is all that steers a swimmer's depth when there
+     * is no top to hold.</p>
      */
     private static Vec3 aimFor(BotContext ctx, SwimPolicy.Stroke stroke, BlockPos node) {
         Vec3 centre = Vec3.atCenterOf(node);
@@ -549,10 +731,8 @@ public final class PathExecutor {
         }
         return switch (stroke.aim()) {
             case NODE -> centre;
-            case LANE -> ahead(ctx.player, centre, MovementHelper.isSurfaceWater(ctx.level, node)
-                    && MovementHelper.isWater(ctx.level, node.below())
-                    ? centre.y - 1.0
-                    : centre.y);
+            case LEVEL -> ahead(ctx.player, centre, ctx.player.getEyeY());
+            case LANE -> ahead(ctx.player, centre, centre.y);
             case SURFACE -> new Vec3(centre.x,
                     surfaceAbove(ctx.level, ctx.player.blockPosition()) + 0.5, centre.z);
         };
@@ -587,6 +767,27 @@ public final class PathExecutor {
             cursor.move(0, 1, 0);
         }
         return cursor.getY();
+    }
+
+    /**
+     * Whether the waypoint at {@code waypoint} is back the way the route goes on: more than a
+     * column's width off, and the node after it more than a right angle the other way. The body
+     * has been carried past it - a landing, a sprint into a corner - and the head goes on the
+     * waypoint until the feet are back on it, so the walk back is a walk forward and not a backward
+     * shuffle with the eyes on where the route goes next. On the bastion (2026-10-18) a run backed
+     * like that onto a step down it had sprinted past, and slid into the hole beside it.
+     */
+    static boolean behind(LocalPlayer player, Vec3 waypoint, BlockPos following) {
+        return behind(player.getX(), player.getZ(), waypoint, Vec3.atCenterOf(following));
+    }
+
+    static boolean behind(double x, double z, Vec3 waypoint, Vec3 following) {
+        double toX = waypoint.x - x;
+        double toZ = waypoint.z - z;
+        if (toX * toX + toZ * toZ < COLUMN_RADIUS_SQR) {
+            return false;
+        }
+        return toX * (following.x - x) + toZ * (following.z - z) < 0.0;
     }
 
     private void look(BotContext ctx, Vec3 lookCentre, boolean includePitch) {
@@ -668,8 +869,8 @@ public final class PathExecutor {
     private static boolean hasReached(BotContext ctx, LocalPlayer player, BlockPos pos) {
         // Height must match exactly on land. In water the player bobs, so allow one block of
         // vertical slop as long as the path node and the player are both in water - and more
-        // below it, because a swimmer is meant to be under the surface layer the route runs
-        // along, and a dive carries it deeper than that. Passing under a waypoint is passing it.
+        // below it, because the dive that starts the stroke carries a swimmer well under the
+        // surface layer the route runs along. Passing under a waypoint is passing it.
         // Counting only one block made the bot stop under a node two blocks up and back-pedal
         // to it, with the head tipped at the sky.
         boolean inWater = player.isInWater() && MovementHelper.isWater(ctx.level, pos);

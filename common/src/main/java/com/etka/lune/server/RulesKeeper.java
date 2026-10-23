@@ -97,10 +97,25 @@ public final class RulesKeeper {
     /** What {@code member} would be told now. */
     public RulesPayload noticeFor(Member member) {
         boolean editor = mayEdit(member);
+        Map<String, Boolean> addonsMay = new LinkedHashMap<>();
+        for (AddonRules.Rule rule : AddonRules.all()) {
+            if (rule.kind() == AddonRules.Kind.WHO) {
+                addonsMay.put(rule.id(), rules.allows(rule.id(), member.operator(), member.host()));
+            }
+        }
         return new RulesPayload(LuneNet.PROTOCOL, version, rules,
                 rules.mayRun(member.operator(), member.host()),
                 rules.mayCheat(member.operator(), member.host()),
-                editor, editor ? players() : List.of());
+                editor, editor ? players() : List.of(), addonsMay);
+    }
+
+    /** How the rules read in the log: Lune's two, and every add-on rule after them. */
+    static String describe(ServerRules rules) {
+        StringBuilder line = new StringBuilder("who may run tasks: ").append(rules.run().id())
+                .append("; who may use the omniscient modes: ").append(rules.cheats().id());
+        rules.addons().entrySet().stream().sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> line.append("; ").append(entry.getKey()).append(": ").append(entry.getValue()));
+        return line.toString();
     }
 
     /**
@@ -135,8 +150,7 @@ public final class RulesKeeper {
             return false;
         }
         rules = proposed;
-        Constants.LOG.info("{} changed Lune's server rules: who may run tasks: {}; who may use the"
-                + " omniscient modes: {}", member.name(), rules.run().id(), rules.cheats().id());
+        Constants.LOG.info("{} changed Lune's server rules: {}", member.name(), describe(rules));
         refresh(online);
         return true;
     }

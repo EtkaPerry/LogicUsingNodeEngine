@@ -10,6 +10,7 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
+import net.minecraft.server.players.NameAndId;
 
 import java.util.UUID;
 
@@ -84,10 +85,9 @@ public final class LuneServer {
         ServerRules rules = file.load(ServerRules.defaults(dedicated), dedicated);
         keeper = new RulesKeeper(rules, BuildInfo.version());
         if (dedicated) {
-            Constants.LOG.info("Lune {} is on this server. Who may run tasks: {}; who may use the"
-                            + " omniscient modes: {}. {} {} (everyone, operators or nobody), or from"
-                            + " Lune's Server tab as an operator.",
-                    BuildInfo.version(), rules.run().id(), rules.cheats().id(),
+            Constants.LOG.info("Lune {} is on this server. Its rules: {}. {} {} (everyone, operators or"
+                            + " nobody), or from Lune's Server tab as an operator.",
+                    BuildInfo.version(), RulesKeeper.describe(rules),
                     existed ? "Change them in" : "Wrote the defaults to", file.path());
         }
     }
@@ -109,8 +109,8 @@ public final class LuneServer {
         if (ticks % RELOAD_TICKS == 0) {
             ServerRules edited = file.changedSince(keeper.rules());
             if (edited != null && keeper.replace(edited, LuneServer::online)) {
-                Constants.LOG.info("Lune's server rules changed in {}: who may run tasks: {}; who may use"
-                        + " the omniscient modes: {}", file.path(), edited.run().id(), edited.cheats().id());
+                Constants.LOG.info("Lune's server rules changed in {}: {}", file.path(),
+                        RulesKeeper.describe(edited));
             }
         }
         if (ticks % RECHECK_TICKS == 0 && keeper.count() > 0) {
@@ -137,6 +137,57 @@ public final class LuneServer {
         if (keeper != null && player != null) {
             keeper.left(player.getUUID(), LuneServer::online);
         }
+    }
+
+    // --- What a mod built on Lune may ask about its own rules ({@link AddonRules}) ----------------
+
+    /**
+     * Whether one of an add-on's who-rules lets this player through on the server they are on: the
+     * owner of the world always, anyone else as the rule says. Unlike Lune's own rules this is
+     * enforced here, on the server - an add-on rule is about what the server itself does, such as
+     * moving somebody's Lumi, and the server is the one doing it.
+     */
+    public static boolean allows(ServerPlayer player, String rule) {
+        if (player == null) {
+            return false;
+        }
+        RulesKeeper current = keeperFor(player.level().getServer());
+        return current != null && current.rules().allows(rule, operator(player), host(player));
+    }
+
+    /**
+     * {@link #allows(ServerPlayer, String)} for a player who may not be online - a Lumi's owner,
+     * say - judged the way the game judges anybody it knows only by name: by its operator list.
+     */
+    public static boolean allows(MinecraftServer current, UUID id, String name, String rule) {
+        if (current == null || id == null) {
+            return false;
+        }
+        ServerPlayer online = current.getPlayerList().getPlayer(id);
+        if (online != null) {
+            return allows(online, rule);
+        }
+        RulesKeeper keeping = keeperFor(current);
+        if (keeping == null) {
+            return false;
+        }
+        NameAndId who = new NameAndId(id, name == null ? "" : name);
+        boolean operator = current.getProfilePermissions(who).hasPermission(Permissions.COMMANDS_GAMEMASTER);
+        return keeping.rules().allows(rule, operator, current.isSingleplayerOwner(who));
+    }
+
+    /** A limit one of an add-on's rules sets on this server; 0 means there is none. */
+    public static int limit(MinecraftServer current, String rule) {
+        RulesKeeper keeping = keeperFor(current);
+        return keeping == null ? 0 : keeping.rules().limit(rule);
+    }
+
+    private static boolean operator(ServerPlayer player) {
+        return player.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER);
+    }
+
+    private static boolean host(ServerPlayer player) {
+        return server != null && server.isSingleplayerOwner(player.nameAndId());
     }
 
     /**
@@ -175,12 +226,12 @@ public final class LuneServer {
 
             @Override
             public boolean operator() {
-                return player.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER);
+                return LuneServer.operator(player);
             }
 
             @Override
             public boolean host() {
-                return server != null && server.isSingleplayerOwner(player.nameAndId());
+                return LuneServer.host(player);
             }
 
             @Override
