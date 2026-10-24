@@ -14,7 +14,7 @@
 
 Lune is a client-side mod. You build a task on a canvas out of cards — Chop Wood, Mine, Craft, Deposit, Self Preservation — wired by their Success and Fail pins, and Lune carries it out with your own character. She works from what she can see, the way a player does: no X-ray, no snapping camera, and other players are never a target.
 
-<p align="center"><img src="https://github.com/EtkaPerry/LogicUsingNodeEngine/raw/main/docs/Screenshots/Node.png" alt="Starter task 1, Chop Wood, on Lune's canvas" width="900"></p>
+<p align="center"><img src="https://media.forgecdn.net/attachments/2097/141/node-png.png" alt="Starter task 1, Chop Wood, on Lune's canvas" width="900"></p>
 
 ## Meet Lune
 
@@ -41,7 +41,8 @@ Inside the Task Editor, Lune acts as your intelligent advisor. She watches your 
 - **Share a task as a link.** **Share** turns a task into a link, view only or view and edit, that opens in any browser, and **Import** reads a link back. Nothing is uploaded until you press Create link, anyone with the link can read the task, and a link nobody opens for 30 days is deleted ([policy](https://lunode.etka.co.uk/policy)).
 - **Learn it in the game.** A ten-step training course, and two puzzle games for while a task runs, both under **Menu** in the panel.
 
-<p align="center"><img src="https://github.com/EtkaPerry/LogicUsingNodeEngine/raw/main/docs/Screenshots/Working.png" alt="Lune's card in the corner of the screen while a task mines beside the player" width="900"></p>
+<p align="center"><img src="https://media.forgecdn.net/attachments/2097/142/working-png.png")
+" alt="Lune's card in the corner of the screen while a task mines beside the player" width="900"></p>
 
 ## Getting Started
 
