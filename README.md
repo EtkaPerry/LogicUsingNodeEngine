@@ -3,7 +3,7 @@
 <p align="center"><b>L</b>ogic <b>U</b>sing <b>N</b>ode <b>E</b>ngine</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Status-Alpha-e05d44?style=flat-square" alt="Alpha">
+  <img src="https://img.shields.io/badge/Status-Beta-fe7d37?style=flat-square" alt="Beta">
   <img src="https://img.shields.io/badge/Minecraft-26.1.2%20%7C%2026.2%20%7C%2026.3-44aa44?style=flat-square" alt="Minecraft 26.1.2, 26.2 and 26.3">
   <img src="https://img.shields.io/badge/Loaders-NeoForge%20%7C%20Forge%20%7C%20Fabric-4a6fa5?style=flat-square" alt="NeoForge, Forge, Fabric">
   <img src="https://img.shields.io/badge/Side-Client--only-777777?style=flat-square" alt="Client-side only">
