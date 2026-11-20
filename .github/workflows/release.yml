@@ -28,7 +28,7 @@ permissions:
 env:
   # Release channel for every version this publishes, on both stores:
   # release, beta or alpha.
-  RELEASE_CHANNEL: alpha
+  RELEASE_CHANNEL: beta
   # The publish job has no checkout, so gh has no remote to infer this from.
   GH_REPO: ${{ github.repository }}
   # The numeric CurseForge project id - it is in the project's curseforge.com
