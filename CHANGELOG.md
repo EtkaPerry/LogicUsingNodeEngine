@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.3
+
+- Added a look round the panel; offered the first time it opens, and kept in the Menu
+- Added travel through portals; a waypoint or a death in another dimension is walked to
+- Added a Sculk sensors switch to Self Preservation; she creeps past them
+- Changed routes to keep off sculk sensors and shriekers
+- Added a keep time to a share link; an hour to 90 days
+- Changed sharing to refuse a task with a web address or a disallowed word
+
 ## 1.0
 
 - Added fast tasks; ten small ready-made jobs

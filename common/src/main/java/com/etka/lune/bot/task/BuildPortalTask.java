@@ -11,9 +11,12 @@ import com.etka.lune.bot.learning.LearningScope;
 import com.etka.lune.bot.path.Goals;
 import com.etka.lune.bot.util.BlockPlacer;
 import com.etka.lune.bot.util.InventoryHelper;
+import com.etka.lune.waypoint.PortalLink;
+import com.etka.lune.waypoint.PortalStore;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
@@ -91,6 +94,8 @@ public final class BuildPortalTask implements Task {
     private State state = State.CHOOSE_BASE;
     private BlockPos base;
     private BlockPos portal;
+    /** The dimension the build started in, so an entered portal can say where it came from. */
+    private ResourceKey<Level> origin;
     private GotoTask approach;
     private int frameIndex;
     private int placeTicks;
@@ -179,6 +184,7 @@ public final class BuildPortalTask implements Task {
         state = State.CHOOSE_BASE;
         base = null;
         portal = null;
+        origin = null;
         frameIndex = 0;
         placeTicks = 0;
         lightTicks = 0;
@@ -195,7 +201,11 @@ public final class BuildPortalTask implements Task {
         ctx.debug.giveUp = "frame " + frameIndex + "/" + (mode.includeCorners ? 14 : 10)
                 + ", block " + placeTicks + "/" + PLACE_TIMEOUT_TICKS + " ticks";
 
+        if (origin == null) {
+            origin = ctx.level.dimension();
+        }
         if (enterAfterBuild && ctx.level.dimension() == Level.NETHER) {
+            UsePortalTask.noteCrossing(ctx, origin, portal);
             status.set("lune.status.speedrun.entered_nether");
             return TaskStatus.SUCCESS;
         }
@@ -380,6 +390,10 @@ public final class BuildPortalTask implements Task {
     private TaskStatus light(BotContext ctx) {
         BlockPos lit = litOpening(ctx);
         if (lit != null) {
+            // A lit frame is a portal memory can offer the next trip, whoever made this one.
+            String here = ctx.level.dimension().identifier().toString();
+            PortalStore.get().record(PortalLink.at(lit, here,
+                    PortalLink.vanillaOtherEnd(here), System.currentTimeMillis()));
             portal = lit;
             state = enterAfterBuild ? State.ENTER : State.DONE;
             return TaskStatus.RUNNING;

@@ -456,7 +456,13 @@ public final class MovementHelper {
                 || state.is(Blocks.SWEET_BERRY_BUSH)
                 || state.is(Blocks.WITHER_ROSE)
                 || state.is(Blocks.CAMPFIRE)
-                || state.is(Blocks.SOUL_CAMPFIRE);
+                || state.is(Blocks.SOUL_CAMPFIRE)
+                // A sculk sensor or shrieker answers any weight set on it, crouched or not -
+                // stepOn schedules the vibration past the listener's own sneak check - so its
+                // block is neither a body space nor a floor, the way a fence top is not one.
+                || state.is(Blocks.SCULK_SENSOR)
+                || state.is(Blocks.CALIBRATED_SCULK_SENSOR)
+                || state.is(Blocks.SCULK_SHRIEKER);
     }
 
     /** True for any fluid, which the bot may swim through at a cost. */

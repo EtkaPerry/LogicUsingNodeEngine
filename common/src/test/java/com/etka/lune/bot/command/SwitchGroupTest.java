@@ -32,7 +32,7 @@ class SwitchGroupTest {
 
     private static final List<String> DANGERS = List.of(
             "protect_air", "protect_lava", "protect_fire", "protect_fall", "protect_monsters",
-            "protect_health");
+            "protect_sculk", "protect_health");
     private static final List<String> CLUTCHES = List.of("clutch_water", "clutch_boat", "clutch_cushion");
     private static final List<String> MOB_TACTICS = List.of("protect_fireballs", "build_cover", "fight_back");
 
@@ -101,7 +101,7 @@ class SwitchGroupTest {
         assertEquals(MOB_TACTICS, on(def, MOB_TACTICS));
 
         // What is left on screen is what the card will read: Drowning and its two rows, and the
-        // five dangers that are off, to turn back on.
+        // six dangers that are off, to turn back on.
         List<String> shown = new ArrayList<>();
         for (Param<?> param : def.params()) {
             if (def.isRelevant(param.id())) {
@@ -109,7 +109,8 @@ class SwitchGroupTest {
             }
         }
         assertEquals(List.of("protect_air", "air_compare", "air_value", "protect_lava",
-                "protect_fire", "protect_fall", "protect_monsters", "protect_health"), shown);
+                "protect_fire", "protect_fall", "protect_monsters", "protect_sculk",
+                "protect_health"), shown);
     }
 
     @Test

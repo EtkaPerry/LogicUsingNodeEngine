@@ -201,12 +201,13 @@ public final class AStarPathfinder {
 
         /**
          * Returns these settings jumping gaps up to {@code maxGap} wide: the running jump's three for a
-         * route that may sprint, the walk's two for one that may not.
+         * route that may sprint, the walk's two for one that may not, and zero - no gap edges at
+         * all - for a body that cannot take any of them ({@link GapJumpPolicy#MAX_CROUCHED_GAP}).
          */
         public Settings withMaxGap(int maxGap) {
             return new Settings(maxFall, allowBreak, allowSwim, allowJump, nodeBudget,
                     heuristicWeight, miner, avoid,
-                    Math.clamp(maxGap, 1, GapJumpPolicy.MAX_SPRINT_GAP));
+                    Math.clamp(maxGap, 0, GapJumpPolicy.MAX_SPRINT_GAP));
         }
     }
 
@@ -518,6 +519,13 @@ public final class AStarPathfinder {
     private static void relaxGapJumps(BlockGetter level, Node current, int dx, int dz, Goal goal,
                                       Settings settings, Map<Long, Node> nodes,
                                       PriorityQueue<Node> open) {
+        // A crouched body cannot make even the smallest jump this plans, so it gets no edges to
+        // plan it with: the way found goes round the hole rather than into it
+        // (GapJumpPolicy.MAX_CROUCHED_GAP). Asked of the miner rather than maxGap so a route
+        // searched for a sneak - whatever its other settings - never learns a leap it cannot take.
+        if (settings.miner() != null && settings.miner().isShiftKeyDown()) {
+            return;
+        }
         BlockPos pos = current.pos;
         if (!MovementHelper.isSolidFloor(level, pos.below())
                 || !MovementHelper.isPassable(level, pos.above(2))) {

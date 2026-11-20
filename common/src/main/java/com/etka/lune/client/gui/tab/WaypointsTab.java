@@ -1,9 +1,10 @@
 package com.etka.lune.client.gui.tab;
 
 import com.etka.lune.bot.BotEngine;
+import com.etka.lune.bot.Task;
 import com.etka.lune.bot.path.Goal;
 import com.etka.lune.bot.path.Goals;
-import com.etka.lune.bot.task.GotoTask;
+import com.etka.lune.bot.task.TravelTask;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.client.gui.LuneTab;
 import com.etka.lune.client.gui.widget.GuiIcons;
@@ -92,8 +93,7 @@ public class WaypointsTab extends LuneTab {
                         waypoint -> addToWaypoints(waypoint, waypoint.name()),
                         waypoint -> savedAs(waypoint) == null),
                 new ListPanel.RowAction<>(GuiIcons.Icon.PLAY,
-                        Lang.get("lune.gui.waypoints.go_to_it"), this::goTo,
-                        waypoint -> waypoint.isIn(WaypointStore.currentDimension()))));
+                        Lang.get("lune.gui.waypoints.go_to_it"), this::goTo)));
         refresh();
 
         savedButton = add(Button.builder(Component.literal(Lang.get("lune.gui.waypoints.source.saved")),
@@ -156,11 +156,7 @@ public class WaypointsTab extends LuneTab {
         if (selected == null) {
             return;
         }
-        if (!WaypointStore.isInCurrentDimension(selected)) {
-            overlay(Lang.get("lune.gui.waypoints.lune_waypoint_another_dimension"));
-            return;
-        }
-        start(GotoTask.toPlace(new Goals.Near(selected.pos(), 2), true));
+        start(TravelTask.toWaypoint(selected, 2));
     }
 
     private void refresh() {
@@ -294,19 +290,15 @@ public class WaypointsTab extends LuneTab {
     }
 
     private void goTo(ExternalWaypoint waypoint) {
-        if (!waypoint.isIn(WaypointStore.currentDimension())) {
-            overlay(Lang.get("lune.gui.waypoints.lune_waypoint_another_dimension"));
-            return;
-        }
         // A column without a height is a column: arrive anywhere in it, not at a made-up floor.
         Goal goal = waypoint.hasY()
                 ? new Goals.Near(waypoint.pos(), 2)
                 : new Goals.NearXZ(waypoint.x(), waypoint.z(), 2);
-        start(GotoTask.toPlace(goal, true));
+        start(new TravelTask(goal, waypoint.pos(), waypoint.dimension(), true));
     }
 
     /** Sets off and closes the panel, or says why not - this server's rules - and stays. */
-    private static void start(GotoTask walk) {
+    private static void start(Task walk) {
         if (!BotEngine.get().runNow(walk)) {
             overlay(Lang.get("lune.gui.bot_context.lune", BotEngine.get().getLastMessage()));
             return;

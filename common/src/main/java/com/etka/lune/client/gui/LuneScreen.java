@@ -23,7 +23,12 @@ import com.etka.lune.client.gui.widget.RecipePicker;
 import com.etka.lune.client.gui.widget.SharePrompt;
 import com.etka.lune.client.gui.widget.SoundPicker;
 import com.etka.lune.client.gui.widget.InventoryPicker;
+import com.etka.lune.client.gui.widget.PanelTour;
+import com.etka.lune.client.gui.widget.Spotlight;
+import com.etka.lune.client.gui.widget.TourOverlay;
+import com.etka.lune.client.gui.widget.TourSection;
 import com.etka.lune.client.gui.widget.TrainingSection;
+import com.etka.lune.config.BotConfig;
 import com.etka.lune.training.TrainingLesson;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.Window;
@@ -107,6 +112,13 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
     private final TrainingSection trainingSection = new TrainingSection(this::openLesson);
     private final GamesSection gamesSection = new GamesSection();
     private final MascotWidget mascot = new MascotWidget();
+    /** Lune showing the player round the panel; offered the first time it opens. */
+    private final TourOverlay tour = new TourOverlay();
+    private final TourSection tourSection = new TourSection(this::startTour);
+    /** Whether this panel has asked about the tour; only its first layout does. */
+    private boolean tourAsked;
+    /** The tab the tour started on, gone back to when it ends; -1 while it is not running. */
+    private int tourReturnTab = -1;
 
     private TabNavigationBar navBar;
 
@@ -167,6 +179,8 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
         addRenderableWidget(sharePrompt);
         addRenderableWidget(besidePrompt);
         addRenderableWidget(fastTasks);
+        addRenderableWidget(tour);
+        tour.setHost(new TourHost());
         mainTab.setFastTasksOpener(this::openFastTasks);
         tasksTab.setFastTasksOpener(this::openFastTasks);
         tasksTab.setBlockPicker(blockPicker);
@@ -178,8 +192,16 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
         tasksTab.setBesidePrompt(besidePrompt);
         tasksTab.setCourseMapOpener(() -> menu.open(trainingSection));
         // The pages of Lune's corner, in the order the side menu lists them.
-        menu.setSections(List.of(trainingSection, gamesSection));
+        menu.setSections(List.of(tourSection, trainingSection, gamesSection));
         repositionElements();
+        // Once per panel, and only until the player has answered: the first thing a new player
+        // sees past the terms is Lune offering to show them round.
+        if (!tourAsked) {
+            tourAsked = true;
+            if (PanelTour.shouldOffer(BotConfig.get().tourOffered)) {
+                tour.offer();
+            }
+        }
     }
 
     /** The tab to open on: the first {@link #openOn} picks, the first time, and Main after that. */
@@ -250,6 +272,92 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
         tasksTab.openLesson(lesson);
     }
 
+    /** The tour, from a stop chosen on its page in Lune's corner. */
+    private void startTour(PanelTour.Stop from) {
+        menu.close();
+        tour.start(from);
+    }
+
+    private void selectTab(LuneTab tab) {
+        int index = tabs.indexOf(tab);
+        if (index >= 0 && tabManager.getCurrentTab() != tab) {
+            navBar.selectTab(index, false);
+        }
+    }
+
+    /**
+     * What the tour asks of the panel: which tab a stop is on, and what it lights there. The tabs
+     * answer for their own widgets; the bar and the menu button are the panel's.
+     */
+    private final class TourHost implements TourOverlay.Host {
+
+        @Override
+        public void tourStarting() {
+            menu.close();
+            tourReturnTab = tabManager.getCurrentTab() instanceof LuneTab tab ? tabs.indexOf(tab) : -1;
+        }
+
+        @Override
+        public boolean canShow(PanelTour.Stop stop) {
+            return stop.place() != PanelTour.Place.TASK || tasksTab.tourCanShow(stop);
+        }
+
+        @Override
+        public void show(PanelTour.Stop stop) {
+            switch (stop.place()) {
+                case MAIN -> selectTab(mainTab);
+                case TASK -> selectTab(tasksTab);
+                case HERE -> {
+                }
+            }
+            if (tabManager.getCurrentTab() == tasksTab) {
+                tasksTab.showForTour(stop);
+            }
+        }
+
+        @Override
+        public List<Spotlight.Box> light(PanelTour.Stop stop) {
+            return switch (stop) {
+                case TABS -> tabButtons(tabs);
+                // Lune's own four: an add-on's tab among them is the add-on's to explain.
+                case OTHER_TABS -> tabButtons(List.of(waypointsTab, configTab, serverTab, aboutTab));
+                case MENU -> TourOverlay.around(menu);
+                case MAIN_NOW, MAIN_TASKS -> mainTab.tourLight(stop);
+                default -> tasksTab.tourLight(stop);
+            };
+        }
+
+        /** The tab bar's buttons for {@code which}, as one lit area. */
+        private List<Spotlight.Box> tabButtons(List<LuneTab> which) {
+            List<Spotlight.Box> buttons = new ArrayList<>();
+            List<? extends GuiEventListener> all = navBar.children();
+            for (LuneTab tab : which) {
+                int index = tabs.indexOf(tab);
+                if (index >= 0 && index < all.size()) {
+                    ScreenRectangle button = all.get(index).getRectangle();
+                    buttons.add(new Spotlight.Box(button.left(), button.top(), button.width(),
+                            button.height()));
+                }
+            }
+            Spotlight.Box around = Spotlight.Box.around(buttons);
+            return around == null ? List.of() : List.of(around);
+        }
+
+        @Override
+        public void tourEnded() {
+            tasksTab.endTour();
+            if (tourReturnTab >= 0 && tourReturnTab < tabs.size()) {
+                selectTab(tabs.get(tourReturnTab));
+            }
+            tourReturnTab = -1;
+        }
+
+        @Override
+        public void openTraining() {
+            menu.open(trainingSection);
+        }
+    }
+
     @Override
     protected void repositionElements() {
         applyMenuScale();
@@ -314,7 +422,10 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
         if (tabManager.getCurrentTab() instanceof LuneTab tab) {
             tab.extractTabRenderState(extractor, behindX, behindY, partialTick);
         }
-        mascot.renderOverlay(extractor, behindX, behindY, partialTick);
+        // During the tour Lune is in its card, beside what she is talking about, and nowhere else.
+        if (!tour.isOpen()) {
+            mascot.renderOverlay(extractor, behindX, behindY, partialTick);
+        }
         if (blockPicker.isOpen()) {
             blockPicker.render(extractor, menuMouseX, menuMouseY, partialTick);
         }
@@ -342,6 +453,8 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
         // Last, so the corner covers the tab and the mascot rather than sharing the screen with
         // them. It never coexists with a picker: it only opens when nothing else is up.
         menu.renderCorner(extractor, menuMouseX, menuMouseY);
+        // Over everything, tab bar included: the tour's dim is the whole panel but what it lights.
+        tour.render(extractor, menuMouseX, menuMouseY, partialTick);
     }
 
     @Override
@@ -396,12 +509,13 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
         return blockPicker.isOpen() || inventoryPicker.isOpen() || recipePicker.isOpen()
                 || soundPicker.isOpen() || namePrompt.isOpen() || sharePrompt.isOpen()
                 || besidePrompt.isOpen() || fastTasks.isOpen()
-                || menu.isOpen();
+                || menu.isOpen() || tour.isOpen();
     }
 
     /** Settings and tasks are edited live; persisting on close avoids writing every tick. */
     @Override
     public void onClose() {
+        tour.panelClosing();
         configTab.save();
         tasksTab.save();
         super.onClose();
@@ -414,6 +528,11 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
      */
     @Override
     protected boolean scaledMouseClicked(MouseButtonEvent menuEvent, boolean doubleClick) {
+        // The tour is a look round: only its own buttons answer, and nothing under the dim does.
+        if (tour.isOpen()) {
+            tour.handleScreenMouseClick(menuEvent.x(), menuEvent.y(), menuEvent.button());
+            return true;
+        }
         // A click anywhere but the key button means the player has moved on without pressing a
         // key. The click still does whatever it was for.
         if (shortcutListening() && !tasksTab.isOverShortcutButton(menuEvent.x(), menuEvent.y())) {
@@ -475,6 +594,10 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
 
     @Override
     protected boolean scaledMouseReleased(MouseButtonEvent menuEvent) {
+        if (tour.isOpen()) {
+            otherButtonTarget = null;
+            return true;
+        }
         // The corner hears every release, so a drag it started ends there; the rest carries on
         // as before, which with the corner open finds nothing pressed below it.
         if (menu.isOpen()) {
@@ -506,6 +629,9 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
      */
     @Override
     protected boolean scaledMouseDragged(MouseButtonEvent menuEvent, double dragX, double dragY) {
+        if (tour.isOpen()) {
+            return true;
+        }
         // Open, the corner owns the pointer below the bar, drags with every button included.
         if (menu.isOpen()) {
             menu.handleDrag(menuEvent.x(), menuEvent.y(), menuEvent.button());
@@ -521,6 +647,10 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
     @Override
     protected boolean scaledMouseScrolled(double menuMouseX, double menuMouseY, double deltaX,
                                           double deltaY) {
+        if (tour.isOpen()) {
+            // Nothing under the dim moves while Lune is pointing at it.
+            return true;
+        }
         if (menu.isOpen()) {
             // The page scrolls if it has anything to scroll; the canvas under it never does.
             menu.handleScroll(menuMouseX, menuMouseY, deltaY != 0 ? deltaY : deltaX);
@@ -544,6 +674,9 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
 
     @Override
     public boolean charTyped(CharacterEvent event) {
+        if (tour.isOpen()) {
+            return true;
+        }
         if (shortcutListening()) {
             // The key itself was the answer; its character is not also typing.
             return true;
@@ -577,6 +710,11 @@ public class LuneScreen extends ScaledScreen implements LunePanel {
 
     @Override
     public boolean keyPressed(KeyEvent event) {
+        // Escape ends the tour, not the panel; every other key is the tour's or nobody's.
+        if (tour.isOpen()) {
+            tour.handleScreenKeyPressed(event.key());
+            return true;
+        }
         // First, before Escape can close the panel: while the key button listens, the next key is
         // the answer to it, Escape included. Nothing else can be open meanwhile - reaching any of
         // it takes a click, and a click anywhere else stops the listening.

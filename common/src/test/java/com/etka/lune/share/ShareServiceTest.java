@@ -39,6 +39,8 @@ class ShareServiceTest {
     private final AtomicReference<String> uploaded = new AtomicReference<>();
     /** What the stand-in answers an upload with; 201 is the service keeping it. */
     private volatile int uploadStatus = 201;
+    /** The {error} the stand-in puts in a refused answer. */
+    private volatile String uploadError = "rate_limited";
 
     @BeforeEach
     void start() throws IOException {
@@ -64,7 +66,7 @@ class ShareServiceTest {
                     ? "{\"id\":\"" + ID + "\",\"url\":\"https://lunode.etka.co.uk/" + ID
                             + "\",\"deleteKey\":\"" + KEY + "\""
                             + (editable ? ",\"editKey\":\"" + EDIT_KEY + "\"" : "") + ",\"version\":1}"
-                    : "{\"error\":\"rate_limited\"}");
+                    : "{\"error\":\"" + uploadError + "\"}");
         } else if (method.equals("GET") && path.equals("/api/share/" + ID)) {
             reply(exchange, 200, "{\"code\":\"v1:kept\",\"version\":3,\"editable\":true}");
         } else if (method.equals("DELETE") && path.equals("/api/share/" + ID)) {
@@ -90,6 +92,8 @@ class ShareServiceTest {
         JsonObject sent = JsonParser.parseString(uploaded.get()).getAsJsonObject();
         assertEquals("v1:the-task", sent.get("code").getAsString());
         assertFalse(sent.get("editable").getAsBoolean());
+        // A share nobody picked a keep time for gets the thirty days they were always promised.
+        assertEquals(ShareKeep.DEFAULT.seconds(), sent.get("keep").getAsInt());
         assertEquals(ID, shared.id());
         assertEquals(KEY, shared.deleteKey());
         assertFalse(shared.editable());
@@ -110,6 +114,13 @@ class ShareServiceTest {
     }
 
     @Test
+    void theChosenKeepTimeGoesUpWithTheUpload() throws Exception {
+        service.upload("v1:the-task", false, ShareKeep.WEEK.seconds()).get(10, TimeUnit.SECONDS);
+        assertEquals(ShareKeep.WEEK.seconds(),
+                JsonParser.parseString(uploaded.get()).getAsJsonObject().get("keep").getAsInt());
+    }
+
+    @Test
     void aRefusedUploadIsRefusedNotGone() {
         uploadStatus = 429;
         CompletionException failure = assertThrows(CompletionException.class,
@@ -117,7 +128,20 @@ class ShareServiceTest {
         ShareService.Refused refused = assertInstanceOf(ShareService.Refused.class,
                 ShareService.cause(failure));
         assertEquals(429, refused.status());
+        // The stand-in answers the way the service does: {error} with its own word for why.
+        assertEquals("rate_limited", refused.reason());
         assertFalse(ShareService.isGone(failure));
+    }
+
+    @Test
+    void aRefusalCarriesTheServicesOwnWordForWhy() {
+        uploadStatus = 400;
+        uploadError = "has_link";
+        CompletionException failure = assertThrows(CompletionException.class,
+                () -> service.upload("v1:the-task", false).join());
+        ShareService.Refused refused = assertInstanceOf(ShareService.Refused.class,
+                ShareService.cause(failure));
+        assertEquals("has_link", refused.reason());
     }
 
     @Test

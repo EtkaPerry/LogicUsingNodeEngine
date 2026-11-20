@@ -1,7 +1,10 @@
 package com.etka.lune.bot.command;
 
 import com.etka.lune.task.TaskSafety;
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashSet;
@@ -28,10 +31,19 @@ class SafetyOptionParamTest {
             "clutch_water", "clutch_boat", "clutch_cushion", "protect_fireballs", "build_cover",
             "fight_back");
     /** Dangers added to the card after tasks had already been saved with it. */
-    private static final Set<String> LATER_DANGERS = Set.of("protect_fire");
+    private static final Set<String> LATER_DANGERS = Set.of("protect_fire", "protect_sculk");
 
     private static CommandDef card() {
         return CommandRegistry.byId(TaskSafety.COMMAND_ID);
+    }
+
+    @BeforeAll
+    static void bootstrapRegistries() {
+        // Reading the card's definition initializes CommandRegistry, which reaches the entity
+        // registries for the Kill card's mob list - so the vanilla bootstrap has to have run,
+        // exactly like every other test that touches the registry.
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
     }
 
     @AfterEach
@@ -91,6 +103,18 @@ class SafetyOptionParamTest {
         def.apply(Map.of("protect_fire", "true"));
         def.apply(saved);
         assertFalse(def.boolValue("protect_fire"));
+    }
+
+    @Test
+    void aCardSavedBeforeSculkWasADangerStillSneaks() {
+        CommandDef def = card();
+        // Same point as the fire test: every guard already on a canvas has no line for sculk
+        // sensors, and a card that never heard of the switch still creeps past them.
+        def.apply(Map.of(
+                "protect_air", "true", "protect_lava", "true", "protect_fall", "true",
+                "protect_monsters", "true", "protect_health", "true"));
+        assertEquals("true", def.snapshot().get("protect_sculk"),
+                "a card saved before sculk was a danger came back walking loudly");
     }
 
     @Test

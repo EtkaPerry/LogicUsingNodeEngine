@@ -92,6 +92,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * -Dlune.autorun.fixture=skeleton-2     two Skeletons, the same way; also creeper and spider
  * -Dlune.autorun.fixture=shield         a shield in the pack, for the cards that can raise one
  * -Dlune.autorun.fixture=end-egg        the End with a dragon egg on bedrock and no dragon
+ * -Dlune.autorun.fixture=sculk          a walkway lined with sculk sensors and shriekers
+ * -Dlune.autorun.fixture=sculk-maze     a maze of sensor hedges, pits and lava to weave through
  * -Dlune.autorun.fixture=lava-maze      a maze of walkway over lava, with a Zombie kept on it
  * -Dlune.autorun.fixture=lava-maze-bastion the bad side of a bastion: rooms in lava, gaps to jump
  * -Dlune.autorun.fixture=lava-maze-bastion-9,zombie-3  nine rooms across, three Zombies dropped together
@@ -269,6 +271,10 @@ public final class AutoRun {
     private static volatile LavaMazeFixture.Placed lavaMaze;
     /** The examiner's account of the run on the lava maze, while the {@code lava-maze} fixture is on. */
     private static volatile LavaMazeFixture.Check lavaMazeCheck;
+    /** The corridor's sensor positions, while the {@code sculk} fixture is on. */
+    private static volatile SculkFixture.Placed sculkArena;
+    /** The examiner's account of the run in the corridor, while the {@code sculk} fixture is on. */
+    private static volatile SculkFixture.Check sculkCheck;
 
     /**
      * Middle of the Ghast arena floor, or null when this run has not built one.
@@ -408,6 +414,7 @@ public final class AutoRun {
             concludeStrongholdCheck(mc, check, reason);
         }
         concludeLavaMaze(mc, reason);
+        concludeSculk(mc, reason);
         if (!quitWhenDone) {
             return;
         }
@@ -457,6 +464,8 @@ public final class AutoRun {
             fixturePrepared = false;
             ghastArena = null;
             lavaMaze = null;
+            sculkArena = null;
+            sculkCheck = null;
             mobArena = java.util.Map.of();
             mobCooldown.clear();
             mazeDropped.clear();
@@ -485,6 +494,10 @@ public final class AutoRun {
         LavaMazeFixture.Check mazeCheck = lavaMazeCheck;
         if (mazeCheck != null) {
             mazeCheck.watch(mc, engine, lavaMaze, runTicks);
+        }
+        SculkFixture.Check sculk = sculkCheck;
+        if (sculk != null) {
+            sculk.watch(mc, engine, sculkArena, runTicks);
         }
         if (budgetTicks > 0 && runTicks >= budgetTicks) {
             finish(mc, engine, "autorun budget reached after " + runTicks + " ticks");
@@ -576,6 +589,12 @@ public final class AutoRun {
      *                       really aimed each eye, the start staircase under the card's answer is
      *                       measured, and the run gets one line in config/lune-stronghold-checks.txt.
      *                       See {@link #watchStronghold}.
+     * sculk                 a walkway lined with ordinary and calibrated sculk sensors, and three
+     *                       shriekers that may summon. An examiner counts every activation, shriek
+     *                       and warden, and the earshot ticks the bot spent standing, and writes one
+     *                       line in config/lune-sculk-checks.txt. See {@link SculkFixture}.
+     * sculk-maze            the same examiner over a sensor maze: hedges with staggered doors,
+     *                       lone sensors, dips, pits, lava pockets and a trench to hop.
      * </pre>
      *
      * <p>None of this is available outside the harness: the properties are set by the run harness
@@ -615,6 +634,9 @@ public final class AutoRun {
         // The examiner reads the client, so it is made here; the maze itself is the server's.
         if (lavaMazeCheck == null && parts.stream().anyMatch(AutoRun::isLavaMaze)) {
             lavaMazeCheck = new LavaMazeFixture.Check();
+        }
+        if (sculkCheck == null && parts.stream().anyMatch(part -> part.startsWith("sculk"))) {
+            sculkCheck = new SculkFixture.Check();
         }
         for (String part : java.util.List.copyOf(parts)) {
             if (part.equals("screenshots") || part.startsWith("screenshots-")) {
@@ -664,6 +686,10 @@ public final class AutoRun {
                 case "peaceful" -> runCommands(mc, "peaceful", "difficulty peaceful");
                 case "stronghold" -> nearDryStronghold(serverPlayer);
                 case "lake" -> buildLake(serverPlayer);
+                case "sculk" -> sculkArena = SculkFixture.build(
+                        mc.getSingleplayerServer(), serverPlayer);
+                case "sculk-maze" -> sculkArena = SculkFixture.buildMaze(
+                        mc.getSingleplayerServer(), serverPlayer);
                 default -> {
                     if (part.equals("eyes") || part.startsWith("eyes-")) {
                         giveEyes(serverPlayer, part);
@@ -1883,6 +1909,14 @@ public final class AutoRun {
         check.conclude(mc, worldSeed, mobs.toString(), reason);
     }
 
+    /** Writes the sculk corridor's verdict, once, whichever way the run ended. */
+    private static void concludeSculk(Minecraft mc, String reason) {
+        SculkFixture.Check check = sculkCheck;
+        if (check != null) {
+            check.conclude(mc, worldSeed, reason);
+        }
+    }
+
     private static void finish(Minecraft mc, BotEngine engine, String reason) {
         finished = true;
         Constants.LOG.info("AutoRun: {}", reason);
@@ -1891,6 +1925,7 @@ public final class AutoRun {
             concludeStrongholdCheck(mc, check, reason);
         }
         concludeLavaMaze(mc, reason);
+        concludeSculk(mc, reason);
         engine.stopAll(reason);
         if (!quitWhenDone) {
             return;

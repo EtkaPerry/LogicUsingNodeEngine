@@ -109,6 +109,7 @@ public final class StatusKeys {
                 "lune.status.route.unexpected_fall",
                 "lune.status.route.water_escaping",
                 "lune.status.route.water_no_safe_exit",
+                "lune.status.self_preservation.creeping_past_sculk_sensor",
                 "lune.status.self_preservation.escaping_air_left",
                 "lune.status.self_preservation.escaping_lava",
                 "lune.status.self_preservation.falling_through_water",
@@ -308,6 +309,7 @@ public final class StatusKeys {
                 "lune.status.staircase_prospect.no_stable_ground",
                 "lune.status.staircase_prospect.stairs_blocked_by",
                 "lune.status.surface_recovery.no_nearby_walkable_surface",
+                "lune.status.travel.no_way",
                 "lune.status.use_portal.could_not_reach");
 
         put(SEARCH,
@@ -399,7 +401,8 @@ public final class StatusKeys {
                 "lune.status.build_portal.placed_frame_blocks",
                 "lune.status.build_portal.placing_frame_block",
                 "lune.status.build_portal.ran_out_obsidian_frame_block",
-                "lune.status.build_portal.walking_portal");
+                "lune.status.build_portal.walking_portal",
+                "lune.status.travel.building_portal");
 
         put(STAIRS,
                 "lune.status.staircase_prospect.cave_with_hostiles_sealing_retreating",
@@ -464,7 +467,9 @@ public final class StatusKeys {
                 "lune.status.route.closing_door",
                 "lune.status.route.fluid_replanning",
                 "lune.status.route.opening_door",
-                "lune.status.route.refusing_open_water");
+                "lune.status.route.refusing_open_water",
+                "lune.status.travel.crossing",
+                "lune.status.travel.to_portal");
 
         put(COLLECTING,
                 "lune.status.backpack.taking",

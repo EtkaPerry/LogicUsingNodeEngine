@@ -24,6 +24,7 @@ import com.etka.lune.bot.util.BucketHelper;
 import com.etka.lune.bot.util.FireballDeflect;
 import com.etka.lune.bot.util.Hostility;
 import com.etka.lune.bot.util.InventoryHelper;
+import com.etka.lune.bot.util.TargetIndex;
 import com.etka.lune.bot.util.Vision;
 import com.etka.lune.mods.WornItems;
 import com.etka.lune.bot.path.WaterEscape;
@@ -199,6 +200,21 @@ public final class SelfPreservationTask implements WhileMonitor {
     private static final double CLOSING_PROGRESS = 0.5;
 
     /**
+     * How far a sculk sensor hears a vibration, in blocks: eight for an ordinary one, sixteen for
+     * a calibrated one, and {@link #SCULK_MARGIN} on top of either - the loud walking between two
+     * scans has to be inside the ear's reach before the ear is, or the sneak starts late.
+     */
+    private static final double SCULK_SENSOR_RANGE = 8.0;
+    private static final double SCULK_CALIBRATED_RANGE = 16.0;
+    private static final double SCULK_MARGIN = 2.0;
+    /** The sweep's reach: the widest ear there is and its margin. */
+    private static final int SCULK_SCAN_RADIUS = 18;
+    /** Same cadence as the mob scan. */
+    private static final int SCULK_SCAN_INTERVAL = ENTITY_SCAN_INTERVAL;
+    private static final java.util.Set<Block> SCULK_BLOCKS = java.util.Set.of(
+            Blocks.SCULK_SENSOR, Blocks.CALIBRATED_SCULK_SENSOR);
+
+    /**
      * How far the player must already have dropped before the clutch takes the controls, in
      * blocks. A vanilla jump peaks 1.25 blocks up and the pathfinder plans gap jumps that land a
      * block below take-off, so anything shorter than this may still be a jump in progress - and
@@ -341,7 +357,7 @@ public final class SelfPreservationTask implements WhileMonitor {
     /** Ticks one fire may spend running for water. Fire from lava lasts fifteen seconds; this is five. */
     private static final int MAX_WATER_RUN_TICKS = 100;
 
-    private enum Threat { NONE, AIR, LAVA, FALL, FIREBALL, FIRE, MONSTER, HEALTH }
+    private enum Threat { NONE, AIR, LAVA, FALL, FIREBALL, FIRE, MONSTER, HEALTH, SCULK }
 
     private final boolean protectAir;
     private final String airComparison;
@@ -356,6 +372,7 @@ public final class SelfPreservationTask implements WhileMonitor {
     private final boolean protectFall;
     private final int fallThreshold;
     private final boolean protectFire;
+    private final boolean protectSculk;
     /** Which of the answers below are switched on; see {@link SafetyOptions}. */
     private final SafetyOptions options;
 
@@ -539,6 +556,23 @@ public final class SelfPreservationTask implements WhileMonitor {
     /** The last search for water in sight, and when it ran. */
     private BlockPos waterSeen;
     private int lastWaterScanTick = Integer.MIN_VALUE;
+    /**
+     * The sculk sensor last found within earshot, when the sweep for it ran, and the index the
+     * sweep is done with - the same section-pruned {@link TargetIndex} the jobs search with,
+     * because outside the deep dark a whole scan is a handful of palette tests.
+     */
+    private BlockPos sculkSensor;
+    private int lastSculkScanTick = Integer.MIN_VALUE;
+    /** The position the index was built around; re-settles after three blocks of travel. */
+    private BlockPos sculkScanCentre;
+    private final TargetIndex sculkIndex = new TargetIndex();
+    /**
+     * The sculk cell the contact escape is backing off, once it has started. It holds the course
+     * until the body is clear of the cell outright - releasing the moment the grown box empties
+     * was a retreat and a re-approach in the same place forever (the door-mouth shrieker on the
+     * sculk maze, 2026-10-31).
+     */
+    private BlockPos sculkBrush;
 
     /** Keeps the twelve-argument form working for anything that only configures the thresholds. */
     public SelfPreservationTask(boolean protectAir, String airComparison, int airThreshold,
@@ -551,12 +585,24 @@ public final class SelfPreservationTask implements WhileMonitor {
                 healthThreshold, protectFall, fallThreshold, true, SafetyOptions.all());
     }
 
+    /** Keeps the fourteen-argument form working for anything written before sculk was a danger. */
     public SelfPreservationTask(boolean protectAir, String airComparison, int airThreshold,
                                 boolean protectLava, boolean protectMonsters,
                                 String monsterComparison, int monsterDistance,
                                 boolean protectHealth, String healthComparison,
                                 int healthThreshold, boolean protectFall, int fallThreshold,
                                 boolean protectFire, SafetyOptions options) {
+        this(protectAir, airComparison, airThreshold, protectLava, protectMonsters,
+                monsterComparison, monsterDistance, protectHealth, healthComparison,
+                healthThreshold, protectFall, fallThreshold, protectFire, true, options);
+    }
+
+    public SelfPreservationTask(boolean protectAir, String airComparison, int airThreshold,
+                                boolean protectLava, boolean protectMonsters,
+                                String monsterComparison, int monsterDistance,
+                                boolean protectHealth, String healthComparison,
+                                int healthThreshold, boolean protectFall, int fallThreshold,
+                                boolean protectFire, boolean protectSculk, SafetyOptions options) {
         this.options = options == null ? SafetyOptions.all() : options;
         this.protectAir = protectAir;
         this.airComparison = airComparison;
@@ -571,6 +617,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         this.protectFall = protectFall;
         this.fallThreshold = fallThreshold;
         this.protectFire = protectFire;
+        this.protectSculk = protectSculk;
     }
 
     @Override
@@ -745,6 +792,15 @@ public final class SelfPreservationTask implements WhileMonitor {
             confirmingSafe = false;
             return true;
         }
+        // The quietest answer the card has, and deliberately the last one asked: a sensor does not
+        // hurt anything, it only listens, so every real danger keeps its louder escape and this
+        // waits for the ticks nothing is being fled.
+        if (protectSculk && sculkSensorHears(ctx)) {
+            threat = Threat.SCULK;
+            safeTicks = 0;
+            confirmingSafe = false;
+            return true;
+        }
         // A resolved fireball has nothing left to hide behind, which is the whole reason the confirm
         // window exists - a freshly walled-off zombie is out of the raycast for a few ticks and
         // coming round the wall. A Ghast fires every sixty ticks, so spending thirty of them standing
@@ -753,6 +809,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         // A run still under way is not let go of where letting go is a fall - in the air, or at an
         // edge it may be about to jump from - so the window waits for it to reach steady ground.
         if (threat != Threat.NONE && threat != Threat.FIREBALL && threat != Threat.FIRE
+                && threat != Threat.SCULK
                 && (safeTicks++ < SAFE_CONFIRM_TICKS || runCommitted(ctx))) {
             confirmingSafe = true;
             return true;
@@ -764,6 +821,7 @@ public final class SelfPreservationTask implements WhileMonitor {
         monsterRecoveryTicks = 0;
         rememberedHostile = null;
         lastHostileSeenTick = Integer.MIN_VALUE;
+        sculkSensor = null;
         forgetFireball();
         coverBase = null;
         coverTicks = 0;
@@ -843,8 +901,11 @@ public final class SelfPreservationTask implements WhileMonitor {
         // While it answers, the keys are this card's alone. The card it guards has already been
         // ticked and has pressed whatever its own work wanted - toward the ore, along its route -
         // and an escape that sets only the keys it cares about walks the sum of the two, in a
-        // direction nothing checked.
-        ctx.input.reset();
+        // direction nothing checked. The sensor is the one exception, since its answer is not an
+        // escape at all: the work's keys stand, and Shift goes down on top of them.
+        if (threat != Threat.SCULK) {
+            ctx.input.reset();
+        }
         return switch (threat) {
             case AIR -> escapeWater(ctx);
             case LAVA -> escapeLava(ctx);
@@ -853,6 +914,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             case FIRE -> putOutFire(ctx);
             case MONSTER -> escapeMonster(ctx);
             case HEALTH -> recoverHealth(ctx);
+            case SCULK -> sneakPastSensors(ctx);
             case NONE -> TaskStatus.SUCCESS;
         };
     }
@@ -895,6 +957,7 @@ public final class SelfPreservationTask implements WhileMonitor {
             case FIRE -> "danger_fire";
             case MONSTER -> "danger_monster";
             case HEALTH -> "danger_health";
+            case SCULK -> "danger_sculk";
             case NONE -> null;
         };
         if (key == null) {
@@ -2144,6 +2207,203 @@ public final class SelfPreservationTask implements WhileMonitor {
             return emergencyMonsterDefense(ctx, Lang.get("lune.reason.retreat_route_blocked"));
         }
         return ++escapeAttempts >= MAX_ESCAPE_ATTEMPTS ? TaskStatus.FAILED : TaskStatus.RUNNING;
+    }
+
+    /**
+     * Whether a sculk sensor could hear the player right now.
+     *
+     * <p>Sight is not the question - a vibration rounds corners and only wool stops it - so this
+     * asks about distance rather than drawing a ray, and the candidates come from the
+     * section-pruned index rather than a walk round a box: a chunk section without sculk in its
+     * palette holds no sensor, which makes a scan anywhere else in the world a handful of palette
+     * tests. An ordinary sensor hears eight blocks out and a calibrated one sixteen, each with
+     * {@link #SCULK_MARGIN} on top for the walking done between one scan and the next. One found
+     * outside a held leash is still missed on purpose: that boundary is the player's own.</p>
+     */
+    private boolean sculkSensorHears(BotContext ctx) {
+        int age = ctx.player.tickCount - lastSculkScanTick;
+        if (lastSculkScanTick != Integer.MIN_VALUE && age >= 0 && age < SCULK_SCAN_INTERVAL) {
+            return sculkSensor != null;
+        }
+        lastSculkScanTick = ctx.player.tickCount;
+        BlockPos feet = ctx.player.blockPosition();
+        // The index keys on a settled anchor, not the live feet - it demands an exact centre match,
+        // so the live position would discard the cache every step of a walk. Three blocks of travel
+        // re-settles it; a sensor missed on the far side of the lag is still well past earshot.
+        if (sculkScanCentre == null || sculkScanCentre.distSqr(feet) > 9.0) {
+            sculkScanCentre = feet;
+        }
+        int yMin = sculkScanCentre.getY() - SCULK_SCAN_RADIUS;
+        int yMax = sculkScanCentre.getY() + SCULK_SCAN_RADIUS;
+        if (!sculkIndex.isUsable(sculkScanCentre, SCULK_BLOCKS, SCULK_SCAN_RADIUS, yMin, yMax)) {
+            com.etka.lune.bot.LuneProfiler.push("sculk scan");
+            try {
+                sculkIndex.rebuild(ctx.level, sculkScanCentre, SCULK_BLOCKS,
+                        SCULK_SCAN_RADIUS, yMin, yMax);
+            } finally {
+                com.etka.lune.bot.LuneProfiler.pop();
+            }
+        }
+        Vec3 at = ctx.player.position();
+        sculkSensor = sculkIndex.nearest(ctx.level, feet, java.util.Set.of(),
+                (pos, state) -> {
+                    double reach = sculkHearing(state.getBlock());
+                    return pos.distToCenterSqr(at) <= reach * reach;
+                });
+        return sculkSensor != null;
+    }
+
+    /** How far out this kind of sensor hears, plus the margin the next scan's walk is bought with. */
+    private static double sculkHearing(Block block) {
+        return (block == Blocks.CALIBRATED_SCULK_SENSOR ? SCULK_CALIBRATED_RANGE : SCULK_SENSOR_RANGE)
+                + SCULK_MARGIN;
+    }
+
+    /**
+     * Only Shift, pressed over whatever the work is already doing.
+     *
+     * <p>Sneaking silences every step - jumps included - which is the whole answer a sculk sensor
+     * has: there is no getting away from a block that only listens, and no standing still to wait
+     * for, since it does not tire. The card it guards has already ticked and its keys stand; this
+     * only makes sure they are all quiet ones.</p>
+     *
+     * <p>All of them, not most of them: the sneak flag takes a packet to reach the server, so on
+     * the tick it is first held down the legs hold too, and the guarded keys pass only once the
+     * player is actually crouched. A step taken before then is the one loud step a sensor needs.</p>
+     */
+    private TaskStatus sneakPastSensors(BotContext ctx) {
+        ctx.input.sneak = true;
+        if (!ctx.player.isShiftKeyDown()) {
+            ctx.input.forward = ctx.input.backward = ctx.input.left = ctx.input.right = false;
+            ctx.input.jump = ctx.input.sprint = false;
+        }
+        steerOffSculk(ctx);
+        status.set("lune.status.self_preservation.creeping_past_sculk_sensor");
+        return TaskStatus.RUNNING;
+    }
+
+    /**
+     * Slides the walk around a sculk block the way a wall gets walked around, without letting the
+     * work know anything changed.
+     *
+     * <p>Sneak silences what the feet say, not what they touch: {@code stepOn} answers weight
+     * directly, past the listener's own sneak check, so a body that brushes a sensor's top while
+     * crouched wakes it all the same. The route keeps feet off the blocks (they are
+     * {@link MovementHelper#isHarmful harmful} to stand on), but steering happens in continuous
+     * space - a lane change that clips the half-block corner still ends standing on it. So while
+     * the ears are in reach the card also watches the two blocks the walk is heading into, at
+     * feet height and at the floor it would land on; the moment one is a sensor or a shrieker the
+     * forward key comes off and a strafe goes on toward the freer side. If both sides are sculk
+     * the legs hold: standing still is still the only guaranteed silence.</p>
+     */
+    private void steerOffSculk(BotContext ctx) {
+        LocalPlayer player = ctx.player;
+        Vec3 dir = new Vec3(player.getDeltaMovement().x, 0.0, player.getDeltaMovement().z);
+        boolean still = dir.lengthSqr() < 1.0E-6;
+        if (!still) {
+            dir = dir.normalize();
+        }
+        if (isSculkStep(ctx.level.getBlockState(player.getOnPos()))) {
+            return;
+        }
+        Vec3 at = player.position();
+        // Sides are named in the frame the strafe keys move in: the walk while there is one, the
+        // eyes while the body is still. A velocity of zero used to skip the whole check, and on
+        // the change-over tick of a strafe fight the forward key slipped through for the one
+        // nudge the corner needed (the door-mouth shrieker on the sculk maze, 2026-10-31).
+        Vec3 leftOfWalk = still
+                ? new Vec3(player.getLookAngle().z, 0.0, -player.getLookAngle().x).normalize()
+                : new Vec3(dir.z, 0.0, -dir.x);
+        BlockPos met = null;
+        for (double probe = 0.45; probe <= 1.0 && met == null && !still; probe += 0.55) {
+            BlockPos ahead = BlockPos.containing(at.x + dir.x * probe, at.y, at.z + dir.z * probe);
+            if (isSculkStep(ctx.level.getBlockState(ahead))
+                    || isSculkStep(ctx.level.getBlockState(ahead.below()))) {
+                met = ahead;
+            }
+        }
+        // Beside the body counts as much as ahead: a lane that runs flush with a sensor's edge
+        // is walked past it with a hand's width to spare, and one wobble onto the corner is a
+        // foot on top. The probe sits half a block forward of each shoulder, where the clip
+        // actually happens; a hit on one side leans the walk to the other.
+        boolean sculkLeft = met != null
+                && new Vec3(met.getX() + 0.5 - at.x, 0.0, met.getZ() + 0.5 - at.z)
+                        .dot(leftOfWalk) > 0.0;
+        boolean leftNear = met != null && sculkLeft
+                || !still && sculkNear(ctx, at, dir, leftOfWalk, true);
+        boolean rightNear = met != null && !sculkLeft
+                || !still && sculkNear(ctx, at, dir, leftOfWalk, false);
+        // The probes sample ahead, so a diagonal brush is theirs to miss: a sensor a step north-
+        // east of the body lands its corner on a foot the shoulder line never crosses. And a
+        // strafe is no answer at touching distance either - sliding along a face still presses
+        // the face, and a 0.5 top is a step the body will climb onto. So the body's own box, grown
+        // a hand's width, is the last say: a sculk cell inside it latches a backing-off that runs
+        // until the body is well clear, moving or not - release at the box's own edge was a retreat
+        // and a re-approach in the same place forever (the door-mouth shrieker on the sculk maze,
+        // 2026-10-31).
+        net.minecraft.world.phys.AABB near = player.getBoundingBox().inflate(0.15, 0.05, 0.15);
+        for (BlockPos pos : BlockPos.betweenClosed(
+                BlockPos.containing(near.minX, near.minY, near.minZ),
+                BlockPos.containing(near.maxX, near.maxY, near.maxZ))) {
+            if (isSculkStep(ctx.level.getBlockState(pos))) {
+                sculkBrush = pos.immutable();
+                break;
+            }
+        }
+        if (sculkBrush != null) {
+            Vec3 centre = Vec3.atCenterOf(sculkBrush);
+            if (at.distanceToSqr(centre.x, at.y, centre.z) < 1.3 * 1.3) {
+                backOffSculk(ctx, player, at, sculkBrush);
+                return;
+            }
+            sculkBrush = null;
+        }
+        if (!leftNear && !rightNear) {
+            return;
+        }
+        ctx.input.forward = ctx.input.backward = false;
+        if (leftNear && rightNear) {
+            ctx.input.left = ctx.input.right = false;
+            return;
+        }
+        ctx.input.left = rightNear;
+        ctx.input.right = leftNear;
+    }
+
+    /**
+     * Whether a sculk block stands beside the line being walked - half a block ahead of the
+     * shoulder being probed, at feet height or at the floor under it.
+     */
+    private boolean sculkNear(BotContext ctx, Vec3 at, Vec3 dir, Vec3 leftOfWalk, boolean left) {
+        Vec3 side = left ? leftOfWalk : leftOfWalk.scale(-1.0);
+        BlockPos pos = BlockPos.containing(
+                at.x + dir.x * 0.5 + side.x * 0.75, at.y, at.z + dir.z * 0.5 + side.z * 0.75);
+        return isSculkStep(ctx.level.getBlockState(pos))
+                || isSculkStep(ctx.level.getBlockState(pos.below()));
+    }
+
+    /**
+     * The keys that widen every gap between the body and a sculk cell: straight away from it,
+     * resolved in the frame the strafe keys actually move in - the look, not the velocity, so it
+     * answers even from a standstill.
+     */
+    private void backOffSculk(BotContext ctx, LocalPlayer player, Vec3 at, BlockPos pos) {
+        Vec3 away = new Vec3(at.x - pos.getX() - 0.5, 0.0, at.z - pos.getZ() - 0.5);
+        Vec3 look = new Vec3(player.getLookAngle().x, 0.0, player.getLookAngle().z).normalize();
+        double on = away.dot(look);
+        double side = away.dot(new Vec3(look.z, 0.0, -look.x));
+        ctx.input.forward = on > 0.1;
+        ctx.input.backward = on < -0.1;
+        ctx.input.left = side > 0.1;
+        ctx.input.right = side < -0.1;
+        ctx.input.jump = false;
+    }
+
+    /** A block that answers a foot on its surface whether or not the foot is crouched. */
+    private static boolean isSculkStep(net.minecraft.world.level.block.state.BlockState state) {
+        return state.is(Blocks.SCULK_SENSOR)
+                || state.is(Blocks.CALIBRATED_SCULK_SENSOR)
+                || state.is(Blocks.SCULK_SHRIEKER);
     }
 
     /**
@@ -4272,6 +4532,9 @@ public final class SelfPreservationTask implements WhileMonitor {
         shieldHoldSpent = false;
         rememberedHostile = null;
         lastHostileSeenTick = Integer.MIN_VALUE;
+        sculkSensor = null;
+        sculkScanCentre = null;
+        lastSculkScanTick = Integer.MIN_VALUE;
         safeTicks = 0;
         confirmingSafe = false;
         healthWaitTicks = 0;

@@ -27,7 +27,10 @@ import com.etka.lune.client.gui.widget.SoundPicker;
 import com.etka.lune.client.gui.widget.BlueprintPanel;
 import com.etka.lune.client.gui.widget.ListPanel;
 import com.etka.lune.client.gui.widget.PalettePanel;
+import com.etka.lune.client.gui.widget.PanelTour;
 import com.etka.lune.client.gui.widget.ParamPanel;
+import com.etka.lune.client.gui.widget.Spotlight;
+import com.etka.lune.client.gui.widget.TourOverlay;
 import com.etka.lune.client.gui.widget.VerticalSplitter;
 import com.etka.lune.training.TrainingCourse;
 import com.etka.lune.training.TrainingAnswer;
@@ -270,6 +273,8 @@ public class TasksTab extends LuneTab {
     private int rightPaneWidth = DEFAULT_RIGHT_PANE;
     /** Whether the collapsed task list is currently pulled open. Only consulted when narrow. */
     private boolean listExpanded;
+    /** Whether the tour pulled the list open, so it folds it away again rather than the player. */
+    private boolean tourOpenedList;
     /** Rows the control strip keeps (see {@link #stripRows}); the canvas starts below them. */
     private int controlRows = 1;
 
@@ -2473,9 +2478,226 @@ public class TasksTab extends LuneTab {
 
     private void toggleList() {
         listExpanded = !listExpanded;
+        tourOpenedList = false;
         if (area != null && area.width() > 0) {
             layout(area);
         }
+    }
+
+    // --- the tour ------------------------------------------------------------
+
+    /**
+     * The task on the canvas, the card picked on it, the camera and the task the panel reopens
+     * on, as they were before the tour put something else on show; null while it has changed
+     * nothing here.
+     */
+    private record BeforeTour(TaskGraph task, TaskNode step, TaskView view, String lastOpened,
+                              String lastOpenedSaved) {}
+
+    private BeforeTour beforeTour;
+    /** The camera on a task the tour opened, as it stood before the tour moved it to a card. */
+    private TaskView tourExampleView;
+
+    /**
+     * Whether the tour can show a stop on this tab. Not the task list's pane while a lesson or
+     * somebody else's graph has it - the list, its switches and its buttons are not on screen at all
+     * then - and not the settings when no card the tour could pick has any.
+     */
+    public boolean tourCanShow(PanelTour.Stop stop) {
+        if (stop.needsTaskList()) {
+            return !inTraining() && !inForeign();
+        }
+        if (stop == PanelTour.Stop.TASK_SETTINGS) {
+            return tourCard(blueprintPanel.getTask()) != null
+                    || (!inTraining() && !inForeign() && tourExample(true) != null);
+        }
+        return true;
+    }
+
+    /**
+     * Lays the tab out for a stop of the tour. A list a narrow screen folds away is pulled open for
+     * the stops about it, and folded again for the ones that need the room; the canvas and the
+     * settings get something to show.
+     */
+    public void showForTour(PanelTour.Stop stop) {
+        if (stop.needsTaskList() && !listVisible()) {
+            listExpanded = true;
+            tourOpenedList = true;
+            if (area != null && area.width() > 0) {
+                layout(area);
+            }
+        } else if (!stop.needsTaskList()) {
+            foldTourList();
+        }
+        if (stop == PanelTour.Stop.TASK_CANVAS || stop == PanelTour.Stop.TASK_SETTINGS) {
+            showTourExample(stop == PanelTour.Stop.TASK_SETTINGS);
+        }
+    }
+
+    /**
+     * Puts something on the canvas for the tour to point at. An empty canvas, or a settings panel
+     * waiting for a card to be picked, shows a new player nothing (the user's report, 2026-10-25), so
+     * the canvas stop opens a task with cards when the one open has none, and brings one of them on
+     * screen when the camera was left on bare grid; the settings stop picks a card with settings -
+     * the one already picked, one in sight, or the first - and brings it on screen. Inside a lesson
+     * or somebody else's graph it never opens another task.
+     */
+    private void showTourExample(boolean pickCard) {
+        TaskGraph shown = blueprintPanel.getTask();
+        boolean enough = pickCard ? tourCard(shown) != null : shown != null && !shown.nodes.isEmpty();
+        if (!enough && !inTraining() && !inForeign()) {
+            TaskGraph example = tourExample(pickCard);
+            if (example != null) {
+                rememberBeforeTour();
+                openTask(example, false);
+                tourExampleView = blueprintPanel.view();
+            }
+        }
+        if (!pickCard) {
+            TaskGraph open = blueprintPanel.getTask();
+            if (open != null && !open.nodes.isEmpty()
+                    && open.nodes.stream().noneMatch(node -> blueprintPanel.cardOnScreen(node) != null)) {
+                rememberBeforeTour();
+                blueprintPanel.bringIntoView(open.nodes.get(0));
+            }
+            return;
+        }
+        TaskNode card = tourCard(blueprintPanel.getTask());
+        if (card == null) {
+            return;
+        }
+        if (card != selectedStep()) {
+            rememberBeforeTour();
+            onStepSelected(card);
+        }
+        if (blueprintPanel.cardOnScreen(card) == null) {
+            rememberBeforeTour();
+            blueprintPanel.bringIntoView(card);
+        }
+    }
+
+    private void rememberBeforeTour() {
+        if (beforeTour == null) {
+            beforeTour = new BeforeTour(blueprintPanel.getTask(), selectedStep(), blueprintPanel.view(),
+                    lastOpenedTaskName, BotConfig.get().lastOpenedTask);
+        }
+    }
+
+    /**
+     * The card whose settings the tour shows: the one already picked, when it has any, else the
+     * first in sight that has, else the first anywhere.
+     */
+    private TaskNode tourCard(TaskGraph task) {
+        if (task == null) {
+            return null;
+        }
+        TaskNode picked = selectedStep();
+        if (picked != null && task.nodes.contains(picked) && hasSettings(picked)) {
+            return picked;
+        }
+        TaskNode first = null;
+        for (TaskNode node : task.nodes) {
+            if (!hasSettings(node)) {
+                continue;
+            }
+            if (blueprintPanel.getTask() == task && blueprintPanel.cardOnScreen(node) != null) {
+                return node;
+            }
+            if (first == null) {
+                first = node;
+            }
+        }
+        return first;
+    }
+
+    private static boolean hasSettings(TaskNode node) {
+        if (node == null || node.isSourceNode() || node.isSignalRelayNode()) {
+            return false;
+        }
+        CommandDef def = CommandRegistry.byId(node.commandId);
+        return def != null && !def.params().isEmpty();
+    }
+
+    /** The first of the player's listed tasks with something to show: cards, or a card with settings. */
+    private static TaskGraph tourExample(boolean pickCard) {
+        for (TaskGraph task : TaskStore.get().listed()) {
+            boolean shows = pickCard ? task.nodes.stream().anyMatch(TasksTab::hasSettings)
+                    : !task.nodes.isEmpty();
+            if (shows) {
+                return task;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The tour is over: a list it pulled open is folded away, and the task, the card and the
+     * camera it put on show go back to what the player had.
+     */
+    public void endTour() {
+        foldTourList();
+        BeforeTour before = beforeTour;
+        TaskView exampleView = tourExampleView;
+        beforeTour = null;
+        tourExampleView = null;
+        if (before == null) {
+            return;
+        }
+        if (blueprintPanel.getTask() != before.task()) {
+            // Leaves the task it opened looking where it was opened, so the view remembered for
+            // it is the player's, not the tour's.
+            if (exampleView != null) {
+                blueprintPanel.showView(exampleView);
+            }
+            taskList.setSelected(before.task());
+            onTaskSelected(before.task());
+            if (before.task() == null) {
+                lastOpenedTaskName = before.lastOpened();
+                BotConfig.get().lastOpenedTask = before.lastOpenedSaved();
+                BotConfig.get().save();
+            }
+        } else {
+            blueprintPanel.showView(before.view());
+        }
+        TaskGraph back = blueprintPanel.getTask();
+        onStepSelected(back != null && before.step() != null && back.nodes.contains(before.step())
+                ? before.step() : null);
+    }
+
+    private void foldTourList() {
+        if (!tourOpenedList) {
+            return;
+        }
+        tourOpenedList = false;
+        listExpanded = false;
+        if (area != null && area.width() > 0) {
+            layout(area);
+        }
+    }
+
+    /** What a stop of the tour lights on this tab: the controls its words are about. */
+    public List<Spotlight.Box> tourLight(PanelTour.Stop stop) {
+        return switch (stop) {
+            case TASK_LIST -> TourOverlay.around(taskList);
+            case TASK_CARDS -> TourOverlay.around(paletteSearch, palettePanel);
+            case TASK_CANVAS -> TourOverlay.around(blueprintPanel);
+            // The settings first, since the words are about them, and the card they belong to.
+            case TASK_SETTINGS -> {
+                List<Spotlight.Box> lit = new java.util.ArrayList<>(TourOverlay.around(stepParams));
+                Spotlight.Box card = blueprintPanel.cardOnScreen(selectedStep());
+                if (card != null) {
+                    lit.add(card);
+                }
+                yield lit;
+            }
+            case TASK_BESIDE -> TourOverlay.around(besideButton);
+            case TASK_KEY -> TourOverlay.around(shortcutButton);
+            // The whole block under the list: New and Run, the three ways a task comes and goes,
+            // and undo. One area rather than a light per button, which read as a row of holes.
+            case TASK_BUTTONS -> TourOverlay.around(newButton, deleteButton, runButton, fastButton,
+                    importButton, shareButton, undoButton, redoButton);
+            default -> List.of();
+        };
     }
 
     // --- layout --------------------------------------------------------------

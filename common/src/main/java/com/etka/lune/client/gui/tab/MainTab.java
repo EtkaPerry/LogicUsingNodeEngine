@@ -21,6 +21,9 @@ import com.etka.lune.client.gui.ScaledTooltips;
 import com.etka.lune.client.gui.widget.DashboardStatsPanel;
 import com.etka.lune.client.gui.widget.GuiIcons;
 import com.etka.lune.client.gui.widget.ListPanel;
+import com.etka.lune.client.gui.widget.PanelTour;
+import com.etka.lune.client.gui.widget.Spotlight;
+import com.etka.lune.client.gui.widget.TourOverlay;
 import com.etka.lune.client.gui.widget.VerticalSplitter;
 import com.etka.lune.task.TaskGraph;
 import com.etka.lune.task.TaskStore;
@@ -257,6 +260,35 @@ public class MainTab extends LuneTab {
             place(stopButton, frame.left() + 182, frame.buttonY(), 76);
         }
         layoutSplitters(frame);
+    }
+
+    /**
+     * What a stop of the tour lights on the dashboard. What she is doing is the row of cards along
+     * the top, with the buttons that pause and stop her and the line of keys under them; starting
+     * a task is the saved tasks card, its Fast tasks button included.
+     */
+    public List<Spotlight.Box> tourLight(PanelTour.Stop stop) {
+        DashboardFrame frame = frameOf(area);
+        return switch (stop) {
+            case MAIN_NOW -> {
+                List<Spotlight.Box> lit = new ArrayList<>();
+                lit.add(Spotlight.Box.around(List.of(box(frame.status()), box(frame.recentActivity()),
+                        box(frame.workingNode()))));
+                List<Spotlight.Box> controls = new ArrayList<>(TourOverlay.around(pauseButton,
+                        clearButton, stopButton));
+                int hintWidth = Math.min(frame.width(), Minecraft.getInstance().font.width(
+                        Lang.get("lune.gui.main.c_pause_resume_shift_c_stop_everything")));
+                controls.add(new Spotlight.Box(frame.left(), frame.hintY() - 1, hintWidth, 10));
+                lit.add(Spotlight.Box.around(controls));
+                yield lit;
+            }
+            case MAIN_TASKS -> List.of(box(frame.tasks()));
+            default -> List.of();
+        };
+    }
+
+    private static Spotlight.Box box(DashboardFrame.Card card) {
+        return new Spotlight.Box(card.x(), card.y(), card.width(), card.height());
     }
 
     private void layoutSplitters(DashboardFrame frame) {

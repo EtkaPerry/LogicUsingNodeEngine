@@ -1440,6 +1440,33 @@ public final class BlueprintPanel extends AbstractWidget {
         centerOn((minX + maxX) / 2, (minY + maxY) / 2);
     }
 
+    /**
+     * Where a card of the open task is drawn, in screen pixels, or null when it is not on the
+     * canvas whole: the tour lights the card whose settings it is showing.
+     */
+    public Spotlight.Box cardOnScreen(TaskNode node) {
+        if (task == null || node == null || !task.nodes.contains(node)) {
+            return null;
+        }
+        int x = getX() + panX + Math.round(nodeX(node) * zoom);
+        int y = getY() + panY + Math.round(nodeY(node) * zoom);
+        int width = Math.round(NODE_W * zoom);
+        int height = Math.round(nodeHeight(node) * zoom);
+        if (x < getX() || y < getY() || x + width > getX() + getWidth()
+                || y + height > getY() + getHeight()) {
+            return null;
+        }
+        return new Spotlight.Box(x, y, width, height);
+    }
+
+    /** Moves the camera, at the zoom it has, so a card that is off the canvas is in the middle of it. */
+    public void bringIntoView(TaskNode node) {
+        if (task == null || node == null || !task.nodes.contains(node) || cardOnScreen(node) != null) {
+            return;
+        }
+        centerOn(nodeX(node) + NODE_W / 2, nodeY(node) + nodeHeight(node) / 2);
+    }
+
     /** Fills the view with the selection, or with the whole task when nothing is selected. */
     public void frameSelection() {
         if (task == null || task.nodes.isEmpty()) {

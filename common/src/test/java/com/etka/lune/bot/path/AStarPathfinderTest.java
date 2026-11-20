@@ -656,6 +656,29 @@ class AStarPathfinderTest {
     }
 
     /**
+     * A crouched body cannot jump even the smallest gap ({@link GapJumpPolicy#MAX_CROUCHED_GAP},
+     * the sculk maze, 2026-10-31): over the same trench a walking jump clears, a route planned
+     * for a sneak takes the bridge like a walk's, because offered the leap it walks off the lip.
+     */
+    @Test
+    void aRouteForACrouchedBodyGoesRoundAGapAWalkCouldJump() {
+        TestLevel level = TestLevel.scene().floor(-2, 0, 0, 0, 63).floor(4, 8, 0, 0, 63)
+                .floor(1, 3, 0, 0, 61)
+                .floor(-2, -2, 0, 6, 63).floor(-2, 8, 6, 6, 63).floor(8, 8, 0, 6, 63);
+        BlockPos from = new BlockPos(0, 64, 0);
+        BlockPos to = new BlockPos(8, 64, 0);
+
+        AStarPathfinder.Result crouched = AStarPathfinder.find(level, from, new Goals.Block(to),
+                AStarPathfinder.Settings.walking().withMaxGap(GapJumpPolicy.MAX_CROUCHED_GAP));
+
+        assertTrue(crouched.reachedGoal());
+        assertTrue(crouched.path().stream().anyMatch(node -> node.getZ() == 6),
+                "round: " + crouched.path());
+        assertFalse(crouched.path().contains(new BlockPos(4, 64, 0)),
+                "no leap for a body that cannot make it: " + crouched.path());
+    }
+
+    /**
      * Two islands with lava under the gap between them and a bridge eight blocks along: any other
      * route walks round to the bridge rather than jump the lava, and a run from a mob, which pays a
      * fifth of that away from the mob, jumps - unless the mob stands at the take-off (2026-10-18).

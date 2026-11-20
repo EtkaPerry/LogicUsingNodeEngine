@@ -615,4 +615,28 @@ class LangTest {
                 .toList();
         assertTrue(odd.isEmpty(), "keys that break the naming convention: " + odd);
     }
+
+    /**
+     * A key written twice in a language file is a line nobody sees: every JSON reader keeps one of
+     * the two without a word, so the other's words - a fix, a translation - are lost. A script
+     * editing the file by line number did exactly that to a tour line (2026-10-25), and both copies
+     * parsed cleanly.
+     */
+    @Test
+    void noLanguageFileSaysAKeyTwice() throws IOException {
+        Pattern key = Pattern.compile("^\\s*\"([^\"]+)\"\\s*:");
+        List<String> twice = new ArrayList<>();
+        try (Stream<Path> files = Files.list(LANG)) {
+            for (Path file : files.filter(path -> path.toString().endsWith(".json")).sorted().toList()) {
+                Set<String> seen = new LinkedHashSet<>();
+                for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                    Matcher matcher = key.matcher(line);
+                    if (matcher.find() && !seen.add(matcher.group(1))) {
+                        twice.add(file.getFileName() + ": " + matcher.group(1));
+                    }
+                }
+            }
+        }
+        assertTrue(twice.isEmpty(), "keys written more than once:\n" + String.join("\n", twice));
+    }
 }

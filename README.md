@@ -38,8 +38,8 @@ Inside the Task Editor, Lune acts as your intelligent advisor. She watches your 
 - **Plays like a player.** She acts only on blocks and mobs in her line of sight, turns her head smoothly, swings on the weapon's cooldown, swims, jumps gaps, and shuts the doors she opens.
 - **Told when it matters.** A sound tells you when a run ends, fails or the player dies, a Notify card plays any sound in the game on a condition you wire up, and every death is kept on the Waypoints tab.
 - **At home in a modpack.** Block, item and mob pickers read the game's own lists, so other mods' ores, crops and tools are there without setup. A few mods get more; see *Compatible Mods* below.
-- **Share a task as a link.** **Share** turns a task into a link, view only or view and edit, that opens in any browser, and **Import** reads a link back. Nothing is uploaded until you press Create link, anyone with the link can read the task, and a link nobody opens for 30 days is deleted ([policy](https://lunode.etka.co.uk/policy)).
-- **Learn it in the game.** A ten-step training course, and two puzzle games for while a task runs, both under **Menu** in the panel.
+- **Share a task as a link.** **Share** turns a task into a link, view only or view and edit, that opens in any browser, and **Import** reads a link back. Nothing is uploaded until you press Create link, anyone with the link can read the task, and a link is deleted once it has stayed unopened for the keep time you picked — an hour to ninety days ([policy](https://lunode.etka.co.uk/policy)).
+- **Learn it in the game.** A one-minute tour of the panel, offered the first time you open it; a ten-step training course; and two puzzle games for while a task runs. All three are under **Menu** in the panel.
 
 <p align="center"><img src="https://media.forgecdn.net/attachments/2097/142/working-png.png")
 " alt="Lune's card in the corner of the screen while a task mines beside the player" width="900"></p>

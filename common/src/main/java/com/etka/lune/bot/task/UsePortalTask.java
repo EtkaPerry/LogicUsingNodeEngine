@@ -9,6 +9,8 @@ import com.etka.lune.bot.util.BlockPlacer;
 import com.etka.lune.bot.util.BlockScanner;
 import com.etka.lune.bot.util.Vision;
 import com.etka.lune.util.Lang;
+import com.etka.lune.waypoint.PortalLink;
+import com.etka.lune.waypoint.PortalStore;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceKey;
@@ -114,6 +116,7 @@ public final class UsePortalTask implements Task {
         }
         if (destination != null ? here == destination : here != origin) {
             ctx.input.reset();
+            noteCrossing(ctx, origin, portal);
             status.set("lune.status.use_portal.arrived");
             return TaskStatus.SUCCESS;
         }
@@ -189,12 +192,55 @@ public final class UsePortalTask implements Task {
      * {@link SightSearch}, whose other callers honour none.
      */
     private BlockPos choose(BotContext ctx) {
-        if (anchor != null && ctx.level.getBlockState(anchor).is(Blocks.NETHER_PORTAL)) {
-            return anchor;
+        BlockPos found = anchor != null && ctx.level.getBlockState(anchor).is(Blocks.NETHER_PORTAL)
+                ? anchor
+                : ctx.omniscientMining()
+                        ? findPortal(ctx, ctx.player.blockPosition(), searchRadius)
+                        : sight.seen(ctx);
+        if (found != null) {
+            noteSeen(ctx, found);
         }
-        return ctx.omniscientMining()
-                ? findPortal(ctx, ctx.player.blockPosition(), searchRadius)
-                : sight.seen(ctx);
+        return found;
+    }
+
+    /**
+     * A portal standing in front of the card is written down while it is there. Where a Nether
+     * portal leads is vanilla's own pairing, known before anybody rides it - and a trip that
+     * needs one later starts from memory rather than from a build it never had to make.
+     */
+    private static void noteSeen(BotContext ctx, BlockPos pos) {
+        String here = ctx.level.dimension().identifier().toString();
+        PortalStore.get().record(PortalLink.at(pos, here,
+                PortalLink.vanillaOtherEnd(here), System.currentTimeMillis()));
+    }
+
+    /**
+     * Writes a made crossing into {@link PortalStore}: the portal that was ridden, and the one it
+     * came out at, each saying where the other leads. Called for every successful crossing -
+     * this card's and Build Nether Portal's - so a portal the bot has used is one the next trip
+     * can start from, either end of it.
+     */
+    static void noteCrossing(BotContext ctx, ResourceKey<Level> origin, BlockPos portalUsed) {
+        ResourceKey<Level> arrived = ctx.level.dimension();
+        if (arrived == origin) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        PortalStore store = PortalStore.get();
+        if (portalUsed != null) {
+            store.record(PortalLink.at(portalUsed, origin.identifier().toString(),
+                    arrived.identifier().toString(), now));
+        }
+        // The far end is where the game put the bot: its feet are the portal column when they
+        // are inside one, and the lit block beside it when they are not.
+        BlockPos feet = ctx.player.blockPosition();
+        BlockPos exit = ctx.level.getBlockState(feet).is(Blocks.NETHER_PORTAL)
+                ? feet
+                : findPortal(ctx, feet, 16);
+        if (exit != null) {
+            store.record(PortalLink.at(exit, arrived.identifier().toString(),
+                    origin.identifier().toString(), now));
+        }
     }
 
     /**

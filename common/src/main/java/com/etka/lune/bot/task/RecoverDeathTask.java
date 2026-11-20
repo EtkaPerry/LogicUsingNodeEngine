@@ -34,6 +34,10 @@ import java.util.Optional;
  *       picked-clean patch of ground on every pass, and a graph that loops does nothing else for
  *       the rest of the night. A walk that never arrives keeps the record, so the Fail pin can
  *       lead somewhere that tries again.</li>
+ *   <li><b>A death across a portal is still a death.</b> When nothing was lost in this dimension
+ *       the card picks the most recent anywhere - "nearest" has no meaning until the crossing is
+ *       made, so whichever pile was asked for, the freshest drops are the ones to go for - and
+ *       walks there through a portal it knows, or one it builds.</li>
  * </ul>
  *
  * <p>It does not promise the items are still there - vanilla despawns drops after five minutes,
@@ -59,7 +63,7 @@ public final class RecoverDeathTask implements Task {
 
     private Phase phase = Phase.START;
     private Death target;
-    private GotoTask walk;
+    private Task walk;
     private LootTask sweep;
 
     public RecoverDeathTask(String which, int radius) {
@@ -108,12 +112,17 @@ public final class RecoverDeathTask implements Task {
                 ? store.latestIn(dimension)
                 : store.nearestIn(dimension, ctx.player.blockPosition());
         if (found.isEmpty()) {
-            // There are deaths, just none on this side of a portal. Say which, rather than
-            // reporting the same "nothing to recover" as a world nobody has died in.
-            return fail("lune.status.recover_death.other_dimension");
+            // Every death on file is on the other side of a portal, and "nearest" has no meaning
+            // until the crossing is made - so whichever was asked for, the freshest drops are
+            // the ones worth the trip.
+            found = store.latest();
+        }
+        if (found.isEmpty()) {
+            return fail("lune.status.recover_death.none");
         }
         target = found.get();
-        walk = GotoTask.toPlace(new Goals.Near(target.pos(), ARRIVAL_TOLERANCE), true);
+        walk = new TravelTask(new Goals.Near(target.pos(), ARRIVAL_TOLERANCE), target.pos(),
+                target.dimension(), true);
         walk.start(ctx);
         phase = Phase.WALKING;
         say("lune.status.recover_death.walking");

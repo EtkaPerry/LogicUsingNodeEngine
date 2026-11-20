@@ -78,17 +78,24 @@ public final class PlaceBlockTask implements Task {
     private final Set<Block> materials;
     private final Where where;
     private final BlockPos coordinates;
+    /** The dimension the spot is in, when the caller knows; null means this one. */
+    private final String dimension;
 
     private BlockPos target;
-    private GotoTask approach;
+    private Task approach;
     private int ticks;
     private boolean placed;
     private final StatusText status = new StatusText();
 
     public PlaceBlockTask(Set<Block> materials, Where where, BlockPos coordinates) {
+        this(materials, where, coordinates, null);
+    }
+
+    public PlaceBlockTask(Set<Block> materials, Where where, BlockPos coordinates, String dimension) {
         this.materials = materials == null ? Set.of() : Set.copyOf(materials);
         this.where = where == null ? Where.IN_FRONT : where;
         this.coordinates = coordinates;
+        this.dimension = dimension;
     }
 
     @Override
@@ -205,7 +212,13 @@ public final class PlaceBlockTask implements Task {
 
     private TaskStatus walkTo(BotContext ctx) {
         if (approach == null) {
-            approach = new GotoTask(new Goals.Adjacent(target, REACH), false, true);
+            // A spot on the other side of a portal is walked to through one; anything else is
+            // the ordinary walk this card has always taken.
+            boolean across = dimension != null
+                    && !dimension.equals(ctx.level.dimension().identifier().toString());
+            approach = across
+                    ? new TravelTask(new Goals.Adjacent(target, REACH), target, dimension, false)
+                    : new GotoTask(new Goals.Adjacent(target, REACH), false, true);
             approach.start(ctx);
         }
         TaskStatus walk = approach.tick(ctx);

@@ -4,6 +4,7 @@ import com.etka.lune.Constants;
 import com.etka.lune.client.gui.LuneScreen;
 import com.etka.lune.compat.Screens;
 import com.etka.lune.config.SharePolicy;
+import com.etka.lune.share.ShareKeep;
 import com.etka.lune.share.ShareLedger;
 import com.etka.lune.share.ShareService;
 import com.etka.lune.task.TaskCode;
@@ -30,11 +31,12 @@ import java.util.function.Consumer;
  *
  * <p>Nothing leaves the game until Create link is pressed, and the popup says what that means
  * before it is: the task goes to the share service, anyone holding the link can read it -
- * coordinates, waypoint names and notes included - and a link nobody opens for thirty days is
- * deleted. The player picks <b>View only</b> (the default) or <b>View and edit</b>; an edit link
- * lets whoever has it change the task behind that same link, which the player then brings back
- * with Import. The first link also asks for agreement to the share policy ({@link SharePolicy}),
- * on the button itself, beside a button that opens it.</p>
+ * coordinates, waypoint names and notes included - and a link is deleted once it has stayed
+ * unopened for the keep time the player picks ({@link ShareKeep}, an hour to ninety days, thirty
+ * the default). The player picks <b>View only</b> (the default) or <b>View and edit</b>; an edit
+ * link lets whoever has it change the task behind that same link, which the player then brings
+ * back with Import. The first link also asks for agreement to the share policy
+ * ({@link SharePolicy}), on the button itself, beside a button that opens it.</p>
  *
  * <p>When the service cannot be reached, or refuses, the link carries the whole task in it
  * instead. It is longer, needs nothing kept anywhere and can only be viewed, so Share always ends
@@ -57,7 +59,8 @@ public class SharePrompt extends AbstractWidget {
     }
 
     private enum Action {
-        VIEW_ONLY, VIEW_AND_EDIT, POLICY, CREATE, COPY_TEXT, CANCEL, OPEN, COPY_LINK, DELETE, CLOSE
+        VIEW_ONLY, VIEW_AND_EDIT, KEEP, POLICY, CREATE, COPY_TEXT, CANCEL, OPEN, COPY_LINK, DELETE,
+        CLOSE
     }
 
     private record Hit(Action action, int x, int y, int width, String label) {}
@@ -80,6 +83,8 @@ public class SharePrompt extends AbstractWidget {
     private TaskGraph task;
     /** Whether the link lets whoever has it change the task. View only unless the player says. */
     private boolean editable;
+    /** How long the link lives after its last open; the service's default unless the player says. */
+    private ShareKeep keep = ShareKeep.DEFAULT;
     private String code = "";
     private String link = "";
     private ShareService.Shared shared;
@@ -105,6 +110,7 @@ public class SharePrompt extends AbstractWidget {
         this.onMessage = onMessage == null ? text -> {} : onMessage;
         this.stage = Stage.CHOOSE;
         this.editable = false;
+        this.keep = ShareKeep.DEFAULT;
         this.code = "";
         this.link = "";
         this.shared = null;
@@ -136,6 +142,7 @@ public class SharePrompt extends AbstractWidget {
         switch (action) {
             case VIEW_ONLY -> editable = false;
             case VIEW_AND_EDIT -> editable = true;
+            case KEEP -> keep = keep.next();
             case POLICY -> openLink(ShareService.standard().base() + "/policy");
             case CREATE -> create();
             case COPY_TEXT -> copyAsText();
@@ -163,7 +170,7 @@ public class SharePrompt extends AbstractWidget {
         int mine = ++attempt;
         boolean wantEdit = editable;
         ShareService service = ShareService.standard();
-        service.upload(code, wantEdit).whenComplete((made, failure) -> Minecraft.getInstance().execute(() -> {
+        service.upload(code, wantEdit, keep.seconds()).whenComplete((made, failure) -> Minecraft.getInstance().execute(() -> {
             if (mine != attempt || !visible) {
                 return;
             }
@@ -172,6 +179,14 @@ public class SharePrompt extends AbstractWidget {
                 link = made.link();
                 stage = Stage.KEPT;
                 ShareLedger.remember(made, task == null ? "" : task.name);
+            } else if (ShareService.cause(failure) instanceof ShareService.Refused refused
+                    && (refused.reason().equals("has_link") || refused.reason().equals("has_profanity"))) {
+                // A carried link cannot help here: the page refuses to open a task whose text
+                // breaks the site's rules just as the service refuses to keep it. Say why.
+                Constants.LOG.info("Share service refused the task's text ({})", refused.reason());
+                onMessage.accept(Lang.get(refused.reason().equals("has_link")
+                        ? "lune.gui.share.refused_link" : "lune.gui.share.refused_words"));
+                close();
             } else {
                 Constants.LOG.info("Share service did not keep the task ({}); handing over a link "
                         + "that carries it", ShareService.cause(failure).toString());
@@ -213,7 +228,7 @@ public class SharePrompt extends AbstractWidget {
                             close();
                         }
                     } else if (mine == attempt && visible) {
-                        status = Lang.get("lune.gui.share.delete_failed");
+                        status = Lang.get("lune.gui.share.delete_failed", keep.label());
                     }
                 }));
     }
@@ -227,10 +242,10 @@ public class SharePrompt extends AbstractWidget {
     private String body() {
         String host = ShareService.standard().host();
         return switch (stage) {
-            case CHOOSE -> Lang.get("lune.gui.share.about", host);
+            case CHOOSE -> Lang.get("lune.gui.share.about", host, keep.label());
             case UPLOADING -> Lang.get("lune.gui.share.uploading");
             case KEPT -> Lang.get(shared != null && shared.editable()
-                    ? "lune.gui.share.kept_edit" : "lune.gui.share.kept_view");
+                    ? "lune.gui.share.kept_edit" : "lune.gui.share.kept_view", keep.label());
             case CARRIED -> Lang.get("lune.gui.share.carried", host);
         };
     }
@@ -263,10 +278,11 @@ public class SharePrompt extends AbstractWidget {
         return action == Action.DELETE || action == Action.POLICY;
     }
 
-    private static String label(Action action) {
-        return Lang.get(switch (action) {
+    private String label(Action action) {
+        String key = switch (action) {
             case VIEW_ONLY -> "lune.gui.share.view_only";
             case VIEW_AND_EDIT -> "lune.gui.share.view_edit";
+            case KEEP -> "lune.gui.share.keep_for";
             case POLICY -> "lune.gui.share.policy";
             case CREATE -> SharePolicy.accepted() ? "lune.gui.share.create" : "lune.gui.share.agree_create";
             case COPY_TEXT -> "lune.gui.share.copy_text";
@@ -275,7 +291,8 @@ public class SharePrompt extends AbstractWidget {
             case COPY_LINK -> "lune.gui.share.copy_link";
             case DELETE -> "lune.gui.tasks.delete_2";
             case CLOSE -> "lune.gui.recipe.close";
-        });
+        };
+        return action == Action.KEEP ? Lang.get(key, keep.label()) : Lang.get(key);
     }
 
     // --- drawing --------------------------------------------------------------------------------
@@ -387,7 +404,7 @@ public class SharePrompt extends AbstractWidget {
         List<Hit> buttons = new ArrayList<>();
         if (stage == Stage.CHOOSE) {
             int modeX = x + PADDING;
-            for (Action mode : List.of(Action.VIEW_ONLY, Action.VIEW_AND_EDIT)) {
+            for (Action mode : List.of(Action.VIEW_ONLY, Action.VIEW_AND_EDIT, Action.KEEP)) {
                 String label = label(mode);
                 int modeWidth = Math.max(BUTTON_MIN_W, font.width(label) + BUTTON_PAD);
                 buttons.add(new Hit(mode, modeX, y + modeY, modeWidth, label));

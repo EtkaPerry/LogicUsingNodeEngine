@@ -382,8 +382,13 @@ public final class PathExecutor {
         // (2026-10-18) with the next node round a corner came off the edge of its own landing, into
         // the hole beside it. Only a drop the world does not have - a floor where the route planned
         // air - is walked off toward the next node.
+        //
+        // Except crouched. A sneaking body cannot walk off an edge at all, so landing middle or
+        // landing past it makes no odds - it needs a direction to leave the ledge by, and the
+        // next node is it. The same clamp that would not let it overshoot makes the steer safe.
         boolean dropThere = descending && !player.isInWater() && MovementHelper.isPassable(ctx.level, target);
-        BlockPos steerNode = inColumn && !dropThere && index + 1 < path.size() ? path.get(index + 1) : target;
+        BlockPos steerNode = inColumn && (!dropThere || player.isShiftKeyDown())
+                && index + 1 < path.size() ? path.get(index + 1) : target;
         Vec3 steerTarget = Vec3.atCenterOf(steerNode);
 
         // A gap to jump. Asked before the head is aimed, because it decides where the head goes.
@@ -395,11 +400,15 @@ public final class PathExecutor {
         // walks across whatever lies between, which there was a lava pocket. Plan again from here; a
         // jump that is still the way is found again, from where the feet are. The same for a
         // diagonal back onto the route across the corner of a hole that hurts, which no route plans.
-        int offX = target.getX() - feet.getX();
-        int offZ = target.getZ() - feet.getZ();
+        // The body's own cell is measured, not feet: on a stair or slab lip the support sits a
+        // whole column behind the body, and a one-block lead read as two replans a staircase
+        // forever.
+        BlockPos body = player.blockPosition();
+        int offX = target.getX() - body.getX();
+        int offZ = target.getZ() - body.getZ();
         if (!gapJump && player.onGround() && !player.isInWater() && !onClimbable
                 && (Math.max(Math.abs(offX), Math.abs(offZ)) > 1
-                        || MovementHelper.cutsAHurtingCorner(ctx.level, feet, offX, offZ))) {
+                        || MovementHelper.cutsAHurtingCorner(ctx.level, body, offX, offZ))) {
             breaker.stop(ctx);
             blockedBy.set(OFF_ROUTE);
             return Status.REPLAN;
@@ -458,6 +467,16 @@ public final class PathExecutor {
                 ctx.input.sneak = SafeStep.onTheLip(ctx.level, feet)
                         && player.getDeltaMovement().horizontalDistance() > GapJumpPolicy.STILL;
             }
+        }
+        // The same lip in reverse, for a crouched walker: vanilla holds a sneaking body at every
+        // edge, so a drop it would walk off standing needs a hop to leave. Legs pressed and the
+        // route not closing is the clamp's own signature - the attempted velocity is not, since
+        // the clamp nulls the displacement and not the push. A stair or a slab lets the body
+        // move and asks for none of this. One hop is enough: airborne, there is no clamp to beat.
+        if (allowJump && descending && player.onGround() && headroom && player.isShiftKeyDown()
+                && (ctx.input.forward || ctx.input.backward || ctx.input.left || ctx.input.right)
+                && noProgressTicks >= 3) {
+            ctx.input.jump = true;
         }
         // Clearing a gap. The pathfinder can plan a jump across a hole, but the node on the far side
         // is at the same height as this one or lower, so none of the tests above press anything and
@@ -669,6 +688,14 @@ public final class PathExecutor {
     }
 
     private static boolean isGapJump(BotContext ctx, BlockPos feet, BlockPos target) {
+        // A jump a crouched body cannot make is not a gap jump to it: sneak's third of a walk
+        // carries a jump barely a block, short of every shape the search plans
+        // (GapJumpPolicy.MAX_CROUCHED_GAP). Read as what it is, the node across the hole is too
+        // far to step to, so the off-route check above replans now - at the take-off, before the
+        // run-up walks the lip - and the search that sees the sneak goes round.
+        if (ctx.player.isShiftKeyDown()) {
+            return false;
+        }
         int dx = target.getX() - feet.getX();
         int dz = target.getZ() - feet.getZ();
         int stepX = Integer.signum(dx);

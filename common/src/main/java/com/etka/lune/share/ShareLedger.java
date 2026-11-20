@@ -21,7 +21,7 @@ import java.util.Optional;
  *
  * <p>The service hands the keys back exactly once, on upload, and keeps only their hashes, so this
  * file is the only place they exist. Losing it costs nothing worse than waiting: a link nobody
- * opens is deleted after thirty days either way.</p>
+ * opens is deleted after its keep time either way.</p>
  */
 public final class ShareLedger {
 

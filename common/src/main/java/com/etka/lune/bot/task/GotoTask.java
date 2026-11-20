@@ -1066,7 +1066,11 @@ public final class GotoTask implements Task {
         return settings.withHeuristicWeight(
                 MovementPolicy.heuristicWeight(routeStrategy, settings.heuristicWeight()))
                 .withAvoid(avoid)
-                .withMaxGap(canRun(ctx) ? GapJumpPolicy.MAX_SPRINT_GAP : GapJumpPolicy.MAX_GAP);
+                // Sneak first, sprint second: a crouched jump reaches barely a block, short of
+                // every gap, so a body found sneaking gets a route that goes round holes instead
+                // of into them - the way a body that cannot sprint gets no sprint jumps.
+                .withMaxGap(ctx.player.isShiftKeyDown() ? GapJumpPolicy.MAX_CROUCHED_GAP
+                        : canRun(ctx) ? GapJumpPolicy.MAX_SPRINT_GAP : GapJumpPolicy.MAX_GAP);
     }
 
     /**

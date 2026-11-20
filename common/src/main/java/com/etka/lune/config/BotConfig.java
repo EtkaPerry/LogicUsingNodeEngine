@@ -94,6 +94,11 @@ public final class BotConfig {
      * link, which is when the Share popup asks.
      */
     public int acceptedSharePolicyVersion = 0;
+    /**
+     * Highest version of the panel tour ({@code PanelTour.VERSION}) whose offer the player has
+     * answered, either way; 0 until then, which is what has Lune offer it as the panel opens.
+     */
+    public int tourOffered = 0;
 
     // --- Movement -----------------------------------------------------------
     /** Sprint on straight, level stretches. */

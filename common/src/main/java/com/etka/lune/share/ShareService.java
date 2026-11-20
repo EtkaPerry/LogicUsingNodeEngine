@@ -50,17 +50,24 @@ public final class ShareService {
         }
     }
 
-    /** The service answered, and said no: too many uploads, too large, not a task. */
+    /** The service answered, and said no: too many uploads, too large, not a task it may keep. */
     public static final class Refused extends IOException {
         private final int status;
+        private final String reason;
 
-        public Refused(int status) {
+        public Refused(int status, String reason) {
             super("the share service refused with " + status);
             this.status = status;
+            this.reason = reason == null ? "" : reason;
         }
 
         public int status() {
             return status;
+        }
+
+        /** The service's own word for why it said no, such as "has_link"; "" when it gave none. */
+        public String reason() {
+            return reason;
         }
     }
 
@@ -118,15 +125,28 @@ public final class ShareService {
     }
 
     /**
-     * Hands a task to the service.
+     * Hands a task to the service, kept for {@link ShareKeep#DEFAULT}.
      *
      * @param editable whether whoever has the link may change the task behind it; a view-only
      *                 share has no edit key at all, so nobody can
      */
     public CompletableFuture<Shared> upload(String code, boolean editable) {
+        return upload(code, editable, ShareKeep.DEFAULT.seconds());
+    }
+
+    /**
+     * Hands a task to the service.
+     *
+     * @param editable whether whoever has the link may change the task behind it; a view-only
+     *                 share has no edit key at all, so nobody can
+     * @param keepSeconds how long the link lives after its last open; the service keeps only the
+     *                    {@link ShareKeep} choices and gives anything else the default
+     */
+    public CompletableFuture<Shared> upload(String code, boolean editable, int keepSeconds) {
         JsonObject body = new JsonObject();
         body.addProperty("code", code);
         body.addProperty("editable", editable);
+        body.addProperty("keep", keepSeconds);
         HttpRequest request = request("/api/share")
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
@@ -134,7 +154,7 @@ public final class ShareService {
         return client.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
                 .thenApply(response -> {
                     if (response.statusCode() != 201) {
-                        throw new CompletionException(failure(response.statusCode()));
+                        throw new CompletionException(failure(response.statusCode(), response.body()));
                     }
                     JsonObject made = JsonParser.parseString(response.body()).getAsJsonObject();
                     String id = made.get("id").getAsString();
@@ -154,7 +174,7 @@ public final class ShareService {
         return client.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
                 .thenApply(response -> {
                     if (response.statusCode() != 200) {
-                        throw new CompletionException(failure(response.statusCode()));
+                        throw new CompletionException(failure(response.statusCode(), response.body()));
                     }
                     return JsonParser.parseString(response.body()).getAsJsonObject()
                             .get("code").getAsString();
@@ -166,11 +186,11 @@ public final class ShareService {
                 .header("Authorization", "Bearer " + deleteKey)
                 .DELETE()
                 .build();
-        return client.sendAsync(request, HttpResponse.BodyHandlers.discarding())
+        return client.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
                 .thenApply(response -> {
                     // Already gone is as deleted as it gets.
                     if (response.statusCode() != 204 && response.statusCode() != 404) {
-                        throw new CompletionException(failure(response.statusCode()));
+                        throw new CompletionException(failure(response.statusCode(), response.body()));
                     }
                     return null;
                 });
@@ -196,8 +216,18 @@ public final class ShareService {
                 .header("User-Agent", USER_AGENT);
     }
 
-    private static IOException failure(int status) {
-        return status == 404 ? new Gone() : status >= 400 && status < 500
-                ? new Refused(status) : new IOException("the share service answered " + status);
+    private static IOException failure(int status, String body) {
+        if (status == 404) {
+            return new Gone();
+        }
+        String reason = "";
+        try {
+            reason = JsonParser.parseString(body == null ? "" : body).getAsJsonObject()
+                    .get("error").getAsString();
+        } catch (RuntimeException ignored) {
+            // A body that is not the service's {error} shape leaves the reason empty.
+        }
+        return status >= 400 && status < 500
+                ? new Refused(status, reason) : new IOException("the share service answered " + status);
     }
 }

@@ -2,7 +2,8 @@ package com.etka.lune.config;
 
 /**
  * The rules for share links, at {@code lunode.etka.co.uk/policy}: what may go in a shared task,
- * who can see and change it, and that it is deleted after thirty days without being opened.
+ * who can see and change it, and that it is deleted after the keep time its sharer chose without
+ * an open.
  *
  * <p>Agreed to once, in the Share popup, by pressing "Agree and create link" - the button says
  * what pressing it means, beside a button that opens the policy. After that the popup only
@@ -15,7 +16,7 @@ package com.etka.lune.config;
 public final class SharePolicy {
 
     /** The policy text this build asks the player to agree to. */
-    public static final int VERSION = 1;
+    public static final int VERSION = 3;
 
     private SharePolicy() {}
 

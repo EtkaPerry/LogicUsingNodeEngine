@@ -39,6 +39,18 @@ public final class GapJumpPolicy {
      */
     public static final int MAX_SPRINT_GAP = 3;
 
+    /**
+     * Blocks of empty gap a route may plan for a crouched body: none. A jump goes only as far as
+     * the speed behind it, and sneak's third of a walk barely carries a block of air before it
+     * comes down - short of even the smallest gap's landing edge, so every planned shape asks for
+     * what Shift does not give. Offered one anyway on the sculk maze (2026-10-31) the run-up to a
+     * two-block trench leap walked the lip at sneak speed and the body fell in, three blocks,
+     * which hurt, which every sensor in earshot heard. The search asks the body's sneak state and
+     * plans the way round instead; the executor answers the same way when the sneak arrives after
+     * the plan ({@link PathExecutor} reads the gap the body cannot take as unwalkable, and replans).
+     */
+    public static final int MAX_CROUCHED_GAP = 0;
+
     /** How far below the take-off a landing may be. Level, or one down. */
     public static final int MAX_DROP = 1;
 

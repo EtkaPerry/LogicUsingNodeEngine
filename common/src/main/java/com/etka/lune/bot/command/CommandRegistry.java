@@ -46,6 +46,7 @@ import com.etka.lune.bot.task.UsePortalTask;
 import com.etka.lune.bot.task.StripmineTask;
 import com.etka.lune.bot.task.TunnelTask;
 import com.etka.lune.bot.task.GotoTask;
+import com.etka.lune.bot.task.TravelTask;
 import com.etka.lune.bot.task.SpeedrunTask;
 import com.etka.lune.bot.task.ConditionTask;
 import com.etka.lune.bot.task.CountdownTask;
@@ -593,9 +594,8 @@ public final class CommandRegistry {
         ), def -> {
             String name = def.choiceValue("name");
             return WaypointStore.get().byName(name)
-                    .<com.etka.lune.bot.Task>map(waypoint -> WaypointStore.isInCurrentDimension(waypoint)
-                            ? GotoTask.toPlace(new Goals.Near(waypoint.pos(), def.intValue("tolerance")), true)
-                            : FailTask.forCommand("waypoint", "Go to Waypoint", "lune.status.fail.waypoint_other_dimension"))
+                    .<com.etka.lune.bot.Task>map(waypoint -> TravelTask.toWaypoint(waypoint,
+                            def.intValue("tolerance")))
                     .orElseGet(() -> FailTask.forCommand("waypoint", "Go to Waypoint",
                             name.isEmpty() ? "lune.status.fail.no_waypoint_chosen"
                                     : "lune.status.fail.no_waypoint_named", name));
@@ -760,12 +760,12 @@ public final class CommandRegistry {
             if (blocks.isEmpty()) {
                 return FailTask.forCommand("place", "Place Block", "lune.status.fail.pick_block_to_place");
             }
+            com.etka.lune.waypoint.Waypoint waypoint = where == PlaceBlockTask.Where.WAYPOINT
+                    ? WaypointStore.get().byName(def.choiceValue("waypoint")).orElse(null)
+                    : null;
             BlockPos spot = switch (where) {
                 case COORDINATES -> def.posValue("target");
-                case WAYPOINT -> WaypointStore.get().byName(def.choiceValue("waypoint"))
-                        .filter(WaypointStore::isInCurrentDimension)
-                        .map(com.etka.lune.waypoint.Waypoint::pos)
-                        .orElse(null);
+                case WAYPOINT -> waypoint == null ? null : waypoint.pos();
                 default -> null;
             };
             if (!where.isRelative() && spot == null) {
@@ -773,7 +773,8 @@ public final class CommandRegistry {
                         ? "lune.status.fail.choose_waypoint_here"
                         : "lune.status.fail.set_coordinates");
             }
-            return new PlaceBlockTask(blocks, where, spot);
+            return new PlaceBlockTask(blocks, where, spot,
+                    waypoint == null ? null : waypoint.dimension());
         }));
 
         register(new CommandDef("use_portal", List.of(
@@ -978,6 +979,7 @@ public final class CommandRegistry {
                 new Param.Bool("protect_fireballs", true).under("protect_monsters"),
                 new Param.Bool("build_cover", true).under("protect_monsters"),
                 new Param.Bool("fight_back", true).under("protect_monsters"),
+                new Param.Bool("protect_sculk", true),
                 new Param.Bool("protect_health", true),
                 new Param.Choice("health_compare", List.of("At most", "Less than", "At least", "Greater than"), "At most")
                         .under("protect_health"),
@@ -989,7 +991,7 @@ public final class CommandRegistry {
                 def.boolValue("protect_health"), def.choiceValue("health_compare"),
                 def.intValue("health_value"),
                 def.boolValue("protect_fall"), def.intValue("fall_threshold"),
-                def.boolValue("protect_fire"),
+                def.boolValue("protect_fire"), def.boolValue("protect_sculk"),
                 new SafetyOptions(
                         def.boolValue("clutch_water"),
                         def.boolValue("clutch_boat"),
