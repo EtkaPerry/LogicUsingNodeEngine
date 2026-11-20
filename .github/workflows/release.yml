@@ -27,7 +27,7 @@ permissions:
 
 env:
   # Release channel for every version this publishes, on both stores:
-  # release, beta or alpha.
+  # release, beta or alpha. On GitHub a beta or an alpha is a pre-release.
   RELEASE_CHANNEL: beta
   # The publish job has no checkout, so gh has no remote to infer this from.
   GH_REPO: ${{ github.repository }}
@@ -457,10 +457,13 @@ jobs:
             gh release upload "v$VERSION" jars/*.jar --clobber
           else
             jq -r --arg v "$VERSION" '.[$v].notes' changelog/changelog.json > "$RUNNER_TEMP/notes.md"
+            # A beta or an alpha is what GitHub calls a pre-release, and a
+            # pre-release can never be the latest, so only a release asks to be.
+            if [ "$CHANNEL" = release ]; then stage=--latest; else stage=--prerelease; fi
             gh release create "v$VERSION" jars/*.jar \
               --title "Lune $VERSION" \
               --notes-file "$RUNNER_TEMP/notes.md" \
-              --latest
+              "$stage"
           fi
 
       - name: Upload to CurseForge
